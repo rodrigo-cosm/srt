@@ -558,6 +558,51 @@ SRT_API extern int srt_connect_bind(SRTSOCKET u,
         const struct sockaddr* target, int target_len);
 SRT_API extern int srt_rendezvous(SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
         const struct sockaddr* remote_name, int remote_namelen);
+
+/// A set of parameters used for making or fetching a connection:
+/// - When connecting to another host by srt_makelink
+/// - When receiving a connection request by srt_fetchlink
+struct SRT_LINKCTRL
+{
+    /// IN:ignored, should be -1, OUT:socket used for connection. When
+    /// connecting through a socket group, this will contain the socket created
+    /// specifically for this connection. When fetching a connection with a
+    /// listener socket set with SRTO_GROUPCONNECT, contains a socket used for
+    /// this connection (normally returned by srt_accept).
+    SRTSOCKET socket;
+
+    /// Source address. IN:makelink: address to bind the socket when connecting.
+    /// OUT:fetchlink: The address from which the connection request has come.
+    /// For IN:fetchlink and OUT:makelink unused and should be initial-zero.
+    struct sockaddr_storage source;
+
+    /// Target address. IN:makelink: address to which the connection should be
+    /// made. OUT:fetchlink: local port and the local IP address that designates
+    /// the network adapter, for which the connection has come in.
+    struct sockaddr_storage target;
+
+    /// Origin address. IN:makelink: if clear, this value will be taken from the
+    /// current adapter IP address, otherwise it can be set to any other IP address
+    /// so that it's passed through to the destination during the handshake.
+    /// OUT:fetchlink: the IP address passed during the handshake as origin.
+    /// This may differ to 'target' if it was set by the user in srt_makelink,
+    /// or when the connection source is different than the connection initiator
+    /// due to have been faked by the advanced routing rules.
+    struct sockaddr_storage origin;
+
+    /// ISN that should be set initially for this connection. It's used mainly
+    /// for internal management and testing purposes. Don't set this value to
+    /// other than 0 unless you know what you are doing.
+    int forced_isn;
+
+    bool rendezvous;
+};
+
+SRT_API extern SRT_LINKCTRL srt_linkctrl_default;
+
+SRT_API int srt_makelink(SRTSOCKET ap, const SRT_LINKCTRL* linkctrl);
+SRT_API int srt_fetchlink(SRTSOCKET lst, SRT_LINKCTRL* linkctrl);
+
 SRT_API extern int srt_close(SRTSOCKET u);
 SRT_API extern int srt_getpeername(SRTSOCKET u, struct sockaddr* name, int* namelen);
 SRT_API extern int srt_getsockname(SRTSOCKET u, struct sockaddr* name, int* namelen);

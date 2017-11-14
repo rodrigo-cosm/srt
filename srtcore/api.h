@@ -209,7 +209,7 @@ public:
       /// @param [in,out] hs handshake information from peer side (in), negotiated value (out);
       /// @return If the new connection is successfully created: 1 success, 0 already exist, -1 error.
 
-   int newConnection(const SRTSOCKET listen, const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt);
+   int newConnection(CUDTSocket*, const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt);
 
       /// Check the status of the UDT socket.
       /// @param [in] u the UDT socket ID.
@@ -223,10 +223,10 @@ public:
    int bind(CUDTSocket* u, int udpsock);
    int listen(const SRTSOCKET u, int backlog);
    SRTSOCKET accept(const SRTSOCKET listen, sockaddr* addr, int* addrlen);
-   int connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const sockaddr* tarname, int tarlen);
+   int connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const sockaddr* tarname, int tarlen, int forced_isn);
    int connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
    int connectIn(ref_t<CUDTSocket> s, const sockaddr_any& target, int32_t forced_isn);
-   int groupConnect(ref_t<CUDTGroup> g, const sockaddr_any& source, const sockaddr_any& target);
+   int groupConnect(ref_t<CUDTGroup> g, const sockaddr_any& source, const sockaddr_any& target, int forced_isn);
    int close(const SRTSOCKET u);
    int close(CUDTSocket* s);
    void getpeername(const SRTSOCKET u, sockaddr* name, int* namelen);

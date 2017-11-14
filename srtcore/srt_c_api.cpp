@@ -65,7 +65,7 @@ int srt_connect_bind(SRTSOCKET u,
         const struct sockaddr* source, int source_len,
         const struct sockaddr* target, int target_len)
 {
-    return CUDT::connect(u, source, source_len, target, target_len);
+    return CUDT::connect(u, source, source_len, target, target_len, 0);
 }
 
 int srt_rendezvous(SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
@@ -92,6 +92,32 @@ int srt_rendezvous(SRTSOCKET u, const struct sockaddr* local_name, int local_nam
 
     return srt_connect(u, remote_name, remote_namelen);
 }
+
+SRT_LINKCTRL srt_linkctrl_default =
+{ -1, {AF_UNSPEC, 0, 0}, {AF_UNSPEC, 0, 0}, {AF_UNSPEC, 0, 0}, 0, false };
+
+int srt_makelink(SRTSOCKET ap, const SRT_LINKCTRL* linkctrl)
+{
+    if (linkctrl == 0)
+        return CUDT::setError(MJ_NOTSUP, MN_INVAL, 0);
+
+    if (linkctrl->rendezvous)
+        return srt_rendezvous(ap, (sockaddr*)&linkctrl->source, sizeof linkctrl->source,
+                (sockaddr*)&linkctrl->target, sizeof linkctrl->target);
+
+    if (linkctrl->source.ss_family != AF_UNSPEC)
+    {
+        int st = srt_bind(ap, (sockaddr*)&linkctrl->source, sizeof linkctrl->source);
+        if (st == -1)
+            return st;
+    }
+
+    return srt_connect(ap, (sockaddr*)&linkctrl->target, sizeof linkctrl->target);
+}
+
+// srt_pickuplink: will be defined later, when CUDT::accept is expanded with
+// more retrieved parameters.
+
 
 int srt_close(SRTSOCKET u)
 {

@@ -150,10 +150,55 @@ CSndBuffer::~CSndBuffer()
    pthread_mutex_destroy(&m_BufLock);
 }
 
-void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_seqno, ref_t<int32_t> r_msgno)
+void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, ref_t<uint64_t> r_srctime, ref_t<int32_t> r_seqno, ref_t<int32_t> r_msgno)
 {
     int32_t& msgno = *r_msgno;
     int32_t& seqno = *r_seqno;
+    uint64_t& srctime = *r_srctime;
+
+    uint64_t now = CTimer::getTime();
+
+    // Check the srctime in the beginning. This must be a time expressed in
+    // the local time domain. It **should** be a time taken first from the
+    // packet at the moment that was read, or any **slightly** future time
+    // that results from calculating this into the local time domain.
+    //
+    // As the time passes, the only reason why this time might be in future
+    // is that it's being fixed specifically by shifting it slightly towards
+    // the future and it's gone a little bit too far. On the other hand, in
+    // TSBPD it's not the ABSOLUTE TIME that counts, but the time difference
+    // between subsequent sent packets. It's up to the user then to supply
+    // such timestamps for the single packets that are appropriately monotonic,
+    // however when they seem to have a value in future or too strongly in
+    // the past, then most likely they WERE NOT converted into the current
+    // time domain correctly.
+    //
+    // Let's take two rules then:
+    // - the time is not allowed to be in future
+    // - the time is not allowed to be non-monotonic
+
+    if (srctime != 0)
+    {
+        if (srctime > now) // srctime is in future
+        {
+            LOGC(mglog.Error) << "addBuffer: APP-SUPPLIED TS=" << logging::FormatTime(srctime)
+                << " IS IN FUTURE. This is not allowed, check your timestamp source.";
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        }
+
+        if (srctime < m_ullLastOriginTime_us)
+        {
+            LOGC(mglog.Error) << "addBuffer srctime=" << logging::FormatTime(srctime) << " previous=" << logging::FormatTime(m_ullLastOriginTime_us)
+                << ": SRCTIME gets back into the past by " << (srctime - m_ullLastOriginTime_us) << "us. CHECK YOUR TIMESTAMP SOURCE.";
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        }
+    }
+    else
+    {
+        srctime = now; // to be returned to the caller!
+    }
+
+    int32_t inorder = order ? MSGNO_PACKET_INORDER::mask : 0;
 
     int size = len / m_iMSS;
     if ((len % m_iMSS) != 0)
@@ -168,8 +213,6 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
         increase();
     }
 
-    uint64_t time = CTimer::getTime();
-    int32_t inorder = order ? MSGNO_PACKET_INORDER::mask : 0;
 
     LOGC(dlog.Debug) << CONID() << "addBuffer: adding "
         << size << " packets (" << len << " bytes) to send, msgno=" << m_iNextMsgNo
@@ -200,15 +243,17 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
             s->m_iMsgNoBitset |= PacketBoundaryBits(PB_FIRST);
         if (i == size - 1)
             s->m_iMsgNoBitset |= PacketBoundaryBits(PB_LAST);
-        // NOTE: if i is neither 0 nor size-1, it resuls with PB_SUBSEQUENT.
-        //       if i == 0 == size-1, it results with PB_SOLO. 
+        // NOTE: These conditions can be effectively combined and
+        // therefore result in the following packet boundary values:
+        // PB_SOLO = PB_FIRST and PB_LAST
+        // PB_SUBSEQUENT = neither PB_FIRST nor PB_LAST
+
         // Packets assigned to one message can be:
         // [PB_FIRST] [PB_SUBSEQUENT] [PB_SUBSEQUENT] [PB_LAST] - 4 packets per message
-        // [PB_FIRST] [PB_LAST] - 2 packets per message
         // [PB_SOLO] - 1 packet per message
 
         s->m_ullSourceTime_us = srctime;
-        s->m_ullOriginTime_us = time;
+        s->m_ullOriginTime_us = now;
         s->m_iTTL = ttl;
 
         // XXX unchecked condition: s->m_pNext == NULL.
@@ -224,13 +269,13 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
 #ifdef SRT_ENABLE_CBRTIMESTAMP
     m_ullLastOriginTime_us = srctime;
 #else
-    m_ullLastOriginTime_us = time;
+    m_ullLastOriginTime_us = now;
 #endif /* SRT_ENABLE_CBRTIMESTAMP */
 
-    updInputRate(time, size, len);
+    updInputRate(now, size, len);
 
 #ifdef SRT_ENABLE_SNDBUFSZ_MAVG
-    updAvgBufSize(time);
+    updAvgBufSize(now);
 #endif
 
     CGuard::leaveCS(m_BufLock);
@@ -1623,7 +1668,8 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
                 int64_t nowdiff = prev_now ? (nowtime - prev_now) : 0;
                 uint64_t srctimediff = prev_srctime ? (srctime - prev_srctime) : 0;
 
-                LOGC(dlog.Debug) << CONID() << "readMsg: DELIVERED seq=" << seq << " T=" << logging::FormatTime(srctime) << " in " << (timediff/1000.0) << "ms - "
+                LOGC(dlog.Debug) << CONID() << "readMsg: DELIVERED seq=" << seq
+                    << " T=" << logging::FormatTime(srctime) << " in " << (timediff/1000.0) << "ms - "
                     "TIME-PREVIOUS: PKT: " << (srctimediff/1000.0) << " LOCAL: " << (nowdiff/1000.0);
 
                 prev_now = nowtime;
