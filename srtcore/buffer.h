@@ -140,6 +140,8 @@ public:
    void updInputRate(uint64_t time, int pkts, int bytes);
    void setInputRateSmpPeriod(int period);
 
+   uint64_t lastOriginTime() { return m_ullLastOriginTime_us; }
+
 private:
    void increase();
 

@@ -158,42 +158,7 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, ref_t
 
     uint64_t now = CTimer::getTime();
 
-    // Check the srctime in the beginning. This must be a time expressed in
-    // the local time domain. It **should** be a time taken first from the
-    // packet at the moment that was read, or any **slightly** future time
-    // that results from calculating this into the local time domain.
-    //
-    // As the time passes, the only reason why this time might be in future
-    // is that it's being fixed specifically by shifting it slightly towards
-    // the future and it's gone a little bit too far. On the other hand, in
-    // TSBPD it's not the ABSOLUTE TIME that counts, but the time difference
-    // between subsequent sent packets. It's up to the user then to supply
-    // such timestamps for the single packets that are appropriately monotonic,
-    // however when they seem to have a value in future or too strongly in
-    // the past, then most likely they WERE NOT converted into the current
-    // time domain correctly.
-    //
-    // Let's take two rules then:
-    // - the time is not allowed to be in future
-    // - the time is not allowed to be non-monotonic
-
-    if (srctime != 0)
-    {
-        if (srctime > now) // srctime is in future
-        {
-            LOGC(mglog.Error) << "addBuffer: APP-SUPPLIED TS=" << logging::FormatTime(srctime)
-                << " IS IN FUTURE. This is not allowed, check your timestamp source.";
-            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
-        }
-
-        if (srctime < m_ullLastOriginTime_us)
-        {
-            LOGC(mglog.Error) << "addBuffer srctime=" << logging::FormatTime(srctime) << " previous=" << logging::FormatTime(m_ullLastOriginTime_us)
-                << ": SRCTIME gets back into the past by " << (srctime - m_ullLastOriginTime_us) << "us. CHECK YOUR TIMESTAMP SOURCE.";
-            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
-        }
-    }
-    else
+    if (srctime == 0)
     {
         srctime = now; // to be returned to the caller!
     }

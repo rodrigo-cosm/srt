@@ -5067,13 +5067,59 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
 
     // insert the user buffer into the sending list
 #ifdef SRT_ENABLE_CBRTIMESTAMP
+
+    uint64_t currtime_tk;
+    CTimer::rdtsc(currtime_tk);
+
     if (mctrl.srctime == 0)
     {
-        uint64_t currtime_tk;
-        CTimer::rdtsc(currtime_tk);
-
         m_ullSndLastCbrTime_tk = max(currtime_tk, m_ullSndLastCbrTime_tk + m_ullInterval_tk);
         mctrl.srctime = m_ullSndLastCbrTime_tk / m_ullCPUFrequency;
+
+        LOGC(dlog.Debug) << "sendmsg2: TS not supplied - creating next sched time as greater of now="
+            << logging::FormatTime(currtime_tk/m_ullCPUFrequency) << " and lastcbr+interval="
+            << logging::FormatTime((m_ullSndLastCbrTime_tk + m_ullInterval_tk)/m_ullCPUFrequency);
+    }
+    else
+    {
+        uint64_t maxtime_tk = currtime_tk + m_ullInterval_tk;
+
+        // Check the srctime in the beginning. This must be a time expressed in
+        // the local time domain. It **should** be a time taken first from the
+        // packet at the moment that was read, or any **slightly** future time
+        // that results from calculating this into the local time domain.
+        //
+        // As the time passes, the only reason why this time might be in future
+        // is that it's being fixed specifically by shifting it slightly towards
+        // the future and it's gone a little bit too far. On the other hand, in
+        // TSBPD it's not the ABSOLUTE TIME that counts, but the time difference
+        // between subsequent sent packets. It's up to the user then to supply
+        // such timestamps for the single packets that are appropriately monotonic,
+        // however when they seem to have a value in future or too strongly in
+        // the past, then most likely they WERE NOT converted into the current
+        // time domain correctly.
+        //
+        // Let's take two rules then:
+        // - the time is not allowed to be in future (at least "too far future" :D)
+
+        // (Note: this time can be supplied by another source after it has been generated
+        // similar way as under the above first condition, and it may result to be slightly
+        // in future).
+        if (mctrl.srctime > maxtime_tk/m_ullCPUFrequency)
+        {
+            LOGC(mglog.Error) << "sendmsg2: APP-SUPPLIED TS=" << logging::FormatTime(mctrl.srctime)
+                << " IS IN FUTURE (max=" << logging::FormatTime(maxtime_tk/m_ullCPUFrequency) << "). This is not allowed, check your timestamp source.";
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        }
+
+        // - the time must be monotonic
+
+        if (mctrl.srctime < m_pSndBuffer->lastOriginTime())
+        {
+            LOGC(mglog.Error) << "sendmsg2: srctime=" << logging::FormatTime(mctrl.srctime) << " previous=" << logging::FormatTime(m_pSndBuffer->lastOriginTime())
+                << ": SRCTIME gets back into the past by " << (mctrl.srctime - m_pSndBuffer->lastOriginTime()) << "us. CHECK YOUR TIMESTAMP SOURCE.";
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        }
     }
 #endif
 
@@ -5086,6 +5132,10 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     // have one packet per buffer (as it's in live mode).
     mctrl.pktseq = seqno;
     bool srctime_supplied = mctrl.srctime != 0;
+
+    LOGC(dlog.Debug) << CONID() << "sock:SENDING (before): srctime=" << logging::FormatTime(mctrl.srctime) << " "
+        << (srctime_supplied ? "(supplied)" : "(internal)")
+        << " seqno=" << seqno;
 
     // seqno is INPUT-OUTPUT value:
     // - INPUT: the current sequence number to be placed for the next scheduled packet
@@ -8901,7 +8951,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
         curseq = mc.pktseq;
 
-        LOGC(dlog.Debug) << "... sending SUCCESSFUL, seq=" << curseq;
+        LOGC(dlog.Debug) << "... sending SUCCESSFUL (cont), seq=" << curseq << " TS=" << logging::FormatTime(mc.srctime);
 
         // Succeeded status, write it to the returned status
         // and grab the data.
@@ -8950,14 +9000,16 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             LOGC(mglog.Debug) << "CUDTGroup::send: socket %" << d->id
                 << ": override snd sequence " << lastseq
                 << " with " << curseq << " (diff by "
-                << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD";
+                << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD TS="
+                << (!mc.srctime ? string("default") : logging::FormatTime(mc.srctime));
             d->ps->core().overrideSndSeqNo(curseq);
         }
         else
         {
             LOGC(mglog.Debug) << "CUDTGroup::send: socket %" << d->id
                 << ": sequence remains with original value: " << lastseq
-                << "; SENDING PAYLOAD";
+                << "; SENDING PAYLOAD TS="
+                << (!mc.srctime ? string("default") : logging::FormatTime(mc.srctime));
         }
 
         // Now send and check the status
@@ -8987,7 +9039,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             // This will cause overriding ISN in every next
             // socket processed in this loop.
         }
-        LOGC(dlog.Debug) << "... sending SUCCESSFUL, seq=" << curseq;
+        LOGC(dlog.Debug) << "... sending SUCCESSFUL (new), seq=" << curseq << " TS=" << logging::FormatTime(mc.srctime);
     }
 
     if (curseq != 0)
