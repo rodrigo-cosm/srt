@@ -1144,32 +1144,6 @@ int CUDTUnited::close(CUDTSocket* s)
    return 0;
 }
 
-void CUDTGroup::close()
-{
-    // Close all descriptors, then delete the group.
-
-    CGuard g(m_GroupLock);
-
-    // A non-managed group may only be closed if there are no
-    // sockets in the group.
-    if (!m_selfManaged && !m_Group.empty())
-        throw CUDTException(MJ_NOTSUP, MN_BUSY, 0);
-    else
-    {
-        // A managed group should first close all member sockets.
-        for (gli_t ig = m_Group.begin(), ig_next = ig; ig != m_Group.end(); ig = ig_next)
-        {
-            ++ig_next; // Increment before it WOULD BE deleted here.
-            m_pGlobal->close(ig->id);
-            m_Group.erase(ig);
-        }
-    }
-
-    m_PeerGroupID = -1;
-    // This takes care of the internal part.
-    // The external part will be done in Global (CUDTUnited)
-}
-
 void CUDTUnited::getpeername(const SRTSOCKET u, sockaddr* name, int* namelen)
 {
     if (!name || !namelen)
