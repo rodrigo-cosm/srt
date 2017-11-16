@@ -2621,10 +2621,26 @@ bool CUDT::interpretGroup(SRTSOCKET grpid, SRT_GROUP_TYPE gtp, int hsreq_type_cm
         }
     }
 
+    m_parent->m_IncludedGroup->debugGroup();
+
     // That's all. For specific things concerning group
     // types, this will be later.
     return true;
 }
+
+#if ENABLE_LOGGING
+void CUDTGroup::debugGroup()
+{
+    CGuard gg(m_GroupLock);
+
+    LOGC(mglog.Debug) << "GROUP MEMBER STATUS - %" << id();
+
+    for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
+    {
+        LOGC(mglog.Debug) << " ... id=%" << gi->id << " peer=%" << gi->ps->m_PeerID;
+    }
+}
+#endif
 
 SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
 {
