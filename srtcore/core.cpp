@@ -1639,6 +1639,10 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
     //   and the handshake request is to be sent with informing the peer that this conenction belongs to a group
     // - When the agent received a HS request with a group, has created its mirror group on its side, and
     //   now sends the HS response to the peer, with ITS OWN group id (the mirror one).
+    //
+    // XXX Probably a condition should be checked here around the group type.
+    // The time synchronization should be done only on any kind of parallel sending group.
+    // This is, for example, for redundancy group or balance group, but not distribution group.
     if (have_group)
     {
         offset += ra_size;
@@ -1647,6 +1651,26 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
 
         SRTSOCKET id = m_parent->m_IncludedGroup->id();
         SRT_GROUP_TYPE tp = m_parent->m_IncludedGroup->type();
+        SRTSOCKET master_peerid;
+        int32_t master_tdiff;
+        uint64_t master_st;
+
+        // "Master" is the first found running connection. Will be false, if
+        // there's no other connection yet. When any connection is found, specify this
+        // as a determined master connection, and extract its 
+        if ( !m_parent->m_IncludedGroup->getMasterData(m_SocketID, Ref(master_peerid), Ref(master_st)) )
+        {
+            master_peerid = -1;
+            master_tdiff = 0;
+            LOGC(mglog.Debug) << CONID() << "NO GROUP MASTER LINK found for group: %" << m_parent->m_IncludedGroup->id();
+        }
+        else
+        {
+            // The returned master_st is the master's start time. Calculate the
+            // differene time.
+            master_tdiff = m_StartTime - master_st;
+            LOGC(mglog.Debug) << CONID() << "FOUND GROUP MASTER LINK: peer=%" << master_peerid << " - start time diff: " << master_tdiff;
+        }
         int32_t storedata [] = { id, tp };
         memcpy(p+offset, storedata, sizeof storedata);
 
@@ -2684,6 +2708,56 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
     s->m_IncludedIter = gp->add(gp->prepareData(s));
 
     return gp->id();
+}
+
+bool CUDTGroup::getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> r_mpeer, ref_t<uint64_t> r_st)
+{
+    // Find at least one connection, which is running. Note that this function is called
+    // from within a handshake process, so the socket that undergoes this process is at best
+    // currently in GST_PENDING state and it's going to be in GST_IDLE state at the
+    // time when the connection process is done, until the first reading/writing happens.
+    CGuard cg(m_GroupLock);
+
+    for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
+    {
+        if (gi->sndstate == GST_RUNNING)
+        {
+            // Found it. Get the socket's peer's ID and this socket's
+            // Start Time. Once it's delivered, this can be used to calculate
+            // the Master-to-Slave start time difference.
+            *r_mpeer = gi->ps->core().m_PeerID;
+            *r_st = gi->ps->core().socketStartTime();
+            LOGC(mglog.Debug) << "getMasterData: found RUNNING master %" << gi->id
+                << " - reporting master's peer %" << *r_mpeer << " starting at "
+                << logging::FormatTime(*r_st);
+            return true;
+        }
+    }
+
+    // If no running one found, then take the first socket in any other
+    // state than broken, except the slave. This is for a case when a user
+    // has prepared one link already, but hasn't sent anything through it yet.
+    for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
+    {
+        if (gi->sndstate == GST_BROKEN)
+            continue;
+
+        if (gi->id == slave)
+            continue;
+
+        // Found it. Get the socket's peer's ID and this socket's
+        // Start Time. Once it's delivered, this can be used to calculate
+        // the Master-to-Slave start time difference.
+        *r_mpeer = gi->ps->core().m_PeerID;
+        *r_st = gi->ps->core().socketStartTime();
+        LOGC(mglog.Debug) << "getMasterData: found IDLE/PENDING master %" << gi->id
+            << " - reporting master's peer %" << *r_mpeer << " starting at "
+            << logging::FormatTime(*r_st);
+        return true;
+    }
+
+    LOGC(mglog.Debug) << "getMasterData: no link found suitable as master for %" << slave;
+    return false;
 }
 
 void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
