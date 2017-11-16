@@ -2637,7 +2637,7 @@ void CUDTGroup::debugGroup()
 
     for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
     {
-        LOGC(mglog.Debug) << " ... id=%" << gi->id << " peer=%" << gi->ps->m_PeerID;
+        LOGC(mglog.Debug) << " ... id=%" << gi->id << " peer=%" << gi->ps->core().m_PeerID;
     }
 }
 #endif
