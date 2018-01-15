@@ -88,7 +88,7 @@ modified by
 using namespace std;
 
 CEPoll::CEPoll():
-m_iIDSeed(0)
+m_iIDSeed(0), m_bWaiting(), m_bInterruptRequested()
 {
    CGuard::createMutex(m_EPollLock);
 }
@@ -393,6 +393,9 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
 
    int total = 0;
 
+   m_bWaiting = true;
+   DestructorVarHook<volatile bool> l_clearBlockingCall(m_bWaiting, false);
+
    int64_t entertime = CTimer::getTime();
    while (true)
    {
@@ -528,6 +531,12 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
       if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * 1000LL))
          throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
 
+      if (m_bInterruptRequested)
+      {
+          m_bInterruptRequested = false;
+          throw CUDTException(MJ_AGAIN, MN_INTREQ, 0);
+      }
+
       #if defined(TARGET_OS_IOS) || defined(TARGET_OS_TV)
       #else
       CTimer::waitForEvent();
@@ -535,6 +544,12 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
    }
 
    return 0;
+}
+
+void CEPoll::interrupt()
+{
+    if (m_bWaiting)
+        m_bInterruptRequested = true;
 }
 
 int CEPoll::release(const int eid)

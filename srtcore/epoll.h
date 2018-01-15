@@ -173,12 +173,16 @@ public: // for CUDT to acknowledge IO status
 
    int update_events(const SRTSOCKET& uid, std::set<int>& eids, int events, bool enable);
 
+   void interrupt();
+
 private:
    int m_iIDSeed;                            // seed to generate a new ID
    pthread_mutex_t m_SeedLock;
 
    std::map<int, CEPollDesc> m_mPolls;       // all epolls
    pthread_mutex_t m_EPollLock;
+   volatile bool m_bWaiting;
+   volatile bool m_bInterruptRequested;
 };
 
 

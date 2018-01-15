@@ -1944,6 +1944,9 @@ int CUDTUnited::interrupt(SRTSOCKET sock, CUDTSocket* cs)
             any = true;
         }
 
+        // Interrupt also a possibly waiting epoll.
+        m_EPoll.interrupt();
+
         if (!any)
             return -1;
 
