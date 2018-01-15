@@ -72,6 +72,7 @@ modified by
    #include <ws2tcpip.h>
 #endif
 #include <cmath>
+#include <csignal>
 #include <sstream>
 #include "srt.h"
 #include "queue.h"
@@ -158,6 +159,37 @@ const int32_t SRT_DEF_VERSION = SrtParseVersion(SRT_VERSION);
         2[15..0]:   TsbPD delay     [0..60000] msec
 */
 
+static bool getNextWaitTime(uint64_t check_interval, uint64_t endtime, ref_t<timespec> r_locktime)
+{
+    timespec& locktime = *r_locktime;
+
+    uint64_t now = CTimer::getTime();
+    uint64_t checkpoint = now + check_interval;
+    // Setup wait time.
+    if (endtime != 0)
+    {
+        // endtime is in the past - break as timeout.
+        if (now >= endtime)
+        {
+            // Break if timeout reached.
+            // (if no timeout defined, this break won't ever fire)
+            return false;
+        }
+
+        // This condition states that now + 1s exceeds the timeout
+        // time, so then wait now until the "rest of the timeout".
+        // Otherwise wait 1 second.
+        if (checkpoint > endtime)
+        {
+            checkpoint = endtime;
+        }
+    }
+
+    locktime.tv_sec = checkpoint / 1000000;
+    locktime.tv_nsec = (checkpoint % 1000000) * 1000;
+
+    return true;
+}
 
 void CUDT::construct()
 {
@@ -2624,6 +2656,13 @@ void CUDT::startConnect(const sockaddr* serv_addr, int32_t forced_isn)
 
     CUDTException e;
 
+    // Set blocking call to true here
+    m_bBlockingCall = true;
+
+    // Set this variable to false when exiting this block
+    // no matter how exitting was done.
+    DestructorVarHook<volatile bool> l_clearBlockingCall(m_bBlockingCall, false);
+
     while (!m_bClosing)
     {
         int64_t tdiff = CTimer::getTime() - m_llLastReqTime;
@@ -2775,6 +2814,14 @@ void CUDT::startConnect(const sockaddr* serv_addr, int32_t forced_isn)
         {
             // timeout
             e = CUDTException(MJ_SETUP, MN_TIMEOUT, 0);
+            break;
+        }
+
+        if (m_bInterruptRequested)
+        {
+            e = CUDTException(MJ_AGAIN, MN_INTREQ, 0);
+            LOGC(mglog.Debug, log << "interrupt: INTERRUPT REQUEST CONSUMED, interrupting connect().");
+            m_bInterruptRequested = false;
             break;
         }
     }
@@ -3715,6 +3762,10 @@ bool CUDT::rendezvousSwitchState(ref_t<UDTRequestType> rsptype, ref_t<bool> need
 */
 void* CUDT::tsbpd(void* param)
 {
+   // This is a library-private secondary thread; blocks signals from
+   // reaching this thread.
+   CUDT::blockSignalsForCurrentThread();
+
    CUDT* self = (CUDT*)param;
 
    THREAD_STATE_INIT("SRT Packet Delivery");
@@ -4467,33 +4518,58 @@ int CUDT::receiveBuffer(char* data, int len)
         }
         else
         {
-            /* Kick TsbPd thread to schedule next wakeup (if running) */
-            if (m_iRcvTimeOut < 0)
-            {
-                while (stillConnected() && !m_pRcvBuffer->isRcvDataReady())
-                {
-                    //Do not block forever, check connection status each 1 sec.
-                    uint64_t exptime = CTimer::getTime() + 1000000ULL;
-                    timespec locktime;
+            // Set blocking call to true here
+            m_bBlockingCall = true;
 
-                    locktime.tv_sec = exptime / 1000000;
-                    locktime.tv_nsec = (exptime % 1000000) * 1000;
-                    pthread_cond_timedwait(&m_RecvDataCond, &m_RecvLock, &locktime);
-                }
+            // Set this variable to false when exiting this block
+            // no matter how exitting was done.
+            DestructorVarHook<volatile bool> l_clearBlockingCall(m_bBlockingCall, false);
+
+            //Do not block forever, check connection status each 1 sec.
+            uint64_t endtime = 0;
+            if (m_iRcvTimeOut > 0)
+            {
+                endtime = CTimer::getTime() + m_iRcvTimeOut*1000;
             }
-            else
-            {
-                uint64_t exptime = CTimer::getTime() + m_iRcvTimeOut * 1000;
-                timespec locktime;
-                locktime.tv_sec = exptime / 1000000;
-                locktime.tv_nsec = (exptime % 1000000) * 1000;
+            timespec locktime;
 
-                while (stillConnected() && !m_pRcvBuffer->isRcvDataReady())
+            for (;;)
+            {
+                // This function creates the next end-of-wait time for a
+                // 1s period (first argument) or less, if it remained less
+                // than 1s to endtime, and if endtime is already in the past,
+                // return false. If endtime == 0, it's considered infinity, so
+                // create now + 1s every time and always return true.
+                if (!getNextWaitTime(1000000, endtime, Ref(locktime)))
                 {
-                    pthread_cond_timedwait(&m_RecvDataCond, &m_RecvLock, &locktime);
-                    if (CTimer::getTime() >= exptime)
-                        break;
+                    break;
                 }
+
+                // In case when it's not going to be called, pretend it was
+                // a timeout - although in this case this loop should be
+                // broken anyway.
+                bool again = true;
+
+                if (stillConnected()
+                        && !m_pRcvBuffer->isRcvDataReady()
+                        && !m_bInterruptRequested)
+                {
+                    again = (pthread_cond_timedwait(&m_RecvDataCond, &m_RecvLock, &locktime) == ETIMEDOUT);
+                }
+                else
+                {
+                    break;
+                }
+
+                if (!again) // the signal has really come.
+                    break;
+            }
+
+            if (m_bInterruptRequested)
+            {
+                LOGC(mglog.Debug, log << "interrupt: INTERRUPT REQUEST CONSUMED, interrupting receiveBuffer().");
+                m_bInterruptRequested = false;
+                throw CUDTException(MJ_AGAIN, MN_INTREQ, 0);
             }
         }
     }
@@ -4516,14 +4592,6 @@ int CUDT::receiveBuffer(char* data, int len)
     }
 
     int res = m_pRcvBuffer->readBuffer(data, len);
-
-    /* Kick TsbPd thread to schedule next wakeup (if running) */
-    if (m_bTsbPd)
-    {
-        LOGP(tslog.Debug, "Ping TSBPD thread to schedule wakeup");
-        pthread_cond_signal(&m_RcvTsbPdCond);
-    }
-
 
     if (!m_pRcvBuffer->isRcvDataReady())
     {
@@ -4705,31 +4773,69 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
         else
         {
+            // Set blocking call to true here
+            m_bBlockingCall = true;
+
+            // Set this variable to false when exiting this block
+            // no matter how exitting was done.
+            DestructorVarHook<volatile bool> l_clearBlockingCall(m_bBlockingCall, false);
+
             {
                 // wait here during a blocking sending
                 CGuard sendblock_lock(m_SendBlockLock);
 
-                if (m_iSndTimeOut < 0)
+                timespec locktime;
+                uint64_t endtime = 0;
+                if (m_iSndTimeOut > 0)
                 {
-                    while (stillConnected()
-                            && sndBuffersLeft() < minlen
-                            && m_bPeerHealth)
-                        pthread_cond_wait(&m_SendBlockCond, &m_SendBlockLock);
+                    endtime = CTimer::getTime() + m_iSndTimeOut*1000;
                 }
-                else
+
+                // Wait, but check conditions every 1 second.
+                // Before entering the wait condition, check if you have
+                // less than 1 second left for waiting. If so, wait only
+                // the remaining time and then declare timeout. If endtime == 0,
+                // then do nothing - wait still by 1s periods, but forever,
+                // or until the condition is not satisfied.
+
+                for (;;)
                 {
-                    uint64_t exptime = CTimer::getTime() + m_iSndTimeOut * 1000ULL;
-                    timespec locktime;
+                    if (!getNextWaitTime(1000000, endtime, Ref(locktime)))
+                        break;
 
-                    locktime.tv_sec = exptime / 1000000;
-                    locktime.tv_nsec = (exptime % 1000000) * 1000;
+                    // In case when it's not going to be called, pretend it was
+                    // a timeout - although in this case this loop should be
+                    // broken anyway.
+                    bool again = true;
 
-                    while (stillConnected()
+                    // Check conditions initially.
+                    if (stillConnected()
                             && sndBuffersLeft() < minlen
                             && m_bPeerHealth
-                            && exptime > CTimer::getTime())
-                        pthread_cond_timedwait(&m_SendBlockCond, &m_SendBlockLock, &locktime);
+                            && !m_bInterruptRequested)
+                    {
+                        // Connection is maintained and helthy, not interrupted, still need more buffers.
+                        again = (pthread_cond_timedwait(&m_SendBlockCond, &m_SendBlockLock, &locktime) == ETIMEDOUT);
+                    }
+                    else
+                    {
+                        // - Connection is no longer maintained
+                        // - minumum buffers required for sending has been reached
+                        // - peer is sick
+                        // - interrupt was requested.
+                        break;
+                    }
+
+                    if (!again) // the signal has really come.
+                        break;
                 }
+            } // (end CS of m_SendBlockLock)
+
+            if (m_bInterruptRequested)
+            {
+                m_bInterruptRequested = false;
+                LOGC(mglog.Debug, log << "interrupt: INTERRUPT REQUEST CONSUMED, interrupting sendmsg2().");
+                throw CUDTException(MJ_AGAIN, MN_INTREQ, 0);
             }
 
             // check the connection status
@@ -4767,6 +4873,7 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
             //    - broken/closing status is checked and responded with CONNECTION/CONNLOST
             //    - not connected status is checked and responded with CONNECTION/NOCONN
             //    - m_bPeerHealth condition is checked and responded with PEERERROR
+            //    - m_bInterruptRequested condition is checked and responded with AGAIN/INTREQ
             //
             // ERGO: never happens?
             LOGC(mglog.Fatal, log << "IPE: sendmsg: the loop exited, while not enough size, still connected, peer healthy. Impossible.");
@@ -4961,16 +5068,29 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
             return res;
         }
     }
+    // Set blocking call to true here
+    m_bBlockingCall = true;
+
+    // Set this variable to false when exiting this block
+    // no matter how exitting was done.
+    DestructorVarHook<volatile bool> l_clearBlockingCall(m_bBlockingCall, false);
 
     int res = 0;
-    bool timeout = false;
+    // This variable was previously "timeout", but this name is more general
+    // as it may direct to stop the periodic-check-waiting loop by any reason.
+    bool stop_waiting = false;
     //Do not block forever, check connection status each 1 sec.
-    uint64_t recvtmo = m_iRcvTimeOut < 0 ? 1000 : m_iRcvTimeOut;
+    uint64_t endtime = 0;
+    if (m_iRcvTimeOut > 0)
+    {
+        endtime = CTimer::getTime() + m_iRcvTimeOut*1000;
+    }
 
     do
     {
-        if (stillConnected() && !timeout && (!m_pRcvBuffer->isRcvDataReady()))
+        if (stillConnected() && !stop_waiting && (!m_pRcvBuffer->isRcvDataReady()))
         {
+            timespec locktime;
             /* Kick TsbPd thread to schedule next wakeup (if running) */
             if (m_bTsbPd)
             {
@@ -4978,24 +5098,46 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
                 pthread_cond_signal(&m_RcvTsbPdCond);
             }
 
-            do
+            for (;;)
             {
-                uint64_t exptime = CTimer::getTime() + (recvtmo * 1000ULL);
-                timespec locktime;
-
-                locktime.tv_sec = exptime / 1000000;
-                locktime.tv_nsec = (exptime % 1000000) * 1000;
-                if (pthread_cond_timedwait(&m_RecvDataCond, &m_RecvLock, &locktime) == ETIMEDOUT)
+                // This function creates the next end-of-wait time for a
+                // 1s period (first argument) or less, if it remained less
+                // than 1s to endtime, and if endtime is already in the past,
+                // return false. If endtime == 0, it's considered infinity, so
+                // create now + 1s every time and always return true.
+                if (!getNextWaitTime(1000000, endtime, Ref(locktime)))
                 {
-                    if (!(m_iRcvTimeOut < 0))
-                        timeout = true;
-                    LOGP(tslog.Debug, "recvmsg: DATA COND: EXPIRED -- trying to get data anyway");
+                    stop_waiting = true;
+                    break;
+                }
+
+                // In case when it's not going to be called, pretend it was
+                // a timeout - although in this case this loop should be
+                // broken anyway.
+                bool again = true;
+
+                if (stillConnected()
+                        && !m_pRcvBuffer->isRcvDataReady()
+                        && !m_bInterruptRequested)
+                {
+                    again = (pthread_cond_timedwait(&m_RecvDataCond, &m_RecvLock, &locktime) == ETIMEDOUT);
                 }
                 else
                 {
-                    LOGP(tslog.Debug, "recvmsg: DATA COND: KICKED.");
+                    break;
                 }
-            } while (stillConnected() && !timeout && (!m_pRcvBuffer->isRcvDataReady()));
+
+                if (!again) // the signal has really come.
+                    break;
+            }
+
+            if (m_bInterruptRequested)
+            {
+                m_bInterruptRequested = false;
+                LOGP(mglog.Debug, "interrupt: INTERRUPT REQUEST CONSUMED, interrupting receiveMessage().");
+                throw CUDTException(MJ_AGAIN, MN_INTREQ, 0);
+            }
+            LOGP(tslog.Debug, "recvmsg: DATA COND: KICKED.");
         }
 
         /* XXX DEBUG STUFF - enable when required
@@ -5014,11 +5156,11 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         }
         else if (!m_bConnected)
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
-    } while ((res == 0) && !timeout);
+    } while ((res == 0) && !stop_waiting);
 
     if (!m_pRcvBuffer->isRcvDataReady())
     {
-        // Falling here means usually that res == 0 && timeout == true.
+        // Falling here means usually that res == 0 && stop_waiting == true.
         // res == 0 would repeat the above loop, unless there was also a timeout.
         // timeout has interrupted the above loop, but with res > 0 this condition
         // wouldn't be satisfied.
@@ -5237,19 +5379,37 @@ int64_t CUDT::recvfile(fstream& ofs, int64_t& offset, int64_t size, int block)
             throw CUDTException(MJ_FILESYSTEM, MN_WRITEFAIL);
         }
 
+        timespec locktime;
+        uint64_t now = CTimer::getTime();
+
+        // Check for interrupt request every 1s.
+        locktime.tv_sec = now/1000000 + 1;
+        locktime.tv_nsec = (now% 1000000) * 1000;
+
         pthread_mutex_lock(&m_RecvDataLock);
         while (stillConnected() && !m_pRcvBuffer->isRcvDataReady())
-            pthread_cond_wait(&m_RecvDataCond, &m_RecvDataLock);
+        {
+            pthread_cond_timedwait(&m_RecvDataCond, &m_RecvDataLock, &locktime);
+        }
         pthread_mutex_unlock(&m_RecvDataLock);
 
         if (!m_bConnected)
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
-        else if ((m_bBroken || m_bClosing) && !m_pRcvBuffer->isRcvDataReady())
+
+        if ((m_bBroken || m_bClosing) && !m_pRcvBuffer->isRcvDataReady())
         {
 
             if (!m_bMessageAPI && m_bShutdown)
                 return 0;
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
+        }
+
+        if (m_bInterruptRequested)
+        {
+            LOGC(mglog.Debug, log << "interrupt: INTERRUPT REQUEST CONSUMED, interrupting recvfile().");
+            m_bInterruptRequested = false;
+            throw CUDTException(MJ_AGAIN, MN_INTREQ, 0);
+            break;
         }
 
         unitsize = int((torecv == -1 || torecv >= block) ? block : torecv);
@@ -8087,4 +8247,27 @@ int CUDT::getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes)
         *bytes = bytecount;
 
     return std::abs(timespan);
+}
+
+void CUDT::blockSignalsForCurrentThread()
+{
+    // Set all signals, just except signals that are known as
+    // serious runtime errors; they are not to be caught anyway
+    // at least not by the known SRT apps (the library should not
+    // handle any signal), but if they occur, the program is rather
+    // unable to continue and shall not be "gently interrupted".
+    sigset_t sigset;
+    sigfillset(&sigset);
+    sigdelset(&sigset, SIGSEGV);
+    sigdelset(&sigset, SIGILL);
+    sigdelset(&sigset, SIGABRT);
+    sigdelset(&sigset, SIGBUS);
+    sigdelset(&sigset, SIGFPE);
+
+    // Theoretically the description specifies that this function
+    // returns 0 for success and -1 for error, but the documentation
+    // is not too loud about errors; the only known is EINVAL, which
+    // is returned if the first parameter (here: SIG_BLOCK) is some
+    // invalid value - and it's known that this error is not made here.
+    pthread_sigmask(SIG_BLOCK, &sigset, NULL);
 }

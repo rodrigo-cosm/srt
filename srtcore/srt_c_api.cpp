@@ -325,5 +325,14 @@ int srt_getsndbuffer(SRTSOCKET sock, size_t* blocks, size_t* bytes)
     return CUDT::getsndbuffer(sock, blocks, bytes);
 }
 
+int srt_interrupt_all()
+{
+    return CUDT::interrupt();
+}
+
+int srt_interrupt(SRTSOCKET sock)
+{
+    return CUDT::interrupt(sock);
+}
 
 }

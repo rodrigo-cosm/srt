@@ -375,7 +375,8 @@ enum CodeMinor
     MN_WRAVAIL = 1,
     MN_RDAVAIL = 2,
     MN_XMTIMEOUT = 3,
-    MN_CONGESTION = 4
+    MN_CONGESTION = 4,
+    MN_INTREQ = 5
 };
 
 static const enum CodeMinor MN_ISSTREAM SRT_ATR_DEPRECATED = (enum CodeMinor)(9);
@@ -431,6 +432,7 @@ typedef enum SRT_ERRNO
     SRT_EASYNCRCV =  MN(AGAIN, RDAVAIL),
     SRT_ETIMEOUT =   MN(AGAIN, XMTIMEOUT),
     SRT_ECONGEST =   MN(AGAIN, CONGESTION),
+    SRT_EINTREQ  =   MN(AGAIN, INTREQ),
 
     SRT_EPEERERR = MJ(PEERERROR)
 } SRT_ERRNO;
@@ -617,6 +619,15 @@ SRT_API void srt_setlogflags(int flags);
 
 
 SRT_API int srt_getsndbuffer(SRTSOCKET sock, size_t* blocks, size_t* bytes);
+
+// These functions are meant to interrupt current operation in SRT.
+// The srt_interrupt_all() interrupts operations being done on all sockets,
+// srt_interrupt() allows to interrupt operations only on selected sockets.
+// The interrupted socket still functions, just the present operation
+// exits always immediately with appropriate error, although the use of
+// this socket may continue (in contrast to closing the socket).
+SRT_API int srt_interrupt_all();
+SRT_API int srt_interrupt(SRTSOCKET sock);
 
 #ifdef __cplusplus
 }

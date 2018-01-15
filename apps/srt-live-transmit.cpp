@@ -123,8 +123,13 @@ void OnINT_ForceExit(int)
 {
     cerr << "\n-------- REQUESTED INTERRUPT!\n";
     int_state = true;
-    if ( transmit_throw_on_interrupt )
-        throw ForcedExit("Requested exception interrupt");
+
+    // Note that throwing exception from signal handlers
+    // is a slick topic, but still, we want to program
+    // to interrupt, even if it means crashing it.
+    //if ( transmit_throw_on_interrupt )
+    //    throw ForcedExit("Requested exception interrupt");
+    srt_interrupt_all();
 }
 
 void OnAlarm_Interrupt(int)
@@ -132,7 +137,14 @@ void OnAlarm_Interrupt(int)
     cerr << "\n---------- INTERRUPT ON TIMEOUT!\n";
     int_state = false; // JIC
     timer_state = true;
-    throw AlarmExit("Watchdog bites hangup");
+    //throw AlarmExit("Watchdog bites hangup");
+
+    // The alternative is to walk through all SRT sockets
+    // and issue srt_interrupt() on all of them.
+    // The similar action for system sockets is not necessary
+    // because these operations are interrupted just by
+    // the fact that the signal was raised.
+    srt_interrupt_all();
 }
 
 struct BandwidthGuard
@@ -516,6 +528,9 @@ int main( int argc, char** argv )
 
         if (final_delay > 0)
         {
+            // Delete them now before waiting
+            src.reset();
+            tar.reset();
             cerr << "Waiting " << final_delay << "s for possible cleanup...\n";
             this_thread::sleep_for(chrono::seconds(final_delay));
         }

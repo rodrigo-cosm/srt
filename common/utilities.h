@@ -422,6 +422,19 @@ public:
 
 #endif
 
+template<class T>
+struct DestructorVarHook
+{
+    T& t;
+    T val;
+
+    DestructorVarHook(T& in, T v): t(in), val(v) {}
+    ~DestructorVarHook()
+    {
+        t = val;
+    }
+};
+
 
 inline std::string FormatBinaryString(const uint8_t* bytes, size_t size)
 {

@@ -218,6 +218,13 @@ public: //API
         return SRT_ERROR;
     }
 
+    static int interrupt(SRTSOCKET sock = INVALID_SOCK)
+    {
+        return s_UDTUnited.interrupt(sock);
+    }
+
+    static void blockSignalsForCurrentThread();
+
 public: // internal API
     static const SRTSOCKET INVALID_SOCK = -1;         // invalid socket descriptor
     static const int ERROR = -1;                      // socket api error returned value
@@ -572,6 +579,24 @@ private:
     volatile bool m_bShutdown;                   // If the peer side has shutdown the connection
     volatile bool m_bBroken;                     // If the connection has been broken
     volatile bool m_bPeerHealth;                 // If the peer status is normal
+    volatile bool m_bInterruptRequested;         // For that socket, interrupt of the current action was requested.
+    volatile bool m_bBlockingCall;               // Flag that currently a possibly-blocking function is being executed.
+    volatile uint64_t m_tInterruptRequestTime;   // Time when the interrupt request was made
+
+    // Check if the interrupt request has been done by more than 2s.
+    // This is to prevent the interruption flag to stay forever. The intent
+    // for interrupting is that it's done at the time when some operation is
+    // being executed, even if not executing exactly at the moment when the
+    // signal has come to interrupt it
+    void checkInterruptOutdated(uint64_t check_interval)
+    {
+        if (m_bInterruptRequested
+                && CTimer::getTime() - m_tInterruptRequestTime > 2*check_interval)
+        {
+            m_bInterruptRequested = false;
+        }
+    }
+
     bool m_bOpened;                              // If the UDT entity has been opened
     int m_iBrokenCounter;                        // a counter (number of GC checks) to let the GC tag this socket as disconnected
 

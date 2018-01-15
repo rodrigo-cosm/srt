@@ -515,6 +515,10 @@ int CSndQueue::getIpToS() const
 
 void* CSndQueue::worker(void* param)
 {
+   // This is a library-private secondary thread; blocks signals from
+   // reaching this thread.
+   CUDT::blockSignalsForCurrentThread();
+
     CSndQueue* self = (CSndQueue*)param;
 
     THREAD_STATE_INIT("SRT Tx Queue");
@@ -1045,6 +1049,10 @@ void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel* c
 
 void* CRcvQueue::worker(void* param)
 {
+   // This is a library-private secondary thread; blocks signals from
+   // reaching this thread.
+   CUDT::blockSignalsForCurrentThread();
+
    CRcvQueue* self = (CRcvQueue*)param;
    sockaddr_any sa ( self->m_UnitQueue.m_iIPversion );
    int32_t id;

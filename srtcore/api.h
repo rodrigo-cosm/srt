@@ -209,6 +209,8 @@ public:
 
    CUDTException* getError();
 
+   int interrupt(SRTSOCKET sock, CUDTSocket* found = 0);
+
 private:
 //   void init();
 
@@ -258,6 +260,8 @@ private:
    void removeSocket(const SRTSOCKET u);
 
    CEPoll m_EPoll;                                     // handling epoll data structures and events
+   volatile bool m_bBlockingCall;
+   volatile bool m_bInterruptRequested;
 
 private:
    CUDTUnited(const CUDTUnited&);

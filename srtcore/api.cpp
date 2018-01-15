@@ -217,6 +217,7 @@ int CUDTUnited::startup()
    {
        ThreadName tn("SRT:GC");
        pthread_create(&m_GCThread, NULL, garbageCollect, this);
+
    }
 
    m_bGCStatus = true;
@@ -317,7 +318,8 @@ SRTSOCKET CUDTUnited::newSocket(int af, int)
    catch (...)
    {
       //failure and rollback
-      CGuard::leaveCS(m_ControlLock);
+      // XXX Double unlocking??? Check again.
+      //CGuard::leaveCS(m_ControlLock);
       delete ns;
       ns = NULL;
    }
@@ -714,6 +716,13 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* addr, int* addrle
    SRTSOCKET u = CUDT::INVALID_SOCK;
    bool accepted = false;
 
+   // Set blocking call to true here
+   ls->m_pUDT->m_bBlockingCall = ls->m_pUDT->m_bSynRecving;
+
+   // Set this variable to false when exiting this block
+   // no matter how exitting was done.
+   DestructorVarHook<volatile bool> l_clearBlockingCall(ls->m_pUDT->m_bBlockingCall, false);
+
    // !!only one conection can be set up each time!!
    while (!accepted)
    {
@@ -756,7 +765,24 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* addr, int* addrle
        }
 
        if (!accepted && (ls->m_Status == SRTS_LISTENING))
-           pthread_cond_wait(&(ls->m_AcceptCond), &(ls->m_AcceptLock));
+       {
+           timespec locktime;
+           uint64_t now = CTimer::getTime();
+
+           // Check for interrupt request every 1s.
+           locktime.tv_sec = now/1000000 + 1;
+           locktime.tv_nsec = (now% 1000000) * 1000;
+           pthread_cond_timedwait(&(ls->m_AcceptCond), &(ls->m_AcceptLock), &locktime);
+
+           volatile bool& intreq = ls->m_pUDT->m_bInterruptRequested;
+
+           if (intreq)
+           {
+               LOGP(mglog.Debug, "interrupt: INTERRUPT REQUEST CONSUMED, interrupting accept().");
+               intreq = false;
+               throw CUDTException(MJ_AGAIN, MN_INTREQ, 0);
+           }
+       }
 
        if (ls->m_pQueuedSockets->empty())
            m_EPoll.update_events(listen, ls->m_pUDT->m_sPollID, UDT_EPOLL_IN, false);
@@ -1802,6 +1828,10 @@ void CUDTUnited::updateListenerMux(CUDTSocket* s, const CUDTSocket* ls)
 
 void* CUDTUnited::garbageCollect(void* p)
 {
+   // This is a library-private secondary thread; blocks signals from
+   // reaching this thread.
+   CUDT::blockSignalsForCurrentThread();
+
    CUDTUnited* self = (CUDTUnited*)p;
 
    THREAD_STATE_INIT("SRT Collector");
@@ -1879,6 +1909,77 @@ void* CUDTUnited::garbageCollect(void* p)
    THREAD_EXIT();
    return NULL;
 }
+
+int CUDTUnited::interrupt(SRTSOCKET sock, CUDTSocket* cs)
+{
+    // This function is intended to work by being called
+    // from within the signal handler. You can call it
+    // also manually with giving it a socket to interrupt.
+    //
+    // This function may be then potentially called from
+    // ANY THREAD OF THE APPLICATION, and there's no possible
+    // control of who is calling it. At the moment when it
+    // is called, the parent at the call stack can be
+    // potentially anything, including functions inside
+    // the work threads of the queue, after having interrupted
+    // the system reading operation.
+
+    // Note: our goal is to interrupt the operation that
+    // is hanging on a mutex
+
+    // First of all, resolve the "omni" version.
+    // The -1 socekt (INVALID_SOCK) means to apply this
+    // to every socket. Enumerate the sockets
+
+    typedef std::map<SRTSOCKET, CUDTSocket*> sockmap_t;
+
+    if (sock == SRT_INVALID_SOCK)
+    {
+        bool any = false;
+        // Roll over the list of sockets.
+        CGuard protect(m_ControlLock);
+        for (sockmap_t::iterator i = m_Sockets.begin(); i != m_Sockets.end(); ++i)
+        {
+            this->interrupt(i->first, i->second);
+            any = true;
+        }
+
+        if (!any)
+            return -1;
+
+        return 0;
+    }
+
+    // Now we get the individual socket. Check the argument if external API.
+    if (!cs)
+    {
+        // Copy-pasted code from CUDTUnited::locate().
+        // This must be done manually because we need the lock
+        // to last longer.
+        CGuard protect(m_ControlLock);
+        sockmap_t::iterator i = m_Sockets.find(sock);
+
+        if ((i == m_Sockets.end()) || (i->second->m_Status == SRTS_CLOSED))
+        {
+            return -1;
+        }
+
+        cs = i->second;
+    }
+
+    if (cs->m_pUDT->m_bBlockingCall)
+    {
+        LOGC(mglog.Debug, log << "interrupt: REQUESTING INTERRUPT ON %" << sock);
+        cs->m_pUDT->m_tInterruptRequestTime = CTimer::getTime();
+        cs->m_pUDT->m_bInterruptRequested = true;
+    }
+    else
+    {
+        LOGC(mglog.Debug, log << "interrupt: NOT REQUESTING INTERRUPT ON %" << sock << " - not blocking call ATM");
+    }
+    return 0;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -2673,6 +2774,7 @@ CUDT* CUDT::getUDTHandle(SRTSOCKET u)
 
 vector<SRTSOCKET> CUDT::existingSockets()
 {
+    CGuard enter(s_UDTUnited.m_ControlLock);
     vector<SRTSOCKET> out;
     for (std::map<SRTSOCKET,CUDTSocket*>::iterator i
          = s_UDTUnited.m_Sockets.begin();

@@ -564,6 +564,9 @@ const char* CUDTException::getErrorMessage()
            m_strMsg += ": early congestion notification";
            break;
 #endif /* SRT_ENABLE_ECN */
+
+        case MN_INTREQ:
+           m_strMsg += ": interrupted blocking call";
         default:
            break;
         }

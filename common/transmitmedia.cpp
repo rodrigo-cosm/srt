@@ -299,15 +299,32 @@ void SrtCommon::Init(string host, int port, map<string,string> par, bool dir_out
             << "(" << (m_blocking_mode ? "" : "non-") << "blocking)"
             << " on " << host << ":" << port << endl;
 
-    if ( m_mode == "caller" )
-        OpenClient(host, port);
-    else if ( m_mode == "listener" )
-        OpenServer(m_adapter, port);
-    else if ( m_mode == "rendezvous" )
-        OpenRendezvous(m_adapter, host, port);
-    else
+    try
     {
-        throw std::invalid_argument("Invalid 'mode'. Use 'client' or 'server'");
+        if ( m_mode == "caller" )
+            OpenClient(host, port);
+        else if ( m_mode == "listener" )
+            OpenServer(m_adapter, port);
+        else if ( m_mode == "rendezvous" )
+            OpenRendezvous(m_adapter, host, port);
+        else
+        {
+            throw std::invalid_argument("Invalid 'mode'. Use 'client' or 'server'");
+        }
+    }
+    catch (...)
+    {
+        // This is an in-constructor-called function, so
+        // when the exception is thrown, the destructor won't
+        // close the sockets. This intercepts the exception
+        // to close them.
+        Verb() << "Open FAILED - closing SRT sockets";
+        if (m_bindsock != SRT_INVALID_SOCK)
+            srt_close(m_bindsock);
+        if (m_sock != SRT_INVALID_SOCK)
+            srt_close(m_sock);
+        m_sock = m_bindsock = SRT_INVALID_SOCK;
+        throw;
     }
 }
 
