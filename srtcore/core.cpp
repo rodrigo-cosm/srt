@@ -100,7 +100,11 @@ struct AllFaOn
         allfa.set(SRT_LOGFA_CONTROL, true);
         allfa.set(SRT_LOGFA_DATA, true);
         allfa.set(SRT_LOGFA_TSBPD, true);
-        allfa.set(SRT_LOGFA_REXMIT, true);
+
+        // Since now all logs are turned on, EXCEPT
+        // rexmit log. This is for special cases. It will
+        // use a rarely used Note level.
+        //allfa.set(SRT_LOGFA_REXMIT, true);
     }
 } logger_fa_all;
 
@@ -5960,6 +5964,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
 
               ++ m_iSentNAK;
               ++ m_iSentNAKTotal;
+              LOGC(rxlog.Note, log << "LOSS DETECTED - reporting seq=" << (*lossdata));
           }
           // Call with no arguments - get loss list from internal data.
           else if (m_pRcvLossList->getLossLength() > 0)
@@ -5980,6 +5985,8 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                   ++ m_iSentNAK;
                   ++ m_iSentNAKTotal;
               }
+              LOGC(rxlog.Note, log << "PERIODIC NAKREPORT - reporting lost seq first="
+                      << (*data) << " last=" << (losslen > 1 ? data[losslen-1] : *data));
 
               delete [] data;
           }
@@ -6366,8 +6373,10 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       // protect packet retransmission
       CGuard::enterCS(m_AckLock);
 
+      size_t losslen = ctrlpkt.getLength() / 4;
+
       // decode loss list message and insert loss into the sender loss list
-      for (int i = 0, n = (int)(ctrlpkt.getLength() / 4); i < n; ++ i)
+      for (size_t i = 0; i < losslen; ++ i)
       {
          if (IsSet(losslist[i], LOSSDATA_SEQNO_RANGE_FIRST))
          {
@@ -6377,7 +6386,12 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
             // <lo, hi> specification means that the consecutive cell has been already interpreted.
             ++ i;
 
+            // Check the log manually because either one or the other should be printed.
+#ifdef ENABLE_HEAVY_LOGGING
             HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+#else
+            LOGF(rxlog.Note, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+#endif
 
             if ((CSeqNo::seqcmp(losslist_lo, losslist_hi) > 0) || (CSeqNo::seqcmp(losslist_hi, m_iSndCurrSeqNo) > 0))
             {
@@ -6409,7 +6423,11 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
          }
          else if (CSeqNo::seqcmp(losslist[i], m_iSndLastAck) >= 0)
          {
+#ifdef ENABLE_HEAVY_LOGGING
             HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d (1 packet)...", losslist[i]);
+#else
+            LOGF(rxlog.Note, "received UMSG_LOSSREPORT: %d (1 packet)...", losslist[i]);
+#endif
 
             if (CSeqNo::seqcmp(losslist[i], m_iSndCurrSeqNo) > 0)
             {
@@ -7048,6 +7066,7 @@ int CUDT::processData(CUnit* unit)
                   uint64_t(m_fTraceBelatedTime)*1000,
                   CTimer::getTime() - tsbpdtime, 0.2);
           m_fTraceBelatedTime = double(bltime)/1000.0;
+          LOGC(rxlog.Note, log << "BELATED packet: seq=" << packet.m_iSeqNo << " past top seq=" << m_iRcvLastSkipAck);
       }
       else
       {
@@ -7063,8 +7082,15 @@ int CUDT::processData(CUnit* unit)
           {
               // addData returns -1 if at the m_iLastAckPos+offset position there already is a packet.
               // So this packet is "redundant".
-              exc_type = "UNACKED";
+              exc_type = "DOUBLED";
               excessive = true;
+          }
+          else
+          {
+              if (offset < m_pRcvBuffer->getCurrMaxPos())
+              {
+                  LOGC(rxlog.Note, log << "RECOVERED lost packet: seq=" << packet.m_iSeqNo);
+              }
           }
       }
 

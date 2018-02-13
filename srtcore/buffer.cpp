@@ -807,6 +807,11 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
    return 0;
 }
 
+int CRcvBuffer::getCurrMaxPos() const
+{
+    return m_iMaxPos;
+}
+
 int CRcvBuffer::readBuffer(char* data, int len)
 {
    int p = m_iStartPos;

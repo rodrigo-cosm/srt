@@ -365,6 +365,7 @@ public:
 
    void skipData(int len);
 
+   int getCurrMaxPos() const;
 
 private:
       /// Adjust receive queue to 1st ready to play message (tsbpdtime < now).
