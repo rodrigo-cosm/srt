@@ -123,7 +123,32 @@ if (DEFINED WITH_COMPILER_PREFIX)
 		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}${WITH_COMPILER_TYPE}++)
 	endif()
 else()
-	message(STATUS "No WITH_COMPILER_PREFIX - using C++ compiler ${CMAKE_CXX_COMPILER}")
+	message(STATUS "No WITH_COMPILER_PREFIX - using default C++ compiler: ${CMAKE_CXX_COMPILER}")
+endif()
+
+if (DEFINED WITH_LINKER)
+	if (NOT DEFINED USE_STATIC_LIBSTDCXX)
+		message(WARNING "NOTE: WITH_LINKER option implies using static libstdc++")
+	endif()
+
+	if (NOT LINUX)
+		message(FATAL_ERROR "The WITH_LINKER option is available only on Linux, it uses Linux specifics")
+	endif()
+
+	# Check if the linker command is different than the C++ compiler command.
+	# If so, then obtain the libstdc++.a file using the original compiler command.
+
+	execute_process(
+		COMMAND
+			${CMAKE_CXX_COMPILER} -print-file-name=libstdc++.a
+		OUTPUT_VARIABLE 
+			LIBSTDCXX_PATH
+	)
+
+	# Now you need to set this linker command as a linker,
+	# but enforce using libstdc++ from obtained location
+	set (CMAKE_CXX_LINK_EXECUTABLE ${WITH_LINKER})
+	set (EXTRA_LIBRARIES "${LIBSTDCXX_PATH} -lm")
 endif()
 
 
@@ -233,7 +258,7 @@ else()
 	#set (SRT_GCC_WARN "/showIncludes")
 endif()
 
-if (USE_STATIC_LIBSTDCXX)
+if (USE_STATIC_LIBSTDCXX AND NOT DEFINED WITH_LINKER)
 	if (HAVE_COMPILER_GNU_COMPAT)
 		set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libstdc++")
 	else()
@@ -491,8 +516,8 @@ endif()
 # transitive or not.
 
 foreach(tar ${srtpack_libspec_common})
-	message(STATUS "ADDING TRANSITIVE LINK DEP to:${tar} : ${PTHREAD_LIBRARY} ${dep}")
-	target_link_libraries (${tar} PUBLIC ${PTHREAD_LIBRARY} ${dep})
+	message(STATUS "ADDING TRANSITIVE LINK DEP to:${tar} : ${EXTRA_LIBRARIES} ${PTHREAD_LIBRARY}")
+	target_link_libraries (${tar} PUBLIC ${EXTRA_LIBRARIES} ${PTHREAD_LIBRARY})
 endforeach()
 
 

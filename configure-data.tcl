@@ -36,6 +36,7 @@
 set internal_options {
 	with-compiler-prefix=<prefix> "set C/C++ toolchains <prefix>gcc and <prefix>g++"
 	with-compiler-type=<name> "compiler type: gcc(default), cc, others simply add ++ for C++"
+	with-linker=<name> "set linker command for special combination of different compiler and linker"
 	with-srt-name=<name> "Override srt library name"
 	with-haicrypt-name=<name> "Override haicrypt library name (if compiled separately)"
 	enable-debug "turn on debug+nonoptimized build mode (if =2, debug+optimized)"
