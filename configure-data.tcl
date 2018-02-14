@@ -38,7 +38,6 @@ set internal_options {
 	with-compiler-type=<name> "compiler type: gcc(default), cc, others simply add ++ for C++"
 	with-linker=<name> "set linker command for special combination of different compiler and linker"
 	with-srt-name=<name> "Override srt library name"
-	with-haicrypt-name=<name> "Override haicrypt library name (if compiled separately)"
 	enable-debug "turn on debug+nonoptimized build mode (if =2, debug+optimized)"
 }
 
@@ -50,10 +49,11 @@ set cmake_options {
     enable-heavy-logging "Should heavy debug logging be enabled (default: OFF)"
     enable-logging "Should logging be enabled (default: ON)"
     enable-profile "Should instrument the code for profiling. Ignored for non-GNU compiler. (default: OFF)"
-    enable-separate-haicrypt "Should haicrypt be built as a separate library file (default: OFF)"
     enable-shared "Should libsrt be built as a shared library (default: ON)"
     enable-static "Should libsrt be built as a static library (default: ON)"
     enable-suflip "Shuld suflip tool be built (default: OFF)"
+	enable-testing "Compile also testing applications (default: OFF)"
+	enable-librt "Link against librt that some systems require for C++11 clock (default: OFF)"
     enable-thread-check "Enable #include <threadcheck.h> that implements THREAD_* macros"
     openssl-crypto-library=<filepath> "Path to a library."
     openssl-include-dir=<path> "Path to a file."
