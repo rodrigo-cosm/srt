@@ -80,7 +80,7 @@ namespace ACKWindowTools
        uint64_t TimeStamp;      // The timestamp when the ACK was sent
    };
 
-   void store(Seq* r_aSeq, const size_t size, int& r_iHead, int& r_iTail, int32_t seq, int32_t ack);
+   int32_t store(Seq* r_aSeq, const size_t size, int& r_iHead, int& r_iTail, int32_t seq, int32_t ack);
    int acknowledge(Seq* r_aSeq, const size_t size, int& r_iHead, int& r_iTail, int32_t seq, int32_t& r_ack);
 }
 
@@ -102,7 +102,7 @@ public:
       /// @param [in] seq ACK seq. no.
       /// @param [in] ack DATA ACK no.
 
-   void store(int32_t seq, int32_t ack)
+   int32_t store(int32_t seq, int32_t ack)
    {
        return ACKWindowTools::store(m_aSeq, SIZE, m_iHead, m_iTail, seq, ack);
    }
@@ -112,9 +112,9 @@ public:
       /// @param [out] ack the DATA ACK no. that matches the ACK-2 no.
       /// @return RTT.
 
-   int acknowledge(int32_t seq, int32_t& r_ack)
+   int acknowledge(int32_t seq, ref_t<int32_t> r_ack)
    {
-       return ACKWindowTools::acknowledge(m_aSeq, SIZE, m_iHead, m_iTail, seq, r_ack);
+       return ACKWindowTools::acknowledge(m_aSeq, SIZE, m_iHead, m_iTail, seq, *r_ack);
    }
 
 private:

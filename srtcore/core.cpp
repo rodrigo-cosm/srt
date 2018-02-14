@@ -5933,7 +5933,15 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
          nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
          DebugAck("sendCtrl: " + CONID(), local_prevack, ack);
 
-         m_ACKWindow.store(m_iAckSeqNo, m_iRcvLastAck);
+         int32_t ovack = m_ACKWindow.store(m_iAckSeqNo, m_iRcvLastAck);
+         if (ovack != -1)
+         {
+             // Logging because this situation shouldn't normally happen.
+             // When m_ACKWindow.acknowledge() is called, this node should
+             // be removed, so this means that there's some weirdly expanding
+             // ACK window.
+             LOGC(mglog.Warn, log << "ACK: overwriting non-ACKACK-ed node ack=" << ovack);
+         }
 
          ++ m_iSentACK;
          ++ m_iSentACKTotal;
@@ -5964,7 +5972,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
 
               ++ m_iSentNAK;
               ++ m_iSentNAKTotal;
-              LOGC(rxlog.Note, log << "LOSS DETECTED - reporting seq=" << (*lossdata));
+              LOGC(rxlog.Note, log << "REPORTING LOSS - seq: " << (*lossdata));
           }
           // Call with no arguments - get loss list from internal data.
           else if (m_pRcvLossList->getLossLength() > 0)
@@ -5985,8 +5993,8 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                   ++ m_iSentNAK;
                   ++ m_iSentNAKTotal;
               }
-              LOGC(rxlog.Note, log << "PERIODIC NAKREPORT - reporting lost seq first="
-                      << (*data) << " last=" << (losslen > 1 ? data[losslen-1] : *data));
+              LOGC(rxlog.Note, log << "REPORTING LOSS - seq: "
+                      << (*data) << " ... " << (losslen > 1 ? data[losslen-1] : *data));
 
               delete [] data;
           }
@@ -6327,14 +6335,32 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
    case UMSG_ACKACK: //110 - Acknowledgement of Acknowledgement
       {
       int32_t ack = 0;
-      int rtt = -1;
 
       // update RTT
-      rtt = m_ACKWindow.acknowledge(ctrlpkt.getAckSeqNo(), ack);
-      if (rtt <= 0)
+      int rtt = m_ACKWindow.acknowledge(ctrlpkt.getAckSeqNo(), Ref(ack));
+      // Return values:
+      // 0: The sequence number was either:
+      //    - within the range of all sequences in the window, but wasn't present
+      //    - ahead of the newest sequence in the window
+      // -1: The sequence was long gone because of two possibilities:
+      //    - the window has grown up due to long not received ACK and the old node
+      //       was overwritten to make space for the newly sent ACK
+      //       ((BARELY POSSIBLE))
+      //    - the sequence number has been already removed because ACKACK for
+      //      that node was already received once.
+      //       ((HAPPENS with phantom packets, or when UMSG_ACK was sent twice - no big deal))
+      //    With -1 value the oldest sequence number past which this one was shown up is
+      //    returned in the 'ack' parameter.
+      if (rtt == 0)
       {
-          LOGC(mglog.Error, log << "IPE: ACK node overwritten when acknowledging " <<
-              ctrlpkt.getAckSeqNo() << " (ack extracted: " << ack << ")");
+          LOGC(mglog.Error, log << "IPE: ACK: node NOT FOUND when acknowledging "
+                  << ctrlpkt.getAckSeqNo());
+          break;
+      }
+      else if (rtt == -1)
+      {
+          LOGC(mglog.Note, log << "ACK: node long gone when acknowledging " <<
+              ctrlpkt.getAckSeqNo() << " (oldest sequence: " << ack << ")");
           break;
       }
 
@@ -6390,7 +6416,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 #ifdef ENABLE_HEAVY_LOGGING
             HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
 #else
-            LOGF(rxlog.Note, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+            LOGF(rxlog.Note, "LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
 #endif
 
             if ((CSeqNo::seqcmp(losslist_lo, losslist_hi) > 0) || (CSeqNo::seqcmp(losslist_hi, m_iSndCurrSeqNo) > 0))
@@ -6426,7 +6452,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 #ifdef ENABLE_HEAVY_LOGGING
             HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d (1 packet)...", losslist[i]);
 #else
-            LOGF(rxlog.Note, "received UMSG_LOSSREPORT: %d (1 packet)...", losslist[i]);
+            LOGF(rxlog.Note, "LOSSREPORT: %d (1 packet)...", losslist[i]);
 #endif
 
             if (CSeqNo::seqcmp(losslist[i], m_iSndCurrSeqNo) > 0)
@@ -7871,6 +7897,7 @@ void CUDT::checkTimers()
         if ((currtime_tk > m_ullNextNAKTime_tk) && (m_pRcvLossList->getLossLength() > 0))
         {
             // NAK timer expired, and there is loss to be reported.
+            LOGC(rxlog.Note, log << "PERIODIC NAKREPORT: reporting current loss list");
             sendCtrl(UMSG_LOSSREPORT);
 
             CTimer::rdtsc(currtime_tk);

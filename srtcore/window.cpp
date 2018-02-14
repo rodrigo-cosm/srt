@@ -71,7 +71,7 @@ using namespace std;
 namespace ACKWindowTools
 {
 
-void store(Seq* r_aSeq, const size_t size, int& r_iHead, int& r_iTail, int32_t seq, int32_t ack)
+int32_t store(Seq* r_aSeq, const size_t size, int& r_iHead, int& r_iTail, int32_t seq, int32_t ack)
 {
    r_aSeq[r_iHead].iACKSeqNo = seq;
    r_aSeq[r_iHead].iACK = ack;
@@ -81,69 +81,94 @@ void store(Seq* r_aSeq, const size_t size, int& r_iHead, int& r_iTail, int32_t s
 
    // overwrite the oldest ACK since it is not likely to be acknowledged
    if (r_iHead == r_iTail)
-      r_iTail = (r_iTail + 1) % size;
+   {
+       r_iTail = (r_iTail + 1) % size;
+       return r_aSeq[r_iHead].iACKSeqNo;
+   }
+   return -1;
 }
 
 int acknowledge(Seq* r_aSeq, const size_t size, int& r_iHead, int& r_iTail, int32_t seq, int32_t& r_ack)
 {
-   if (r_iHead >= r_iTail)
-   {
-      // Head has not exceeded the physical boundary of the window
+    // Empty - no node would be found anyway
+    if (r_iHead == r_iTail)
+    {
+        r_ack = 0;
+        // Could do that as well, but this is clearer that it's empty.
+        return -1; // Means "long gone"
+    }
 
-      for (int i = r_iTail, n = r_iHead; i < n; ++ i)
-      {
-         // looking for indentical ACK Seq. No.
-         if (seq == r_aSeq[i].iACKSeqNo)
-         {
-            // return the Data ACK it carried
-            r_ack = r_aSeq[i].iACK;
+    // We expect that r_aSeq[r_iTail] <= seq <= r_aSeq[r_iHead-1].
+    // seq not found may mean that:
+    // 1. seq < r_aSeq[r_iTail] -- long gone (usual situation, it was removed or overwritten)
+    // 2. seq > r_aSeq[r_iHead-1] -- bogus (received ACKACK=x while no ACK was sent for x)
+    // 3. seq is simply missing in the buffer. (like 2)
+
+    int dist2end = CSeqNo::seqcmp(seq, r_aSeq[r_iTail].iACKSeqNo);
+    if (dist2end < 0)
+    {
+        // Report in r_ack the SEQUENCE number residing at the end (for logging)
+        r_ack = r_aSeq[r_iTail].iACKSeqNo;
+        return -1; // long gone
+    }
+
+    // Head has not exceeded the physical boundary of the window
+    if (r_iHead > r_iTail)
+    {
+        for (int i = r_iTail, n = r_iHead; i < n; ++ i)
+        {
+            // looking for indentical ACK Seq. No.
+            if (seq == r_aSeq[i].iACKSeqNo)
+            {
+                // return the Data ACK it carried
+                r_ack = r_aSeq[i].iACK;
+
+                // calculate RTT
+                int rtt = int(CTimer::getTime() - r_aSeq[i].TimeStamp);
+
+                if (i + 1 == r_iHead)
+                {
+                    r_iTail = r_iHead = 0;
+                    r_aSeq[0].iACKSeqNo = -1;
+                }
+                else
+                    r_iTail = (i + 1) % size;
+
+                return rtt;
+            }
+        }
+
+        // Bad input, the ACK node has been overwritten
+        return 0; // means "should be there and it wasn't".
+    }
+
+    // Head has exceeded the physical window boundary, so it is behind tail
+    for (int j = r_iTail, n = r_iHead + size; j < n; ++ j)
+    {
+        // looking for indentical ACK seq. no.
+        if (seq == r_aSeq[j % size].iACKSeqNo)
+        {
+            // return Data ACK
+            j %= size;
+            r_ack = r_aSeq[j].iACK;
 
             // calculate RTT
-            int rtt = int(CTimer::getTime() - r_aSeq[i].TimeStamp);
+            int rtt = int(CTimer::getTime() - r_aSeq[j].TimeStamp);
 
-            if (i + 1 == r_iHead)
+            if (j == r_iHead)
             {
-               r_iTail = r_iHead = 0;
-               r_aSeq[0].iACKSeqNo = -1;
+                r_iTail = r_iHead = 0;
+                r_aSeq[0].iACKSeqNo = -1;
             }
             else
-               r_iTail = (i + 1) % size;
+                r_iTail = (j + 1) % size;
 
             return rtt;
-         }
-      }
+        }
+    }
 
-      // Bad input, the ACK node has been overwritten
-      return -1;
-   }
-
-   // Head has exceeded the physical window boundary, so it is behind tail
-   for (int j = r_iTail, n = r_iHead + size; j < n; ++ j)
-   {
-      // looking for indentical ACK seq. no.
-      if (seq == r_aSeq[j % size].iACKSeqNo)
-      {
-         // return Data ACK
-         j %= size;
-         r_ack = r_aSeq[j].iACK;
-
-         // calculate RTT
-         int rtt = int(CTimer::getTime() - r_aSeq[j].TimeStamp);
-
-         if (j == r_iHead)
-         {
-            r_iTail = r_iHead = 0;
-            r_aSeq[0].iACKSeqNo = -1;
-         }
-         else
-            r_iTail = (j + 1) % size;
-
-         return rtt;
-      }
-   }
-
-   // bad input, the ACK node has been overwritten
-   return -1;
+    // bad input, the ACK node has been overwritten
+    return 0;
 }
 }
 
