@@ -7113,7 +7113,7 @@ int CUDT::processData(CUnit* unit)
           }
           else
           {
-              if (offset < m_pRcvBuffer->getCurrMaxPos())
+              if (offset < m_pRcvBuffer->getCurrMaxPos()-1)
               {
                   LOGC(rxlog.Note, log << "RECOVERED lost packet: seq=" << packet.m_iSeqNo);
               }
