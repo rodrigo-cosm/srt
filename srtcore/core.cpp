@@ -5819,6 +5819,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
       if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
       {
          int acksize = CSeqNo::seqoff(m_iRcvLastSkipAck, ack);
+         LOGC(rxlog.Note, log << "RCV-ACK: " << m_iRcvLastSkipAck << "-" << ack);
 
          m_iRcvLastAck = ack;
          m_iRcvLastSkipAck = ack;
@@ -6121,11 +6122,13 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       // 1. Don't send ACKACK if the Smoother decides not to.
       if (!m_Smoother->needsAckAck(ack_sequence))
       {
+          // Do nothing (including not sending ACKACK)
       }
       // number of ACK2 can be much less than number of ACK
       // But we agree for repeated ACKACK once already sent, if requested, regardless how often
       else if ( currtime - m_ullSndLastAck2Time <= uint64_t(COMM_SYN_INTERVAL_US) && ack_journal != m_iSndLastAck2 )
       {
+          // Log this fact and do nothing.
           HLOGC(mglog.Debug, log << "ACK: NOT SENDING ACKACK for seq=" << ack_sequence << " jrn=" << ack_journal << " - TOO EARLY for NEXT sequence.");
       }
       else
@@ -6184,9 +6187,11 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
       int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack_sequence);
       // IF distance between m_iSndLastDataAck and ack_sequence is nonempty...
-      if (offset > 0) {
+      if (offset > 0)
+      {
           // acknowledge the sending buffer (remove data that predate 'ack_sequence')
           m_pSndBuffer->ackData(offset);
+          LOGC(rxlog.Note, log << "SND-ACK: " << m_iSndLastDataAck << "-" << ack_sequence);
 
           int64_t currtime = currtime_tk/m_ullCPUFrequency;
           // record total time used for sending
