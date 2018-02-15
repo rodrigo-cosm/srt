@@ -5976,7 +5976,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
               ++ m_iSentNAK;
               ++ m_iSentNAKTotal;
               int losslen = bytes/4;
-              LOGC(rxlog.Note, log << "REPORTING LOSS (explicit) - seq: "
+              LOGC(rxlog.Note, log << "REPORTING LOSS (immediate) - seq: "
                       << SEQNO_VALUE::unwrap(*data) << " ... " << (losslen > 1 ? data[losslen-1] : *data));
           }
           // Call with no arguments - get loss list from internal data.
@@ -5998,7 +5998,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                   ++ m_iSentNAK;
                   ++ m_iSentNAKTotal;
               }
-              LOGC(rxlog.Note, log << "REPORTING LOSS (internal) - seq: "
+              LOGC(rxlog.Note, log << "REPORTING LOSS (periodic-NAKREPORT) - seq: "
                       << SEQNO_VALUE::unwrap(*data) << " ... " << (losslen > 1 ? data[losslen-1] : *data));
 
               delete [] data;
@@ -6473,30 +6473,37 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
               }
               else if (CSeqNo::seqcmp(losslist[i], m_iSndLastAck) >= 0)
               {
-#ifdef ENABLE_HEAVY_LOGGING
                   HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d (1 packet)...", losslist[i]);
-#else
-                  LOGF(rxlog.Note, "LOSSREPORT: %d (1 packet)...", losslist[i]);
-#endif
 
                   if (CSeqNo::seqcmp(losslist[i], m_iSndCurrSeqNo) > 0)
                   {
+                  LOGC(rxlog.Note, log
+                          << "LOSSREPORT " << losslist[i] << " (single) "
+                          << "-- IGNORED (bogus)");
+
                       //seq_a must not be greater than the most recent sent seq
                       secure = false;
                       break;
                   }
 
                   int num = m_pSndLossList->insert(losslist[i], losslist[i]);
+                  LOGC(rxlog.Note, log
+                          << "LOSSREPORT " << losslist[i] << " (single) "
+                          << "-- SCHEDULED " << num << " PACKETS");
 
                   m_iTraceSndLoss += num;
                   m_iSndLossTotal += num;
+              }
+              else
+              {
+                  LOGC(rxlog.Error, log << "LOSSREPORT " << losslist[i] << " -- IGNORED (already ACK-ed!)");
               }
           }
       }
 
       if (!secure)
       {
-         HLOGF(mglog.Debug, "WARNING: out-of-band LOSSREPORT received; considered bug or attack");
+         LOGP(mglog.Warn, "WARNING: out-of-band LOSSREPORT received; considered bug or attack");
          //this should not happen: attack or bug
          m_bBroken = true;
          m_iBrokenCounter = 0;
@@ -7920,7 +7927,6 @@ void CUDT::checkTimers()
         if ((currtime_tk > m_ullNextNAKTime_tk) && (m_pRcvLossList->getLossLength() > 0))
         {
             // NAK timer expired, and there is loss to be reported.
-            LOGC(rxlog.Note, log << "PERIODIC NAKREPORT: reporting current loss list");
             sendCtrl(UMSG_LOSSREPORT);
 
             CTimer::rdtsc(currtime_tk);
