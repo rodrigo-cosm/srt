@@ -7138,7 +7138,7 @@ int CUDT::processData(CUnit* unit)
               {
                   LOGC(rxlog.Note,
                           log << "RECOVERED lost packet: seq=" << packet.m_iSeqNo << " UNCHK=[" << m_iRcvLastSkipAck
-                                << CSeqNo::incseq(m_iRcvLastSkipAck, (m_pRcvBuffer->getCurrMaxPos()-1)) << "]");
+                          << " ... " << CSeqNo::incseq(m_iRcvLastSkipAck, (m_pRcvBuffer->getCurrMaxPos()-1)) << "]");
               }
           }
       }
