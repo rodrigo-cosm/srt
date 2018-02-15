@@ -7082,7 +7082,7 @@ int CUDT::processData(CUnit* unit)
 
       bool excessive = false;
       string exc_type = "EXPECTED";
-      if ((offset < 0))
+      if (offset < 0)
       {
           exc_type = "BELATED";
           excessive = true;
@@ -7092,7 +7092,6 @@ int CUDT::processData(CUnit* unit)
                   uint64_t(m_fTraceBelatedTime)*1000,
                   CTimer::getTime() - tsbpdtime, 0.2);
           m_fTraceBelatedTime = double(bltime)/1000.0;
-          LOGC(rxlog.Note, log << "BELATED packet: seq=" << packet.m_iSeqNo << " past top seq=" << m_iRcvLastSkipAck);
       }
       else
       {
@@ -7115,7 +7114,7 @@ int CUDT::processData(CUnit* unit)
           {
               if (offset < m_pRcvBuffer->getCurrMaxPos()-1)
               {
-                  LOGC(rxlog.Note, log << "RECOVERED lost packet: seq=" << packet.m_iSeqNo);
+                  LOGC(rxlog.Note, log << "RECOVERED lost packet: seq=" << packet.m_iSeqNo << " top-seq=" << m_iRcvLastSkipAck);
               }
           }
       }
