@@ -6359,7 +6359,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       }
       else if (rtt == -1)
       {
-          LOGC(mglog.Note, log << "ACK: node long gone when acknowledging " <<
+          HLOGC(mglog.Debug, log << "ACK: node long gone when acknowledging " <<
               ctrlpkt.getAckSeqNo() << " (oldest sequence: " << ack << ")");
           break;
       }
