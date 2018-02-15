@@ -3773,8 +3773,6 @@ void* CUDT::tsbpd(void* param)
                 self->unlose(self->m_iRcvLastSkipAck, CSeqNo::decseq(skiptoseqno)); //remove(from,to-inclusive)
                 self->m_pRcvBuffer->skipData(seqlen);
 
-                self->m_iRcvLastSkipAck = skiptoseqno;
-
 #if ENABLE_LOGGING
                 uint64_t now = CTimer::getTime();
 
@@ -3791,6 +3789,8 @@ void* CUDT::tsbpd(void* param)
                 LOGC(rxlog.Note, log << "TLPKTDROP seq:" << self->m_iRcvLastSkipAck << "-" << CSeqNo::decseq(skiptoseqno) << " delay=" << int64_t(now - tsbpdtime) << "ms");
 #endif
 #endif
+                self->m_iRcvLastSkipAck = skiptoseqno;
+
 
                 tsbpdtime = 0; //SAME AS: goto NO_TSBPDTIME
                 rxready = false;
@@ -5965,17 +5965,19 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
           // Explicitly defined lost sequences 
           if (rparam)
           {
-              int32_t* lossdata = (int32_t*)rparam;
+              int32_t* data = (int32_t*)rparam;
 
-              size_t bytes = sizeof(*lossdata)*size;
-              ctrlpkt.pack(pkttype, NULL, lossdata, bytes);
+              size_t bytes = sizeof(*data)*size;
+              ctrlpkt.pack(pkttype, NULL, data, bytes);
 
               ctrlpkt.m_iID = m_PeerID;
               nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
 
               ++ m_iSentNAK;
               ++ m_iSentNAKTotal;
-              LOGC(rxlog.Note, log << "REPORTING LOSS - seq: " << (*lossdata));
+              int losslen = bytes/4;
+              LOGC(rxlog.Note, log << "REPORTING LOSS (explicit) - seq: "
+                      << SEQNO_VALUE::unwrap(*data) << " ... " << (losslen > 1 ? data[losslen-1] : *data));
           }
           // Call with no arguments - get loss list from internal data.
           else if (m_pRcvLossList->getLossLength() > 0)
@@ -5987,7 +5989,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
               int losslen;
               m_pRcvLossList->getLossArray(data, losslen, m_iMaxSRTPayloadSize / 4);
 
-              if (0 < losslen)
+              if (losslen > 0)
               {
                   ctrlpkt.pack(pkttype, NULL, data, losslen * 4);
                   ctrlpkt.m_iID = m_PeerID;
@@ -5996,8 +5998,8 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                   ++ m_iSentNAK;
                   ++ m_iSentNAKTotal;
               }
-              LOGC(rxlog.Note, log << "REPORTING LOSS - seq: "
-                      << (*data) << " ... " << (losslen > 1 ? data[losslen-1] : *data));
+              LOGC(rxlog.Note, log << "REPORTING LOSS (internal) - seq: "
+                      << SEQNO_VALUE::unwrap(*data) << " ... " << (losslen > 1 ? data[losslen-1] : *data));
 
               delete [] data;
           }
@@ -7134,7 +7136,9 @@ int CUDT::processData(CUnit* unit)
           {
               if (offset < m_pRcvBuffer->getCurrMaxPos()-1)
               {
-                  LOGC(rxlog.Note, log << "RECOVERED lost packet: seq=" << packet.m_iSeqNo << " top-seq=" << m_iRcvLastSkipAck);
+                  LOGC(rxlog.Note,
+                          log << "RECOVERED lost packet: seq=" << packet.m_iSeqNo << " UNCHK=[" << m_iRcvLastSkipAck
+                                << CSeqNo::incseq(m_iRcvLastSkipAck, (m_pRcvBuffer->getCurrMaxPos()-1)) << "]");
               }
           }
       }
