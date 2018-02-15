@@ -248,6 +248,32 @@ private:
         return m_iMinNakInterval_us * CTimer::getCPUFrequency();
     }
 
+    bool needsAckAck(int32_t sequence) ATR_OVERRIDE
+    {
+        // In Live mode, don't send ACKACK for ACK that has been once sent already.
+        // This is meaningful only if you receive a "phantom" ACK control packet (second instance
+        // of that packet once sent already), which is possible, but very unlikely, when sending
+        // over UDP, but happening also all the time when using UDP redundancy.
+
+        // This should not be done in File mode because a repeated ACK usually means that packets
+        // beyond this were not received and possibly also ACKACK was not received and this might
+        // make the transmission stuck. In Live mode though there are strict time requirements
+        // for packet reception, and if they are not adhered to, the packet drop must be done.
+        // So it rather doesn't happen that an acknowledgement of the same sequence is received
+        // twice, and this isn't just to receive ACKACK, which is only used for statistics. The
+        // longer it needs to wait for the response with ACKACK, the less accurate are the measurements
+        // done with this, and too long delay put on an ACKACK response can make "spikes" influence
+        // the overall RTT calculation unnecessarily.
+
+        if ( CSeqNo::seqcmp(sequence, m_parent->sndOldestSeq()) < 0 )
+        {
+            HLOGC(mglog.Debug, log << "ACK: NOT SENDING ACKACK for seq=" << sequence << " - this seq is already FORGOTTEN.");
+            return false;
+        }
+
+        return true;
+    }
+
 };
 
 

@@ -264,6 +264,11 @@ public: // internal API
     int RTT() { return m_iRTT; }
     int32_t sndSeqNo() { return m_iSndCurrSeqNo; }
     int32_t rcvSeqNo() { return m_iRcvCurrSeqNo; }
+
+    // This value is simultaneously the "oldest sequence ever", that is,
+    // the oldest possible sequence number of a packet that is still kept
+    // in the sending buffer.
+    int32_t sndOldestSeq() { return m_iSndLastDataAck; }
     int flowWindowSize() { return m_iFlowWindowSize; }
     int32_t deliveryRate() { return m_iDeliveryRate; }
     int bandwidth() { return m_iBandwidth; }

@@ -190,6 +190,13 @@ public:
     {
         return 0; // Leave default
     }
+
+    virtual bool needsAckAck(int32_t /*sequence*/)
+    {
+        // By default (currently applies to file smoother) always
+        // require ACKACK, as long as it's rare enough or repeated the same ACKACK.
+        return true;
+    }
 };
 
 

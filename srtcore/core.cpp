@@ -3786,11 +3786,13 @@ void* CUDT::tsbpd(void* param)
                 HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: DROPSEQ: up to seq=" << CSeqNo::decseq(skiptoseqno)
                     << " (" << seqlen << " packets) playable at " << logging::FormatTime(tsbpdtime) << " delayed "
                     << (timediff/1000) << "." << (timediff%1000) << " ms");
+#else
+                // Don't print that log if heavy logging is on, no need to duplicated debug log.
+                LOGC(rxlog.Note, log << "TLPKTDROP seq:" << self->m_iRcvLastSkipAck << "-" << CSeqNo::decseq(skiptoseqno) << " delay=" << int64_t(now - tsbpdtime) << "ms");
 #endif
-                LOGC(dlog.Debug, log << "RCV-DROPPED packet delay=" << int64_t(now - tsbpdtime) << "ms");
 #endif
 
-                tsbpdtime = 0; //Next sent ack will unblock
+                tsbpdtime = 0; //SAME AS: goto NO_TSBPDTIME
                 rxready = false;
              }
              else if (passack)
@@ -3823,7 +3825,7 @@ void* CUDT::tsbpd(void* param)
          * Set EPOLL_IN to wakeup any thread waiting on epoll
          */
          self->s_UDTUnited.m_EPoll.update_events(self->m_SocketID, self->m_sPollID, UDT_EPOLL_IN, true);
-         tsbpdtime = 0;
+         tsbpdtime = 0; //SAME AS: goto NO_TSBPDTIME
       }
 
       if (tsbpdtime != 0)
@@ -3844,6 +3846,7 @@ void* CUDT::tsbpd(void* param)
       }
       else
       {
+         // [[label NO_TSBPDTIME]]
          /*
          * We have just signaled epoll; or
          * receive queue is empty; or
@@ -6080,6 +6083,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
    uint64_t currtime_tk;
    CTimer::rdtsc(currtime_tk);
    m_ullLastRspTime_tk = currtime_tk;
+   int64_t currtime = currtime_tk/m_ullCPUFrequency;
    bool using_rexmit_flag = m_bPeerRexmitFlag;
 
    HLOGC(mglog.Debug, log << CONID() << "incoming UMSG:" << ctrlpkt.getType() << " ("
@@ -6089,19 +6093,18 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
    {
    case UMSG_ACK: //010 - Acknowledgement
       {
-      int32_t ack;
       int32_t* ackdata = (int32_t*)ctrlpkt.m_pcData;
+      int32_t ack_sequence = ackdata[ACKD_RCVLASTACK];
 
       // process a lite ACK
       if (ctrlpkt.getLength() == SEND_LITE_ACK)
       {
-         ack = *ackdata;
-         if (CSeqNo::seqcmp(ack, m_iSndLastAck) >= 0)
+         if (CSeqNo::seqcmp(ack_sequence, m_iSndLastAck) >= 0)
          {
-            m_iFlowWindowSize -= CSeqNo::seqoff(m_iSndLastAck, ack);
-            HLOGC(mglog.Debug, log << CONID() << "ACK covers: " << m_iSndLastDataAck << " - " << ack << " [ACK=" << m_iSndLastAck << "] (FLW: " << m_iFlowWindowSize << ") [LITE]");
+            m_iFlowWindowSize -= CSeqNo::seqoff(m_iSndLastAck, ack_sequence);
+            HLOGC(mglog.Debug, log << CONID() << "ACK covers: " << m_iSndLastDataAck << " - " << ack_sequence << " [ACK=" << m_iSndLastAck << "] (FLW: " << m_iFlowWindowSize << ") [LITE]");
 
-            m_iSndLastAck = ack;
+            m_iSndLastAck = ack_sequence;
             m_ullLastRspAckTime_tk = currtime_tk;
             m_iReXmitCount = 1;       // Reset re-transmit count since last ACK
          }
@@ -6110,69 +6113,77 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       }
 
        // read ACK seq. no.
-      ack = ctrlpkt.getAckSeqNo();
+      int32_t ack_journal = ctrlpkt.getAckSeqNo();
 
-      // send ACK acknowledgement
-      // number of ACK2 can be much less than number of ACK
-      uint64_t now = CTimer::getTime();
-      if ((now - m_ullSndLastAck2Time > (uint64_t)COMM_SYN_INTERVAL_US) || (ack == m_iSndLastAck2))
+      // send acknowledge of acknowledgement
+      // 1. Don't send ACKACK if the Smoother decides not to.
+      if (!m_Smoother->needsAckAck(ack_sequence))
       {
-         sendCtrl(UMSG_ACKACK, &ack);
-         m_iSndLastAck2 = ack;
-         m_ullSndLastAck2Time = now;
+      }
+      // number of ACK2 can be much less than number of ACK
+      // But we agree for repeated ACKACK once already sent, if requested, regardless how often
+      else if ( currtime - m_ullSndLastAck2Time <= uint64_t(COMM_SYN_INTERVAL_US) && ack_journal != m_iSndLastAck2 )
+      {
+          HLOGC(mglog.Debug, log << "ACK: NOT SENDING ACKACK for seq=" << ack_sequence << " jrn=" << ack_journal << " - TOO EARLY for NEXT sequence.");
+      }
+      else
+      {
+          sendCtrl(UMSG_ACKACK, &ack_journal);
+          m_iSndLastAck2 = ack_journal;
+          m_ullSndLastAck2Time = CTimer::getTime();
       }
 
       // Got data ACK
-      ack = ackdata[ACKD_RCVLASTACK];
+      ack_sequence = ackdata[ACKD_RCVLASTACK];
 
       // New code, with TLPKTDROP
 
       // protect packet retransmission
       CGuard::enterCS(m_AckLock);
 
-      // check the validation of the ack
-      int seqdiff = CSeqNo::seqcmp(ack, CSeqNo::incseq(m_iSndCurrSeqNo));
+      // check the validation of the ack_sequence
+      int seqdiff = CSeqNo::seqcmp(ack_sequence, CSeqNo::incseq(m_iSndCurrSeqNo));
       if (seqdiff> 0)
       {
          CGuard::leaveCS(m_AckLock);
          //this should not happen: attack or bug
-         LOGC(glog.Error, log << CONID() << "ATTACK/IPE: incoming ack seq " << ack << " exceeds current " << m_iSndCurrSeqNo << " by " << seqdiff << "!");
+         LOGC(glog.Error, log << CONID() << "ATTACK/IPE: incoming ack_sequence seq " << ack_sequence << " exceeds current " << m_iSndCurrSeqNo << " by " << seqdiff << "!");
          m_bBroken = true;
          m_iBrokenCounter = 0;
          break;
       }
 
-      if (CSeqNo::seqcmp(ack, m_iSndLastAck) >= 0)
+      if (CSeqNo::seqcmp(ack_sequence, m_iSndLastAck) >= 0)
       {
          // Update Flow Window Size, must update before and together with m_iSndLastAck
          m_iFlowWindowSize = ackdata[ACKD_BUFFERLEFT];
-         m_iSndLastAck = ack;
+         m_iSndLastAck = ack_sequence;
          m_ullLastRspAckTime_tk = currtime_tk;
          m_iReXmitCount = 1;       // Reset re-transmit count since last ACK
       }
 
       /* 
-      * We must not ignore full ack received by peer
+      * We must not ignore full ack_sequence received by peer
       * if data has been artificially acked by late packet drop.
-      * Therefore, a distinct ack state is used for received Ack (iSndLastFullAck)
-      * and ack position in send buffer (m_iSndLastDataAck).
+      * Therefore, a distinct ack_sequence state is used for received Ack (iSndLastFullAck)
+      * and ack_sequence position in send buffer (m_iSndLastDataAck).
       * Otherwise, when severe congestion causing packet drops (and m_iSndLastDataAck update)
       * occures, we drop received acks (as duplicates) and do not update stats like RTT,
       * which may go crazy and stay there, preventing proper stream recovery.
       */
 
-      if (CSeqNo::seqoff(m_iSndLastFullAck, ack) <= 0)
+      if (CSeqNo::seqoff(m_iSndLastFullAck, ack_sequence) <= 0)
       {
          // discard it if it is a repeated ACK
          CGuard::leaveCS(m_AckLock);
          break;
       }
-      m_iSndLastFullAck = ack;
+      m_iSndLastFullAck = ack_sequence;
 
-      int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack);
-      // IF distance between m_iSndLastDataAck and ack is nonempty...
+      int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack_sequence);
+      // IF distance between m_iSndLastDataAck and ack_sequence is nonempty...
       if (offset > 0) {
-          // acknowledge the sending buffer (remove data that predate 'ack')
+          // acknowledge the sending buffer (remove data that predate 'ack_sequence')
           m_pSndBuffer->ackData(offset);
 
           int64_t currtime = currtime_tk/m_ullCPUFrequency;
@@ -6181,21 +6192,21 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
           m_llSndDurationTotal += currtime - m_llSndDurationCounter;
           m_llSndDurationCounter = currtime;
 
-          HLOGC(mglog.Debug, log << CONID() << "ACK covers: " << m_iSndLastDataAck << " - " << ack
+          HLOGC(mglog.Debug, log << CONID() << "ACK covers: " << m_iSndLastDataAck << " - " << ack_sequence
               << " [ACK=" << m_iSndLastAck << "] BUFr=" << m_iFlowWindowSize
               << " RTT=" << ackdata[ACKD_RTT] << " RTT*=" << ackdata[ACKD_RTTVAR]
               << " BW=" << ackdata[ACKD_BANDWIDTH] << " Vrec=" << ackdata[ACKD_RCVSPEED]);
           // update sending variables
-          m_iSndLastDataAck = ack;
+          m_iSndLastDataAck = ack_sequence;
 
-          // remove any loss that predates 'ack' (not to be considered loss anymore)
+          // remove any loss that predates 'ack_sequence' (not to be considered loss anymore)
           m_pSndLossList->remove(CSeqNo::decseq(m_iSndLastDataAck));
       }
 
 /* OLD CODE without TLPKTDROP
 
-      // check the validation of the ack
-      if (CSeqNo::seqcmp(ack, CSeqNo::incseq(m_iSndCurrSeqNo)) > 0)
+      // check the validation of the ack_sequence
+      if (CSeqNo::seqcmp(ack_sequence, CSeqNo::incseq(m_iSndCurrSeqNo)) > 0)
       {
          //this should not happen: attack or bug
          m_bBroken = true;
@@ -6203,11 +6214,11 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
          break;
       }
 
-      if (CSeqNo::seqcmp(ack, m_iSndLastAck) >= 0)
+      if (CSeqNo::seqcmp(ack_sequence, m_iSndLastAck) >= 0)
       {
          // Update Flow Window Size, must update before and together with m_iSndLastAck
          m_iFlowWindowSize = ackdata[ACKD_BUFFERLEFT];
-         m_iSndLastAck = ack;
+         m_iSndLastAck = ack_sequence;
          m_ullLastRspAckTime_tk = currtime_tk;
          m_iReXmitCount = 1;       // Reset re-transmit count since last ACK
       }
@@ -6215,7 +6226,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       // protect packet retransmission
       CGuard::enterCS(m_AckLock);
 
-      int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack);
+      int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack_sequence);
       if (offset <= 0)
       {
          // discard it if it is a repeated ACK
@@ -6234,7 +6245,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       m_llSndDurationCounter = currtime;
 
       // update sending variables
-      m_iSndLastDataAck = ack;
+      m_iSndLastDataAck = ack_sequence;
       m_pSndLossList->remove(CSeqNo::decseq(m_iSndLastDataAck));
 
 #endif  SRT_ENABLE_TLPKTDROP */
@@ -6324,7 +6335,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       }
 
       checkSndTimers(REGEN_KM);
-      updateCC(TEV_ACK, ack);
+      updateCC(TEV_ACK, ack_sequence);
 
       ++ m_iRecvACK;
       ++ m_iRecvACKTotal;
@@ -6396,80 +6407,90 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
       bool secure = true;
 
-      // protect packet retransmission
-      CGuard::enterCS(m_AckLock);
-
-      size_t losslen = ctrlpkt.getLength() / 4;
-
-      // decode loss list message and insert loss into the sender loss list
-      for (size_t i = 0; i < losslen; ++ i)
       {
-         if (IsSet(losslist[i], LOSSDATA_SEQNO_RANGE_FIRST))
-         {
-             // Then it's this is a <lo, hi> specification with HI in a consecutive cell.
-            int32_t losslist_lo = SEQNO_VALUE::unwrap(losslist[i]);
-            int32_t losslist_hi = losslist[i+1];
-            // <lo, hi> specification means that the consecutive cell has been already interpreted.
-            ++ i;
+          // protect packet retransmission
+          CGuard acklock_guard(m_AckLock);
 
-            // Check the log manually because either one or the other should be printed.
+          size_t losslen = ctrlpkt.getLength() / 4;
+
+          // decode loss list message and insert loss into the sender loss list
+          for (size_t i = 0; i < losslen; ++ i)
+          {
+              if (IsSet(losslist[i], LOSSDATA_SEQNO_RANGE_FIRST))
+              {
+                  // Then it's this is a <lo, hi> specification with HI in a consecutive cell.
+                  int32_t losslist_lo = SEQNO_VALUE::unwrap(losslist[i]);
+                  int32_t losslist_hi = losslist[i+1];
+                  // <lo, hi> specification means that the consecutive cell has been already interpreted.
+                  ++ i;
+
+                  // Check the log manually because either one or the other should be printed.
+                  HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+
+                  if ((CSeqNo::seqcmp(losslist_lo, losslist_hi) > 0) || (CSeqNo::seqcmp(losslist_hi, m_iSndCurrSeqNo) > 0))
+                  {
+                      // seq_a must not be greater than seq_b; seq_b must not be greater than the most recent sent seq
+                      secure = false;
+                      break;
+                  }
+
+                  int num = 0;
+                  if (CSeqNo::seqcmp(losslist_lo, m_iSndLastAck) >= 0)
+                  {
+                      num = m_pSndLossList->insert(losslist_lo, losslist_hi);
+                      LOGC(rxlog.Note, log
+                              << "LOSSREPORT " << losslist_lo << "-" << losslist_hi
+                              << " (" << (CSeqNo::seqcmp(losslist_hi, losslist_lo)+1) << ") "
+                              << "-- SCHEDULED " << num << " PACKETS");
+                  }
+                  else if (CSeqNo::seqcmp(losslist_hi, m_iSndLastAck) >= 0)
+                  {
+                      // This should be theoretically impossible because this would mean
+                      // that the received packet loss report informs about the loss that predates
+                      // the ACK sequence.
+                      // However, this can happen if the packet reordering has caused the earlier sent
+                      // LOSSREPORT will be delivered after later sent ACK. Whatever, ACK should be
+                      // more important, so simply drop the part that predates ACK.
+                      num = m_pSndLossList->insert(m_iSndLastAck, losslist_hi);
+                      LOGC(rxlog.Note, log
+                              << "LOSSREPORT " << losslist_lo << "-" << losslist_hi
+                              << " (" << (CSeqNo::seqcmp(losslist_hi, losslist_lo)+1) << ") "
+                              << "-- FROM " << m_iSndLastAck << ", SCHEDULED " << num << " PACKETS");
+                  }
+                  else
+                  {
+                      LOGC(rxlog.Note, log
+                              << "LOSSREPORT " << losslist_lo << "-" << losslist_hi
+                              << " (" << (CSeqNo::seqcmp(losslist_hi, losslist_lo)+1) << ") "
+                              << "-- NOT SCHEDULING, FORGOTTEN.");
+                  }
+
+                  m_iTraceSndLoss += num;
+                  m_iSndLossTotal += num;
+
+              }
+              else if (CSeqNo::seqcmp(losslist[i], m_iSndLastAck) >= 0)
+              {
 #ifdef ENABLE_HEAVY_LOGGING
-            HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+                  HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d (1 packet)...", losslist[i]);
 #else
-            LOGF(rxlog.Note, "LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+                  LOGF(rxlog.Note, "LOSSREPORT: %d (1 packet)...", losslist[i]);
 #endif
 
-            if ((CSeqNo::seqcmp(losslist_lo, losslist_hi) > 0) || (CSeqNo::seqcmp(losslist_hi, m_iSndCurrSeqNo) > 0))
-            {
-               // seq_a must not be greater than seq_b; seq_b must not be greater than the most recent sent seq
-               secure = false;
-               // XXX leaveCS: really necessary? 'break' will break the 'for' loop, not the 'switch' statement.
-               // and the leaveCS is done again next to the 'for' loop end.
-               CGuard::leaveCS(m_AckLock);
-               break;
-            }
+                  if (CSeqNo::seqcmp(losslist[i], m_iSndCurrSeqNo) > 0)
+                  {
+                      //seq_a must not be greater than the most recent sent seq
+                      secure = false;
+                      break;
+                  }
 
-            int num = 0;
-            if (CSeqNo::seqcmp(losslist_lo, m_iSndLastAck) >= 0)
-               num = m_pSndLossList->insert(losslist_lo, losslist_hi);
-            else if (CSeqNo::seqcmp(losslist_hi, m_iSndLastAck) >= 0)
-            {
-                // This should be theoretically impossible because this would mean
-                // that the received packet loss report informs about the loss that predates
-                // the ACK sequence.
-                // However, this can happen if the packet reordering has caused the earlier sent
-                // LOSSREPORT will be delivered after later sent ACK. Whatever, ACK should be
-                // more important, so simply drop the part that predates ACK.
-               num = m_pSndLossList->insert(m_iSndLastAck, losslist_hi);
-            }
+                  int num = m_pSndLossList->insert(losslist[i], losslist[i]);
 
-            m_iTraceSndLoss += num;
-            m_iSndLossTotal += num;
-
-         }
-         else if (CSeqNo::seqcmp(losslist[i], m_iSndLastAck) >= 0)
-         {
-#ifdef ENABLE_HEAVY_LOGGING
-            HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d (1 packet)...", losslist[i]);
-#else
-            LOGF(rxlog.Note, "LOSSREPORT: %d (1 packet)...", losslist[i]);
-#endif
-
-            if (CSeqNo::seqcmp(losslist[i], m_iSndCurrSeqNo) > 0)
-            {
-               //seq_a must not be greater than the most recent sent seq
-               secure = false;
-               CGuard::leaveCS(m_AckLock);
-               break;
-            }
-
-            int num = m_pSndLossList->insert(losslist[i], losslist[i]);
-
-            m_iTraceSndLoss += num;
-            m_iSndLossTotal += num;
-         }
+                  m_iTraceSndLoss += num;
+                  m_iSndLossTotal += num;
+              }
+          }
       }
-      CGuard::leaveCS(m_AckLock);
 
       if (!secure)
       {
@@ -6863,7 +6884,6 @@ int CUDT::packData(CPacket& packet, uint64_t& ts_tk)
          if (0 != (payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo, origintime, kflg)))
          {
             m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
-            //m_pCryptoControl->m_iSndCurrSeqNo = m_iSndCurrSeqNo;
 
             packet.m_iSeqNo = m_iSndCurrSeqNo;
 
@@ -7819,7 +7839,7 @@ int CUDT::processConnectRequest(const sockaddr* addr, CPacket& packet)
            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, true);
        }
    }
-   LOGC(mglog.Note, log << "listen ret: " << hs.m_iReqType << " - " << RequestTypeStr(hs.m_iReqType));
+   LOGC(mglog.Debug, log << "listen ret: " << hs.m_iReqType << " - " << RequestTypeStr(hs.m_iReqType));
 
    return hs.m_iReqType;
 }
