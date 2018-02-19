@@ -3786,7 +3786,8 @@ void* CUDT::tsbpd(void* param)
                     << (timediff/1000) << "." << (timediff%1000) << " ms");
 #else
                 // Don't print that log if heavy logging is on, no need to duplicated debug log.
-                LOGC(rxlog.Note, log << "TLPKTDROP seq:" << self->m_iRcvLastSkipAck << "-" << CSeqNo::decseq(skiptoseqno) << " delay=" << int64_t(now - tsbpdtime) << "ms");
+                LOGC(rxlog.Note, log << "TLPKTDROP FROM seq:" << self->m_iRcvLastSkipAck << " TO PLAY:" << skiptoseqno
+                        << " WITH delay=" << ((int64_t(now) - int64_t(tsbpdtime))/1000.0) << "ms");
 #endif
 #endif
                 self->m_iRcvLastSkipAck = skiptoseqno;
@@ -7547,7 +7548,7 @@ void CUDT::unlose(int32_t from, int32_t to, const char* reason)
     CGuard lg(m_RcvLossLock);
     m_pRcvLossList->remove(from, to);
 
-    LOGF(rxlog.Note, "DROPPING %d-%d (%d packets) due to %s", from, to, CSeqNo::seqoff(from, to), reason);
+    LOGF(rxlog.Note, "DROPPING %d-%d (%d packets) due to %s", from, to, 1+CSeqNo::seqoff(from, to), reason);
 
     // All code below concerns only "belated lossreport" feature.
 
