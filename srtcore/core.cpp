@@ -6015,6 +6015,9 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                   m_pRcvLossList->getLossLength()
           );
 
+          LOGC(rxlog.Note, log << " -- next NAKREPORT will be sent in "
+                  << (m_ullNAKInt_tk/m_ullCPUFrequency/1000.0) << "ms");
+
           // This is necessary because a smoother need not wish to define
           // its own minimum interval, in which case the default one is used.
           if (m_ullNAKInt_tk < m_ullMinNakInt_tk)
@@ -7929,14 +7932,28 @@ void CUDT::checkTimers()
          * not knowing what to retransmit when the only NAK sent by receiver is lost,
          * all packets past last ACK are retransmitted (rexmitMethod() == SRM_FASTREXMIT).
          */
-        if ((currtime_tk > m_ullNextNAKTime_tk) && (m_pRcvLossList->getLossLength() > 0))
+        if (m_pRcvLossList->getLossLength() > 0)
         {
-            // NAK timer expired, and there is loss to be reported.
-            sendCtrl(UMSG_LOSSREPORT);
+            // Consider sending periodic NAKREPORT, only when the time comes.
+            // When not time for it yet, do not send, but report it.
+            // If no loss collected so far, DO NOT REPORT.
+            if (currtime_tk > m_ullNextNAKTime_tk)
+            {
+                // NAK timer expired, and there is loss to be reported.
+                sendCtrl(UMSG_LOSSREPORT);
 
-            CTimer::rdtsc(currtime_tk);
-            m_ullNextNAKTime_tk = currtime_tk + m_ullNAKInt_tk;
+                CTimer::rdtsc(currtime_tk);
+
+                // NOTE: m_ullNAKInt_tk is updated inside sendCtrl for UMSG_LOSSREPORT.
+                m_ullNextNAKTime_tk = currtime_tk + m_ullNAKInt_tk;
+            }
+            else
+            {
+                LOGC(rxlog.Note, log << "NOT reporting LOSS (periodic-NAKREPORT) - only after "
+                        << ((m_ullNextNAKTime_tk-currtime_tk)/m_ullCPUFrequency/1000.0) << "ms");
+            }
         }
+
     } // ELSE {
     // we are not sending back repeated NAK anymore and rely on the sender's EXP for retransmission
     //if ((m_pRcvLossList->getLossLength() > 0) && (currtime_tk > m_ullNextNAKTime_tk))
