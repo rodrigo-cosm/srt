@@ -449,7 +449,7 @@ private:
     /// removes the loss record from both current receiver loss list and
     /// the receiver fresh loss list.
     void unlose(const CPacket& oldpacket);
-    void unlose(int32_t from, int32_t to);
+    void unlose(int32_t from, int32_t to, const char* reason);
 
     void considerLegacySrtHandshake(uint64_t timebase);
     void checkSndTimers(Whether2RegenKm regen = DONT_REGEN_KM);

@@ -3770,7 +3770,7 @@ void* CUDT::tsbpd(void* param)
                 self->m_ullRcvBytesDropTotal += seqlen * avgpayloadsz;
                 self->m_ullTraceRcvBytesDrop += seqlen * avgpayloadsz;
 
-                self->unlose(self->m_iRcvLastSkipAck, CSeqNo::decseq(skiptoseqno)); //remove(from,to-inclusive)
+                self->unlose(self->m_iRcvLastSkipAck, CSeqNo::decseq(skiptoseqno), "TLPKTDROP"); //remove(from,to-inclusive)
                 self->m_pRcvBuffer->skipData(seqlen);
 
 #if ENABLE_LOGGING
@@ -5819,7 +5819,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
       if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
       {
          int acksize = CSeqNo::seqoff(m_iRcvLastSkipAck, ack);
-         LOGC(rxlog.Note, log << "RCV-ACK: " << m_iRcvLastSkipAck << "-" << ack);
+         //LOGC(rxlog.Note, log << "RCV-ACK: " << m_iRcvLastSkipAck << "-" << ack);
 
          m_iRcvLastAck = ack;
          m_iRcvLastSkipAck = ack;
@@ -6191,7 +6191,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       {
           // acknowledge the sending buffer (remove data that predate 'ack_sequence')
           m_pSndBuffer->ackData(offset);
-          LOGC(rxlog.Note, log << "SND-ACK: " << m_iSndLastDataAck << "-" << ack_sequence);
+          //LOGC(rxlog.Note, log << "SND-ACK: " << m_iSndLastDataAck << "-" << ack_sequence);
 
           int64_t currtime = currtime_tk/m_ullCPUFrequency;
           // record total time used for sending
@@ -6653,7 +6653,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       m_pRcvBuffer->dropMsg(ctrlpkt.getMsgSeq(using_rexmit_flag), using_rexmit_flag);
       CGuard::leaveCS(m_RecvLock);
 
-      unlose(*(int32_t*)ctrlpkt.m_pcData, *(int32_t*)(ctrlpkt.m_pcData + 4));
+      unlose(*(int32_t*)ctrlpkt.m_pcData, *(int32_t*)(ctrlpkt.m_pcData + 4), "UMSG_DROPREQ");
 
       // move forward with current recv seq no.
       if ((CSeqNo::seqcmp(*(int32_t*)ctrlpkt.m_pcData, CSeqNo::incseq(m_iRcvCurrSeqNo)) <= 0)
@@ -7539,12 +7539,12 @@ breakbreak: ;
 
 }
 
-void CUDT::unlose(int32_t from, int32_t to)
+void CUDT::unlose(int32_t from, int32_t to, const char* reason)
 {
     CGuard lg(m_RcvLossLock);
     m_pRcvLossList->remove(from, to);
 
-    HLOGF(mglog.Debug, "TLPKTDROP seq %d-%d (%d packets)", from, to, CSeqNo::seqoff(from, to));
+    LOGF(rxlog.Note, "DROPPING %d-%d (%d packets) due to %s", from, to, CSeqNo::seqoff(from, to), reason);
 
     // All code below concerns only "belated lossreport" feature.
 
