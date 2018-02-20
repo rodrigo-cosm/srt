@@ -6338,6 +6338,10 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       m_iRTTVar = (m_iRTTVar * 3 + abs(rtt - m_iRTT)) >> 2;
       m_iRTT = (m_iRTT * 7 + rtt) >> 3;
 
+      HLOGC(mglog.Debug, log << "ACKACK: RTT[ms]: CUR=" << (rtt/1000.0)
+              << " AVG=" << (m_iRTT/1000.0)
+              << " VAR=" << (m_iRTTVar/1000.0));
+
       updateCC(TEV_ACKACK, ack);
 
       // This function will put a lock on m_RecvLock by itself, as needed.
