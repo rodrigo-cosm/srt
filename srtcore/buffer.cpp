@@ -1517,11 +1517,11 @@ void CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mut
 
         HLOGC(dlog.Debug, log << "DRIFT=" << (iDrift/1000.0) << "ms AVG="
                 << (m_DriftTracer.drift()/1000.0) << "ms, TB: "
-                << FormatTime(oldbase) << " UPDATED TO: " << FormatTime(m_ullTsbPdTimeBase));
+                << logging::FormatTime(oldbase) << " UPDATED TO: " << logging::FormatTime(m_ullTsbPdTimeBase));
     }
     else
     {
-        HLOGC(dlog.Debug, log << "DRIFT=" << (iDrift/1000.0) << "ms TB REMAINS: " << FormatTime(m_ullTsbPdTimeBase));
+        HLOGC(dlog.Debug, log << "DRIFT=" << (iDrift/1000.0) << "ms TB REMAINS: " << logging::FormatTime(m_ullTsbPdTimeBase));
     }
 
     CGuard::leaveCS(mutex_to_lock);
