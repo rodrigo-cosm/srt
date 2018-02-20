@@ -466,7 +466,7 @@ inline std::string FormatBinaryString(const uint8_t* bytes, size_t size)
 // This function is useful in multiple uses where
 // the time drift should be traced. It's currently in use in every
 // solution that implements any kind of TSBPD (AKA Stower).
-template<unsigned MAX_SPAN, int MAX_DRIFT, bool CLEAR_ON_UPDATE = true>
+template<unsigned MAX_SPAN_I, int MAX_DRIFT_I, bool CLEAR_ON_UPDATE = true>
 class DriftTracer
 {
     int64_t m_qDrift;
@@ -476,6 +476,10 @@ class DriftTracer
     unsigned m_uDriftSpan;
 
 public:
+
+    static const unsigned MAX_SPAN = MAX_SPAN_I;
+    static const int MAX_DRIFT = MAX_DRIFT_I;
+
     DriftTracer()
         : m_qDrift(),
         m_qOverdrift(),

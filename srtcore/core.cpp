@@ -6635,9 +6635,9 @@ void CUDT::updateSrtRcvSettings()
         m_pRcvBuffer->setRcvTsbPdMode(m_ullRcvPeerStartTime, m_iTsbPdDelay_ms * 1000);
         CGuard::leaveCS(m_RecvLock);
 
-        HLOGF(mglog.Debug,  "AFTER HS: Set Rcv TsbPd mode: delay=%u.%03u secs",
-                m_iTsbPdDelay_ms/1000,
-                m_iTsbPdDelay_ms%1000);
+        HLOGC(mglog.Debug, log << "AFTER HS: Set TsbPd mode delay="
+                << (m_iTsbPdDelay_ms/1000.0) << "s INITIAL TB: "
+                << FormatTime(m_ullRcvPeerStartTime));
     }
     else
     {

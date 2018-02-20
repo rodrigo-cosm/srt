@@ -1082,7 +1082,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
             int64_t towait = (*tsbpdtime - CTimer::getTime());
             if (towait > 0)
             {
-                HLOGC(mglog.Debug, log << "getRcvReadyMsg: found packet, but not ready to play (only in " << (towait/1000.0) << "ms)");
+                HLOGC(mglog.Debug, log << "getRcvReadyMsg: NEXT PKT seq=" << curpktseq.get() << " NOT READY (only in " << (towait/1000.0) << "ms)");
                 return false;
             }
 
@@ -1093,7 +1093,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
             }
             else
             {
-                HLOGC(mglog.Debug, log << "getRcvReadyMsg: packet seq=" << curpktseq.get() << " ready to play (delayed " << (-towait/1000.0) << "ms)");
+                HLOGC(mglog.Debug, log << "getRcvReadyMsg: NEXT PKT seq=" << curpktseq.get() << " ready to play (delayed " << (-towait/1000.0) << "ms)");
                 return true;
             }
         }
@@ -1493,6 +1493,7 @@ void CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mut
     // from the CONTROL domain, not DATA domain (timestamps from DATA domain may be
     // either schedule time or a time supplied by the application).
 
+
     int64_t iDrift = CTimer::getTime() - (getTsbPdTimeBase(timestamp) + timestamp);
 
     CGuard::enterCS(mutex_to_lock);
@@ -1509,7 +1510,18 @@ void CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mut
         printDriftOffset(m_DriftTracer.overdrift(), m_DriftTracer.drift());
 #endif /* SRT_DEBUG_TSBPD_DRIFT */
 
+#if ENABLE_HEAVY_LOGGING
+        uint64_t oldbase = m_ullTsbPdTimeBase;
+#endif
         m_ullTsbPdTimeBase += m_DriftTracer.overdrift();
+
+        HLOGC(dlog.Debug, log << "DRIFT=" << (iDrift/1000.0) << "ms AVG="
+                << (m_DriftTracer.drift()/1000.0) << "ms, TB: "
+                << FormatTime(oldbase) << " UPDATED TO: " << FormatTime(m_ullTsbPdTimeBase));
+    }
+    else
+    {
+        HLOGC(dlog.Debug, log << "DRIFT=" << (iDrift/1000.0) << "ms TB REMAINS: " << FormatTime(m_ullTsbPdTimeBase));
     }
 
     CGuard::leaveCS(mutex_to_lock);
