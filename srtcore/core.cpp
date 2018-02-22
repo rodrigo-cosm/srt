@@ -7013,6 +7013,7 @@ int CUDT::processData(CUnit* unit)
            << " seq=" << packet.getSeqNo()
            << " pkt.ts=" << logging::FormatTime(packet.getMsgTimeStamp())
            << " deli.ts=" << logging::FormatTime(m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp()))
+           << " tsbpd.tb=" << logging::FormatTime(m_pRcvBuffer->getTsbPdTimeBase(packet.getMsgTimeStamp()))
            );
    //    << "(" << rexmitstat[pktrexmitflag] << rexmit_reason << ")";
 
