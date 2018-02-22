@@ -7009,8 +7009,16 @@ int CUDT::processData(CUnit* unit)
    }
 
 
-   HLOGC(dlog.Debug, log << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength() << " seq=" << packet.getSeqNo());
+   HLOGC(dlog.Debug, log << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength()
+           << " seq=" << packet.getSeqNo()
+           << " pkt.ts=" << logging::FormatTime(packet.getMsgTimeStamp())
+           << " deli.ts=" << logging::FormatTime(m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp()))
+           );
    //    << "(" << rexmitstat[pktrexmitflag] << rexmit_reason << ")";
+
+#if ENABLE_HEAVY_LOGGING
+   m_pRcvBuffer->reportBufferStats();
+#endif
 
    updateCC(TEV_RECEIVE, &packet);
    ++ m_iPktCount;
@@ -7060,6 +7068,9 @@ int CUDT::processData(CUnit* unit)
           if (offset >= avail_bufsize)
           {
               LOGC(mglog.Error, log << CONID() << "No room to store incoming packet: offset=" << offset << " avail=" << avail_bufsize);
+#if ENABLE_HEAVY_LOGGING
+              m_pRcvBuffer->reportBufferStats();
+#endif
               return -1;
           }
 
