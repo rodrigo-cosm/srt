@@ -377,17 +377,18 @@ private:
 
    bool getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
 
+public:
+
+    // (This is exposed as used publicly in logs)
       /// Get packet delivery local time base (adjusted for wrap around)
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
       /// @return local delivery time (usec)
-
    uint64_t getTsbPdTimeBase(uint32_t timestamp);
 
       /// Get packet local delivery time
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
       /// @return local delivery time (usec)
 
-public:
    uint64_t getPktTsbPdTime(uint32_t timestamp);
 private:
 

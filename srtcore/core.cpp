@@ -6641,7 +6641,7 @@ void CUDT::updateSrtRcvSettings()
 
         HLOGC(mglog.Debug, log << "AFTER HS: Set TsbPd mode delay="
                 << (m_iTsbPdDelay_ms/1000.0) << "s INITIAL TB: "
-                << FormatTime(m_ullRcvPeerStartTime));
+                << logging::FormatTime(m_ullRcvPeerStartTime));
     }
     else
     {
