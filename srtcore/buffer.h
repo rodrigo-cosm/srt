@@ -341,6 +341,7 @@ public:
       /// @param [ref] lock Mutex that should be locked for the operation
 
    void addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& lock);
+   void addRcvDataTsbPdDriftSample(const CPacket&, pthread_mutex_t& lock);
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
    void printDriftHistogram(int64_t iDrift);
@@ -390,6 +391,9 @@ public:
       /// @return local delivery time (usec)
 
    uint64_t getPktTsbPdTime(uint32_t timestamp);
+
+   int getMaxOffset() const;
+   bool empty() const;
 private:
 
    /// thread safe bytes counter
@@ -444,6 +448,14 @@ private:
    //int64_t m_TsbPdDriftSum;                     // Sum of sampled drift
    //int m_iTsbPdDriftNbSamples;                  // Number of samples in sum and histogram
    DriftTracer<TSBPD_DRIFT_MAX_SAMPLES, TSBPD_DRIFT_MAX_VALUE> m_DriftTracer;
+
+   static const int TSBPD_FASTDRIFT_SEGMENT_SIZE = 400;
+   static const int TSBPD_FASTDRIFT_SEGMENT_NUMBER = 3; // Together its 3*400 = 1200 [data packets]
+   FastDriftTracer<TSBPD_FASTDRIFT_SEGMENT_SIZE,
+                   TSBPD_FASTDRIFT_SEGMENT_NUMBER,
+                   TSBPD_DRIFT_MAX_VALUE>
+                       m_FastDriftTracer;
+
 #ifdef SRT_ENABLE_RCVBUFSZ_MAVG
    uint64_t m_LastSamplingTime;
    int m_TimespanMAvg;

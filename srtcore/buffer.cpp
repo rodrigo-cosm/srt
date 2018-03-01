@@ -807,6 +807,15 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
    return 0;
 }
 
+// This is a value to be compared to offset to know
+// if the offset designates a completely new packet or
+// an old packet. For old packets you should treat the
+// incoming time kinda "less seriously".
+int CRcvBuffer::getMaxOffset() const
+{
+   return (m_iLastAckPos + m_iMaxPos);
+}
+
 int CRcvBuffer::readBuffer(char* data, int len)
 {
    int p = m_iStartPos;
@@ -1246,6 +1255,20 @@ int CRcvBuffer::getRcvDataSize() const
    return m_iSize + m_iLastAckPos - m_iStartPos;
 }
 
+bool CRcvBuffer::empty() const
+{
+    // This is slick because these data are normally used by the
+    // application thread, whereas this function will be called
+    // from the RcvQ:worker thread. Fortunately, the only wrong
+    // result can be that this function returns "false", when
+    // the buffer is actually empty at the same time, but when
+    // the buffer is already "empty", the functions running in
+    // the user's thread can't change this state. So effectively
+    // here "true" means "surely empty", and "false" means
+    // "not necessarily empty". We don't need more precise information.
+    return m_iStartPos == m_iLastAckPos;
+}
+
 
 #ifdef SRT_ENABLE_RCVBUFSZ_MAVG
 /* Return moving average of acked data pkts, bytes, and timespan (ms) of the receive buffer */
@@ -1582,6 +1605,76 @@ void CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mut
     CGuard::leaveCS(mutex_to_lock);
 }
 
+void CRcvBuffer::addRcvDataTsbPdDriftSample(const CPacket& packet, pthread_mutex_t& mutex_to_lock)
+{
+    if (!m_bTsbPdMode) // Not checked unless in TSBPD mode
+        return;
+
+    uint32_t timestamp = packet.getMsgTimeStamp();
+
+    // The FAST drift tracer.
+    // This should trace the difference between the current timebase
+    // and the timebase that results from the currently calculated
+    // difference between the arrival time (that is, NOW) and the timestamp.
+    // This should be more-less equal to the current time base.
+    //
+    // There has been several times experienced a case that by unknown
+    // reason, this difference increases rather rapidly. The ACKACK-based
+    // drift tracer is too slow to react. The reaction shall not be fast either,
+    // so this is also tracking this over longer time and measures a median.
+    //
+    // The drift is traced over a distance of 1200 packets, which are split
+    // into 3 segments. At least so many packets must be collected so that the
+    // median can be calculated. After every calculation, the oldest of 3 segments
+    // is dropped and the data are collected for a next 400-packet segement,
+    // after which the median will be calculated again.
+    //
+    // If the drift value exceeds the max drift (positive or negative), this value
+    // is taken out of drift and put into overdrift, which should be next added 
+    // to the timebase.
+    //
+    // Normally the difference between the timebase and the arrival time should remain
+    // the same, or just slightly differ, so the median calclulated from all these
+    // difference values shall remain close to 0. May happen, however, that the
+    // difference starts to constantly increase - in this case this must be traced
+    // and the timebase used to translate the timestamp into the delivery time must
+    // be corrected - otherwise the difference may grow up to the value where the
+    // app waits forever for get the packet delivered (and the buffer inflates up
+    // to the limit), or the "yesterday delivery time" starts to appear.
+
+    int64_t slip = CTimer::getTime() - (getTsbPdTimeBase(timestamp) + timestamp);
+
+    CGuard::enterCS(mutex_to_lock);
+
+    bool updated = m_DriftTracer.update(slip);
+
+#ifdef SRT_DEBUG_TSBPD_DRIFT
+    printDriftHistogram(slip);
+#endif /* SRT_DEBUG_TSBPD_DRIFT */
+
+    if ( updated )
+    {
+#ifdef SRT_DEBUG_TSBPD_DRIFT
+        printDriftOffset(m_DriftTracer.overdrift(), m_DriftTracer.drift());
+#endif /* SRT_DEBUG_TSBPD_DRIFT */
+
+#if ENABLE_HEAVY_LOGGING
+        uint64_t oldbase = m_ullTsbPdTimeBase;
+#endif
+        m_ullTsbPdTimeBase += m_DriftTracer.overdrift();
+
+        HLOGC(dlog.Debug, log << "DRIFT=" << (slip/1000.0) << "ms AVG="
+                << (m_DriftTracer.drift()/1000.0) << "ms, TB: "
+                << logging::FormatTime(oldbase) << " UPDATED TO: " << logging::FormatTime(m_ullTsbPdTimeBase));
+    }
+    else
+    {
+        HLOGC(dlog.Debug, log << "DRIFT=" << (slip/1000.0) << "ms TB REMAINS: " << logging::FormatTime(m_ullTsbPdTimeBase));
+    }
+
+    CGuard::leaveCS(mutex_to_lock);
+}
+
 int CRcvBuffer::readMsg(char* data, int len)
 {
     SRT_MSGCTRL dummy = srt_msgctrl_default;
@@ -1596,6 +1689,10 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
     bool passack;
     bool empty = true;
     uint64_t& rplaytime = msgctl.srctime;
+
+#ifdef ENABLE_HEAVY_LOGGING
+    reportBufferStats();
+#endif
 
     if (m_bTsbPdMode)
     {

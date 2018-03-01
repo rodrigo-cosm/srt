@@ -202,6 +202,9 @@ void CUDT::construct()
     m_bTsbPd = false;
     m_bPeerTLPktDrop = false;
 
+    // XXX This is temporary as a flag for testing.
+    m_bUseFastDriftTracer = true;
+
     // Initilize mutex and condition variables
     initSynch();
 }
@@ -6350,7 +6353,11 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       // inaccurate. Additionally it won't lock if TSBPD mode is off, and
       // won't update anything. Note that if you set TSBPD mode and use
       // srt_recvfile (which doesn't make any sense), you'll have e deadlock.
-      m_pRcvBuffer->addRcvTsbPdDriftSample(ctrlpkt.getMsgTimeStamp(), m_RecvLock);
+
+      // Disabled if using FAST drift tracer. Only one drift tracer is allowed
+      // at a time.
+      if (!m_bUseFastDriftTracer)
+          m_pRcvBuffer->addRcvTsbPdDriftSample(ctrlpkt.getMsgTimeStamp(), m_RecvLock);
 
       // update last ACK that has been received by the sender
       if (CSeqNo::seqcmp(ack, m_iRcvLastAckAck) > 0)
@@ -6952,8 +6959,6 @@ int CUDT::processData(CUnit* unit)
 {
    CPacket& packet = unit->m_Packet;
 
-   // XXX This should be called (exclusively) here:
-   //m_pRcvBuffer->addLocalTsbPdDriftSample(packet.getMsgTimeStamp());
    // Just heard from the peer, reset the expiration count.
    m_iEXPCount = 1;
    uint64_t currtime_tk;
@@ -6974,8 +6979,10 @@ int CUDT::processData(CUnit* unit)
    }
 
    int pktrexmitflag = m_bPeerRexmitFlag ? (int)packet.getRexmitFlag() : 2;
+#if ENABLE_HEAVY_LOGGING
    static const string rexmitstat [] = {"ORIGINAL", "REXMITTED", "RXS-UNKNOWN"};
    string rexmit_reason;
+#endif
 
 
    if ( pktrexmitflag == 1 ) // rexmitted
@@ -7017,10 +7024,6 @@ int CUDT::processData(CUnit* unit)
            );
    //    << "(" << rexmitstat[pktrexmitflag] << rexmit_reason << ")";
 
-#if ENABLE_HEAVY_LOGGING
-   m_pRcvBuffer->reportBufferStats();
-#endif
-
    updateCC(TEV_RECEIVE, &packet);
    ++ m_iPktCount;
 
@@ -7050,10 +7053,14 @@ int CUDT::processData(CUnit* unit)
       int32_t offset = CSeqNo::seqoff(m_iRcvLastSkipAck, packet.m_iSeqNo);
 
       bool excessive = false;
+#ifdef ENABLE_HEAVY_LOGGING
       string exc_type = "EXPECTED";
-      if ((offset < 0))
+#endif
+      if (offset < 0)
       {
+#ifdef ENABLE_HEAVY_LOGGING
           exc_type = "BELATED";
+#endif
           excessive = true;
           m_iTraceRcvBelated++;
           uint64_t tsbpdtime = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
@@ -7064,24 +7071,88 @@ int CUDT::processData(CUnit* unit)
       }
       else
       {
-
           int avail_bufsize = m_pRcvBuffer->getAvailBufSize();
           if (offset >= avail_bufsize)
           {
-              LOGC(mglog.Error, log << CONID() << "No room to store incoming packet: offset=" << offset << " avail=" << avail_bufsize);
-#if ENABLE_HEAVY_LOGGING
-              m_pRcvBuffer->reportBufferStats();
-#endif
-              return -1;
+              // Check if the buffer is empty. If so, then it shouldn't be a problem
+              // to store the packet anyway because there's no other packet blocking it.
+              // Kinda large packet drop will happen, that's all.
+              if (m_pRcvBuffer->empty())
+              {
+                  // Check if the offset isn't something completely out of mind.
+                  if (offset > 3*m_iRcvBufSize)
+                  {
+                      LOGC(mglog.Error, log << CONID() << "No room to store incoming packet, offset " << offset << " OOTB! ack.seq="
+                              << m_iRcvLastSkipAck << " vs. pkt.seq=" << packet.m_iSeqNo);
+                      return -1;
+                  }
+
+                  // As the buffer is empty, it doesn't matter how far the sequence is
+                  // from the last app-delivered one - with empty buffer we can deliver again.
+                  // Override the lastAckPos and fake the packets dropped.
+                  LOGC(mglog.Warn, log << CONID() << "BUFFER EMPTY with sequence ahead - LARGE DROP of " << offset << " packets");
+                  m_iRcvLastSkipAck = packet.m_iSeqNo;
+                  offset = 0;
+                  // And continue with the transmission.
+              }
+              else
+              {
+                  LOGC(mglog.Error, log << CONID() << "No room to store incoming packet: offset="
+                          << offset << " avail=" << avail_bufsize
+                          << " ack.seq=" << m_iRcvLastSkipAck << " pkt.seq=" << packet.m_iSeqNo
+                          );
+                  return -1;
+              }
+
           }
 
           if (m_pRcvBuffer->addData(unit, offset) < 0)
           {
               // addData returns -1 if at the m_iLastAckPos+offset position there already is a packet.
               // So this packet is "redundant".
+#ifdef ENABLE_HEAVY_LOGGING
               exc_type = "UNACKED";
+#endif
               excessive = true;
           }
+
+          if (!excessive && m_bUseFastDriftTracer)
+          {
+              // For peers that do not regard the REXMIT flag (older SRT), rely only
+              // on the sequence number which is newer than any last delivered packet.
+              // This means that the packet is MOST LIKELY not retransmitted.
+              //
+              // It is rather impossible to have a "fresh" packet (a sequence not yet
+              // ever seen) being retransmitted because the loss recognition is only
+              // possible by having any next-to-lost packet received.
+              //
+              // The only risk for sequence-pos-recognition of the retransmission is
+              // that in case of UDP packet reordering a belated packet may be falsely
+              // identified as retransmitted. Worst thing that may happen due to that
+              // is that this packet's slip value will not be taken into account in
+              // the drift calculations.
+              bool is_rexmit = false;
+              if (pktrexmitflag == 2) // Unknown rexmit state
+              {
+                  if (offset > m_pRcvBuffer->getMaxOffset())
+                      is_rexmit = true;
+              }
+              else
+              {
+                  is_rexmit = pktrexmitflag;
+              }
+
+              if (!is_rexmit)
+              {
+                  m_pRcvBuffer->addRcvDataTsbPdDriftSample(packet, m_RecvLock);
+              }
+              else
+              {
+                  HLOGC(mglog.Debug, log << "DRIFT=0 NOT TRACED, the packet is considered retransmitted by "
+                          << (pktrexmitflag == 2 ? "SEQUENCE" : "REXMIT FLAG"));
+              }
+          }
+
       }
 
       HLOGC(mglog.Debug, log << CONID() << "RECEIVED: seq=" << packet.m_iSeqNo << " offset=" << offset
