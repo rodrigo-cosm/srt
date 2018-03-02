@@ -286,7 +286,9 @@ inline std::string SockaddrToString(const sockaddr* sadr)
     }
     else
     {
-        output << "unknown";
+        strcpy(hostbuf, "unknown");
+        inet_ntop(sadr->sa_family, addr, hostbuf, 1023);
+        output << hostbuf;
     }
 
     output << ":" << ntohs(((sockaddr_in*)sadr)->sin_port); // TRICK: sin_port and sin6_port have the same offset and size

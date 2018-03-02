@@ -4809,7 +4809,11 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     }
 #endif
     m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
-    HLOGC(dlog.Debug, log << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size);
+    HLOGC(dlog.Debug, log << CONID() << "USER SENDING srctime=" << logging::FormatTime(mctrl.srctime)
+            << " size=" << size
+            << " datastamp=" << BufferStamp(data, size)
+            << " msgno=" << MSGNO_SEQ::unwrap(mctrl.msgno)
+            );
 
     // insert this socket to the snd list if it is not on the list yet
     m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion));
@@ -6920,8 +6924,11 @@ int CUDT::packData(CPacket& packet, uint64_t& ts_tk)
 
 #if ENABLE_HEAVY_LOGGING // Required because of referring to MessageFlagStr()
    HLOGC(mglog.Debug, log << CONID() << "packData: " << reason << " packet seq=" << packet.m_iSeqNo
-       << " (ACK=" << m_iSndLastAck << " ACKDATA=" << m_iSndLastDataAck
-       << " MSG/FLAGS: " << packet.MessageFlagStr() << ")");
+       << " msgno=" << MSGNO_SEQ::unwrap(packet.m_iMsgNo)
+       << " srctime=" << logging::FormatTime(origintime)
+       << " pkt.ts=" << logging::FormatTime(packet.m_iTimeStamp)
+       << " ACK=" << m_iSndLastAck << " ACKDATA=" << m_iSndLastDataAck
+       << " MSG/FLAGS: " << packet.MessageFlagStr() );
 #endif
 
    // Fix keepalive
