@@ -204,6 +204,7 @@ void CUDT::construct()
 
     // XXX This is temporary as a flag for testing.
     m_bUseFastDriftTracer = true;
+    //m_bUseFastDriftTracer = false;
 
     // Initilize mutex and condition variables
     initSynch();
@@ -3903,7 +3904,7 @@ bool CUDT::prepareConnectionObjects(const CHandShake& hs, HandshakeSide hsd, CUD
     try
     {
         m_pSndBuffer = new CSndBuffer(32, m_iMaxSRTPayloadSize);
-        m_pRcvBuffer = new CRcvBuffer(&(m_pRcvQueue->m_UnitQueue), m_iRcvBufSize);
+        m_pRcvBuffer = new CRcvBuffer(&(m_pRcvQueue->m_UnitQueue), m_iRcvBufSize, m_bUseFastDriftTracer);
         // after introducing lite ACK, the sndlosslist may not be cleared in time, so it requires twice space.
         m_pSndLossList = new CSndLossList(m_iFlowWindowSize * 2);
         m_pRcvLossList = new CRcvLossList(m_iFlightFlagSize);
@@ -7061,6 +7062,8 @@ int CUDT::processData(CUnit* unit)
    ++ m_llTraceRecv;
    ++ m_llRecvTotal;
 
+   bool need_drift_sample = false;
+
    {
       /*
       * Start of offset protected section
@@ -7150,26 +7153,16 @@ int CUDT::processData(CUnit* unit)
               // identified as retransmitted. Worst thing that may happen due to that
               // is that this packet's slip value will not be taken into account in
               // the drift calculations.
-              bool is_rexmit = false;
               if (pktrexmitflag == 2) // Unknown rexmit state
               {
-                  if (offset > m_pRcvBuffer->getMaxOffset())
-                      is_rexmit = true;
+                  if (offset+1 == m_pRcvBuffer->getMaxOffset())
+                      need_drift_sample = true;
               }
               else
               {
-                  is_rexmit = pktrexmitflag;
+                  need_drift_sample = !pktrexmitflag;
               }
 
-              if (!is_rexmit)
-              {
-                  m_pRcvBuffer->addRcvDataTsbPdDriftSample(packet, m_RecvLock);
-              }
-              else
-              {
-                  HLOGC(mglog.Debug, log << "DRIFT=0 NOT TRACED, the packet is considered retransmitted by "
-                          << (pktrexmitflag == 2 ? "SEQUENCE" : "REXMIT FLAG"));
-              }
           }
 
       }
@@ -7215,6 +7208,7 @@ int CUDT::processData(CUnit* unit)
           HLOGC(dlog.Debug, log << "crypter: data not encrypted, returning as plain");
       }
 
+      // END OF CRITSEC: m_AckLock
    }  /* End of offsetcg */
 
    if (m_bClosing) {
@@ -7227,6 +7221,16 @@ int CUDT::processData(CUnit* unit)
       * used by others (socket multiplexer).
       */
       return(-1);
+   }
+
+   if (need_drift_sample)
+   {
+       m_pRcvBuffer->addRcvDataTsbPdDriftSample(packet, m_RecvLock);
+   }
+   else
+   {
+       HLOGC(mglog.Debug, log << "DRIFT=0 NOT TRACED, the packet is considered retransmitted by "
+               << (pktrexmitflag == 2 ? "SEQUENCE" : "REXMIT FLAG"));
    }
 
    // If the peer doesn't understand REXMIT flag, send rexmit request

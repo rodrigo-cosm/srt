@@ -223,7 +223,7 @@ public:
    // Currently just "unimplemented".
    std::string CONID() const { return ""; }
 
-   CRcvBuffer(CUnitQueue* queue, int bufsize = 65536);
+   CRcvBuffer(CUnitQueue* queue, int bufsize = 65536, bool use_fast_drift = false);
    ~CRcvBuffer();
 
       /// Write data into the buffer.
@@ -455,6 +455,8 @@ private:
                    TSBPD_FASTDRIFT_SEGMENT_NUMBER,
                    TSBPD_DRIFT_MAX_VALUE>
                        m_FastDriftTracer;
+
+   bool m_bUseFastDriftTracer;
 
 #ifdef SRT_ENABLE_RCVBUFSZ_MAVG
    uint64_t m_LastSamplingTime;

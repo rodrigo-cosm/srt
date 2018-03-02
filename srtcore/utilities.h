@@ -652,10 +652,13 @@ public:
 
     void shiftSegments()
     {
-        memcpy(&m_qDriftSumSeg[0], &m_qDriftSumSeg[1],
-                // The size is NSEGMENTS - 1
-                // with segment size = SEGMENT_SPAN * 64 bits
-                (SEGMENT_NUMBER_I-1)*SEGMENT_SPAN_I*sizeof(int64_t));
+        // Copy over. Ranges overlap, but source range is in front
+        // of the target range.
+        std::copy(m_qDriftSumSeg+1, m_qDriftSumSeg+SEGMENT_NUMBER_I,
+                m_qDriftSumSeg);
+
+        // Clear the newly shifted-in segment
+        m_qDriftSumSeg[SEGMENT_NUMBER_I-1] = 0;
 
         // Should be same as m_uDriftSpan -= SEGMENT_SPAN_I, but don't be too trusftul.
         m_uDriftSpan = SEGMENT_SPAN_I * (SEGMENT_NUMBER_I-1);
@@ -703,6 +706,22 @@ public:
         return false;
     }
 
+    std::string stats()
+    {
+        std::ostringstream os;
+        unsigned nseg = m_uDriftSpan/SEGMENT_SPAN_I;
+
+        os << "DRIFT STATS: SUMS: [ ";
+
+        for (unsigned i = 0; i < SEGMENT_NUMBER_I; ++i)
+        {
+            unsigned size = i == nseg ? (m_uDriftSpan-(nseg*SEGMENT_SPAN_I)) : SEGMENT_SPAN_I;
+            os << m_qDriftSumSeg[i] << "~" << (size ? m_qDriftSumSeg[i]/size : 0) <<  " ";
+        }
+        os << "] seg=" << nseg << " span=" << m_uDriftSpan;
+        return os.str();
+    }
+
     // These values can be read at any time, however if you want
     // to depend on the fact that they have been changed lately,
     // you have to check the return value from update().
@@ -726,6 +745,8 @@ public:
     // overdrift.
     int64_t drift() { return m_qDrift; }
     int64_t overdrift() { return m_qOverdrift; }
+    unsigned span() { return m_uDriftSpan; }
+    static unsigned max() { return MAX_SPAN; }
 };
 
 template <class KeyType, class ValueType>

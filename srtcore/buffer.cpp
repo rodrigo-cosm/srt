@@ -706,7 +706,7 @@ void CSndBuffer::increase()
 //const int CRcvBuffer::TSBPD_DRIFT_PRT_SAMPLES = 200;   // ACK-ACK packets
 #endif
 
-CRcvBuffer::CRcvBuffer(CUnitQueue* queue, int bufsize):
+CRcvBuffer::CRcvBuffer(CUnitQueue* queue, int bufsize, bool use_fast_drift):
 m_pUnit(NULL),
 m_iSize(bufsize),
 m_pUnitQueue(queue),
@@ -723,9 +723,7 @@ m_iNotch(0)
 ,m_uTsbPdDelay(0)
 ,m_ullTsbPdTimeBase(0)
 ,m_bTsbPdWrapCheck(false)
-//,m_iTsbPdDrift(0)
-//,m_TsbPdDriftSum(0)
-//,m_iTsbPdDriftNbSamples(0)
+,m_bUseFastDriftTracer(use_fast_drift)
 #ifdef SRT_ENABLE_RCVBUFSZ_MAVG
 ,m_LastSamplingTime(0)
 ,m_TimespanMAvg(0)
@@ -813,7 +811,7 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
 // incoming time kinda "less seriously".
 int CRcvBuffer::getMaxOffset() const
 {
-   return (m_iLastAckPos + m_iMaxPos);
+   return m_iMaxPos;
 }
 
 int CRcvBuffer::readBuffer(char* data, int len)
@@ -1466,7 +1464,8 @@ uint64_t CRcvBuffer::getTsbPdTimeBase(uint32_t timestamp)
 
 uint64_t CRcvBuffer::getPktTsbPdTime(uint32_t timestamp)
 {
-   return(getTsbPdTimeBase(timestamp) + m_uTsbPdDelay + timestamp + m_DriftTracer.drift());
+    int64_t drift = m_bUseFastDriftTracer ? m_FastDriftTracer.drift() : m_DriftTracer.drift();
+    return getTsbPdTimeBase(timestamp) + m_uTsbPdDelay + timestamp + drift;
 }
 
 int CRcvBuffer::setRcvTsbPdMode(uint64_t timebase, uint32_t delay)
@@ -1646,7 +1645,7 @@ void CRcvBuffer::addRcvDataTsbPdDriftSample(const CPacket& packet, pthread_mutex
 
     CGuard::enterCS(mutex_to_lock);
 
-    bool updated = m_DriftTracer.update(slip);
+    bool updated = m_FastDriftTracer.update(slip);
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
     printDriftHistogram(slip);
@@ -1655,22 +1654,30 @@ void CRcvBuffer::addRcvDataTsbPdDriftSample(const CPacket& packet, pthread_mutex
     if ( updated )
     {
 #ifdef SRT_DEBUG_TSBPD_DRIFT
-        printDriftOffset(m_DriftTracer.overdrift(), m_DriftTracer.drift());
+        printDriftOffset(m_FastDriftTracer.overdrift(), m_FastDriftTracer.drift());
 #endif /* SRT_DEBUG_TSBPD_DRIFT */
 
 #if ENABLE_HEAVY_LOGGING
         uint64_t oldbase = m_ullTsbPdTimeBase;
 #endif
-        m_ullTsbPdTimeBase += m_DriftTracer.overdrift();
+        m_ullTsbPdTimeBase += m_FastDriftTracer.overdrift();
 
         HLOGC(dlog.Debug, log << "DRIFT=" << (slip/1000.0) << "ms AVG="
-                << (m_DriftTracer.drift()/1000.0) << "ms, TB: "
+                << (m_FastDriftTracer.drift()/1000.0) << "ms, TB: "
                 << logging::FormatTime(oldbase) << " UPDATED TO: " << logging::FormatTime(m_ullTsbPdTimeBase));
     }
     else
     {
-        HLOGC(dlog.Debug, log << "DRIFT=" << (slip/1000.0) << "ms TB REMAINS: " << logging::FormatTime(m_ullTsbPdTimeBase));
+        HLOGC(dlog.Debug, log << "DRIFT=" << (slip/1000.0)
+                << "ms TB REMAINS: " << logging::FormatTime(m_ullTsbPdTimeBase)
+                << "(" << m_FastDriftTracer.span() << "/" << m_FastDriftTracer.max() << ") to next update");
     }
+
+    /* For testing drift tracer
+#if ENABLE_HEAVY_LOGGING
+    HLOGP(dlog.Debug, m_FastDriftTracer.stats());
+#endif
+*/
 
     CGuard::leaveCS(mutex_to_lock);
 }
