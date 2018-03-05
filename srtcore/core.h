@@ -614,6 +614,7 @@ private: // Sending related data
     int32_t m_iSndLastAck2;                      // Last ACK2 sent back
     uint64_t m_ullSndLastAck2Time;               // The time when last ACK2 was sent back
 #ifdef SRT_ENABLE_CBRTIMESTAMP
+    bool m_bOPT_UseCbrTimestamp;
     uint64_t m_ullSndLastCbrTime_tk;                 // Last timestamp set in a data packet to send (usec)
 #endif
 
@@ -659,7 +660,7 @@ private: // Receiving related data
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
     pthread_cond_t m_RcvTsbPdCond;
     bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
-    bool m_bUseFastDriftTracer;
+    bool m_bOPT_UseFastDriftTracer;
 
 private: // synchronization: mutexes and conditions
     pthread_mutex_t m_ConnectionLock;            // used to synchronize connection operation

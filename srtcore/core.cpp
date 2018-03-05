@@ -202,9 +202,7 @@ void CUDT::construct()
     m_bTsbPd = false;
     m_bPeerTLPktDrop = false;
 
-    // XXX This is temporary as a flag for testing.
-    m_bUseFastDriftTracer = true;
-    //m_bUseFastDriftTracer = false;
+    m_bOPT_UseFastDriftTracer = false;
 
     // Initilize mutex and condition variables
     initSynch();
@@ -250,6 +248,7 @@ CUDT::CUDT()
    m_iOPT_TsbPdDelay = SRT_LIVE_DEF_LATENCY_MS;
    m_iOPT_PeerTsbPdDelay = 0;       //Peer's TsbPd delay as receiver (here is its minimum value, if used)
    m_bOPT_TLPktDrop = true;
+   m_bOPT_UseCbrTimestamp = false;
    m_bTLPktDrop = true;         //Too-late Packet Drop
    m_bMessageAPI = true;
    m_zOPT_ExpPayloadSize = SRT_LIVE_DEF_PLSIZE;
@@ -737,6 +736,20 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
       default:
           throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
       }
+      break;
+
+   case SRTO_CBR:
+      if (m_bConnected)
+          throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
+
+      m_bOPT_UseCbrTimestamp = bool_int_value(optval, optlen);
+      break;
+
+   case SRTO_FASTDRIFT:
+      if (m_bConnected)
+          throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
+
+      m_bOPT_UseFastDriftTracer = bool_int_value(optval, optlen);
       break;
 
     default:
@@ -3904,7 +3917,7 @@ bool CUDT::prepareConnectionObjects(const CHandShake& hs, HandshakeSide hsd, CUD
     try
     {
         m_pSndBuffer = new CSndBuffer(32, m_iMaxSRTPayloadSize);
-        m_pRcvBuffer = new CRcvBuffer(&(m_pRcvQueue->m_UnitQueue), m_iRcvBufSize, m_bUseFastDriftTracer);
+        m_pRcvBuffer = new CRcvBuffer(&(m_pRcvQueue->m_UnitQueue), m_iRcvBufSize, m_bOPT_UseFastDriftTracer);
         // after introducing lite ACK, the sndlosslist may not be cleared in time, so it requires twice space.
         m_pSndLossList = new CSndLossList(m_iFlowWindowSize * 2);
         m_pRcvLossList = new CRcvLossList(m_iFlightFlagSize);
@@ -4799,7 +4812,7 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
 
     // insert the user buffer into the sending list
 #ifdef SRT_ENABLE_CBRTIMESTAMP
-    if (mctrl.srctime == 0)
+    if (m_bOPT_UseCbrTimestamp && mctrl.srctime == 0)
     {
         uint64_t currtime_tk;
         CTimer::rdtsc(currtime_tk);
@@ -6380,7 +6393,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
       // Disabled if using FAST drift tracer. Only one drift tracer is allowed
       // at a time.
-      if (!m_bUseFastDriftTracer)
+      if (!m_bOPT_UseFastDriftTracer)
           m_pRcvBuffer->addRcvTsbPdDriftSample(ctrlpkt.getMsgTimeStamp(), m_RecvLock);
 
       // update last ACK that has been received by the sender
@@ -7145,7 +7158,7 @@ int CUDT::processData(CUnit* unit)
               excessive = true;
           }
 
-          if (!excessive && m_bUseFastDriftTracer)
+          if (!excessive && m_bOPT_UseFastDriftTracer)
           {
               // For peers that do not regard the REXMIT flag (older SRT), rely only
               // on the sequence number which is newer than any last delivered packet.
