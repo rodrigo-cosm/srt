@@ -202,8 +202,6 @@ void CUDT::construct()
     m_bTsbPd = false;
     m_bPeerTLPktDrop = false;
 
-    m_bOPT_UseFastDriftTracer = false;
-
     // Initilize mutex and condition variables
     initSynch();
 }
@@ -248,7 +246,6 @@ CUDT::CUDT()
    m_iOPT_TsbPdDelay = SRT_LIVE_DEF_LATENCY_MS;
    m_iOPT_PeerTsbPdDelay = 0;       //Peer's TsbPd delay as receiver (here is its minimum value, if used)
    m_bOPT_TLPktDrop = true;
-   m_bOPT_UseCbrTimestamp = false;
    m_bTLPktDrop = true;         //Too-late Packet Drop
    m_bMessageAPI = true;
    m_zOPT_ExpPayloadSize = SRT_LIVE_DEF_PLSIZE;
@@ -738,13 +735,6 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
       }
       break;
 
-   case SRTO_CBR:
-      if (m_bConnected)
-          throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
-
-      m_bOPT_UseCbrTimestamp = bool_int_value(optval, optlen);
-      break;
-
    case SRTO_FASTDRIFT:
       if (m_bConnected)
           throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
@@ -1186,9 +1176,6 @@ void CUDT::open()
    m_ullNextNAKTime_tk = currtime_tk + m_ullNAKInt_tk;
    m_ullLastRspAckTime_tk = currtime_tk;
    m_iReXmitCount = 1;
-#ifdef SRT_ENABLE_CBRTIMESTAMP
-   m_ullSndLastCbrTime_tk = currtime_tk;
-#endif
    // Fix keepalive
    m_ullLastSndTime_tk = currtime_tk;
 
@@ -4811,16 +4798,6 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     }
 
     // insert the user buffer into the sending list
-#ifdef SRT_ENABLE_CBRTIMESTAMP
-    if (m_bOPT_UseCbrTimestamp && mctrl.srctime == 0)
-    {
-        uint64_t currtime_tk;
-        CTimer::rdtsc(currtime_tk);
-
-        m_ullSndLastCbrTime_tk = max(currtime_tk, m_ullSndLastCbrTime_tk + m_ullInterval_tk);
-        mctrl.srctime = m_ullSndLastCbrTime_tk / m_ullCPUFrequency;
-    }
-#endif
     m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
     HLOGC(dlog.Debug, log << CONID() << "USER SENDING srctime=" << logging::FormatTime(mctrl.srctime)
             << " size=" << size
