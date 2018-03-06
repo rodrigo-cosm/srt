@@ -90,10 +90,16 @@ public:
       /// @param [in] order if the block should be delivered in order, for DGRAM only
 
 #ifdef SRT_ENABLE_SRCTIMESTAMP
-   void addBuffer(const char* data, int len, int ttl = -1, bool order = false, uint64_t srctime = 0);
+   void addBuffer(const char* data, int len, int ttl, bool order, int& r_msgno, uint64_t srctime);
+   void addBuffer(const char* data, int len)
+   {
+       int dummy = 0;
+       return addBuffer(data, len, -1, false, dummy, 0);
+   }
 #else
    void addBuffer(const char* data, int len, int ttl = -1, bool order = false);
 #endif
+
 
       /// Read a block of data from file and insert it into the sending list.
       /// @param [in] ifs input file stream.
@@ -440,13 +446,13 @@ private:
       /// @param timestamp [in] packet timestamp (relative to peer StartTime), wrapping around every ~72 min
       /// @return local delivery time (usec)
 
+public:
    uint64_t getTsbPdTimeBase(uint32_t timestamp);
 
       /// Get packet local delivery time
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
       /// @return local delivery time (usec)
 
-public:
    uint64_t getPktTsbPdTime(uint32_t timestamp);
 private:
 

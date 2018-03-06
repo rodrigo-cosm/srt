@@ -155,7 +155,7 @@ CSndBuffer::~CSndBuffer()
 }
 
 #ifdef SRT_ENABLE_SRCTIMESTAMP
-void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime)
+void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, int& r_msgno, uint64_t srctime)
 #else
 void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order)
 #endif
@@ -184,6 +184,7 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order)
       s->m_iLength = pktlen;
 
       s->m_iMsgNoBitset = m_iNextMsgNo | inorder;
+      r_msgno = m_iNextMsgNo;
       if (i == 0)
          s->m_iMsgNoBitset |= PacketBoundaryBits(PB_FIRST);
       if (i == size - 1)

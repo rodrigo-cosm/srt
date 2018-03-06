@@ -308,6 +308,31 @@ void CChannel::getPeerAddr(sockaddr* addr) const
 
 int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
 {
+#if ENABLE_LOGGING
+    std::ostringstream spec;
+
+    if (packet.isControl())
+    {
+        spec << " type=CONTROL"
+             << " cmd=" << MessageTypeStr(packet.getType(), packet.getExtendedType())
+             << " arg=" << packet.getHeader()[CPacket::PH_MSGNO];
+    }
+    else
+    {
+        spec << " type=DATA"
+             << " seq=" << packet.getSeqNo()
+             << " msgno=" << MSGNO_SEQ::unwrap(packet.m_iMsgNo)
+             << " datastamp=" << BufferStamp(packet.m_pcData, packet.getLength());
+        if (packet.getRexmitFlag())
+            spec << " [REXMIT]";
+    }
+
+    LOGC(mglog.Debug) << "CChannel::sendto: SENDING NOW: "
+        << " target=%" << packet.m_iID
+        << " size=" << packet.getLength()
+        << " pkt.ts=" << logging::FormatTime(packet.m_iTimeStamp)
+        << spec.str();
+#endif
    // convert control information into network order
    if (packet.isControl())
       for (int i = 0, n = packet.getLength() / 4; i < n; ++ i)

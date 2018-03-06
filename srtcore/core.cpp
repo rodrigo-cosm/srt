@@ -2256,8 +2256,12 @@ int CUDT::sendmsg(const char* data, int len, int msttl, bool inorder)
 
    // insert the user buffer into the sending list
 #ifdef SRT_ENABLE_SRCTIMESTAMP
-   m_pSndBuffer->addBuffer(data, len, msttl, inorder, srctime);
-   LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << srctime << " DATA SIZE: " << len;
+   int sent_msgno = 0;
+   m_pSndBuffer->addBuffer(data, len, msttl, inorder, sent_msgno, srctime);
+   LOGC(dlog.Debug) << CONID() << "USER SENDING srctime=" << logging::FormatTime(srctime)
+            << " size=" << len
+            << " datastamp=" << BufferStamp(data, len)
+            << " msgno=" << MSGNO_SEQ::unwrap(sent_msgno);
 
 #else /* SRT_ENABLE_SRCTIMESTAMP */
    m_pSndBuffer->addBuffer(data, len, msttl, inorder);
@@ -4272,8 +4276,11 @@ int CUDT::packData(CPacket& packet, uint64_t& ts)
 
 #if ENABLE_LOGGING // Required because of referring to MessageFlagStr()
    LOGC(mglog.Debug) << CONID() << "packData: " << reason << " packet seq=" << packet.m_iSeqNo
-       << " (ACK=" << m_iSndLastAck << " ACKDATA=" << m_iSndLastDataAck
-       << " MSG/FLAGS: " << packet.MessageFlagStr() << ")";
+       << " msgno=" << MSGNO_SEQ::unwrap(packet.m_iMsgNo)
+       << " srctime=" << logging::FormatTime(origintime)
+       << " pkt.ts=" << logging::FormatTime(packet.m_iTimeStamp)
+       << " ACK=" << m_iSndLastAck << " ACKDATA=" << m_iSndLastDataAck
+       << " MSG/FLAGS: " << packet.MessageFlagStr();
 #endif
 
 #endif
@@ -4396,7 +4403,11 @@ int CUDT::processData(CUnit* unit)
    }
 
 
-   LOGC(dlog.Debug) << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength() << " seq=" << packet.getSeqNo();
+   LOGC(dlog.Debug) << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength()
+           << " seq=" << packet.getSeqNo()
+           << " pkt.ts=" << logging::FormatTime(packet.getMsgTimeStamp())
+           << " deli.ts=" << logging::FormatTime(m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp()))
+           << " tsbpd.tb=" << logging::FormatTime(m_pRcvBuffer->getTsbPdTimeBase(packet.getMsgTimeStamp()));
    //    << "(" << rexmitstat[pktrexmitflag] << rexmit_reason << ")";
 
    m_pCC->onPktReceived(&packet);
