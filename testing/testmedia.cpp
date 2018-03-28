@@ -109,10 +109,10 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
     // Application-specific options: mode, blocking, timeout, adapter
     if ( Verbose::on )
     {
-        cout << "Parameters:\n";
+        Verb() << "Parameters:\n";
         for (map<string,string>::iterator i = par.begin(); i != par.end(); ++i)
         {
-            cout << "\t" << i->first << " = '" << i->second << "'\n";
+            Verb() << "\t" << i->first << " = '" << i->second << "'\n";
         }
     }
 
@@ -231,15 +231,14 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
 
     if ( !m_blocking_mode )
     {
-        if ( Verbose::on )
-            cout << "[ASYNC] " << flush;
+        Verb() << "[ASYNC] ";
 
         int len = 2;
         SRTSOCKET ready[2];
         if ( srt_epoll_wait(srt_conn_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) == -1 )
             Error(UDT::getlasterror(), "srt_epoll_wait");
 
-        Verb() << "[EPOLL: " << len << " sockets] "  << VerbNoEOL;
+        Verb() << "[EPOLL: " << len << " sockets] " << VerbNoEOL;
     }
 }
 
@@ -263,12 +262,13 @@ void SrtCommon::AcceptNewClient()
     sockaddr_in scl;
     int sclen = sizeof scl;
 
-    Verb() << " accept... " << VerbNoEOL;
+    Verb() << " accept..." << VerbNoEOL;
 
     m_sock = srt_accept(m_bindsock, (sockaddr*)&scl, &sclen);
     if ( m_sock == SRT_INVALID_SOCK )
     {
         srt_close(m_bindsock);
+        m_bindsock = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "srt_accept");
     }
 
@@ -290,20 +290,36 @@ void SrtCommon::Init(string host, int port, map<string,string> par, bool dir_out
     m_output_direction = dir_output;
     InitParameters(host, par);
 
-    if ( Verbose::on )
-        cout << "Opening SRT " << (dir_output ? "target" : "source") << " " << m_mode
-            << "(" << (m_blocking_mode ? "" : "non-") << "blocking)"
-            << " on " << host << ":" << port << endl;
+    Verb() << "Opening SRT " << (dir_output ? "target" : "source") << " " << m_mode
+        << "(" << (m_blocking_mode ? "" : "non-") << "blocking)"
+        << " on " << host << ":" << port;
 
-    if ( m_mode == "caller" )
-        OpenClient(host, port);
-    else if ( m_mode == "listener" )
-        OpenServer(m_adapter, port);
-    else if ( m_mode == "rendezvous" )
-        OpenRendezvous(m_adapter, host, port);
-    else
+    try
     {
-        throw std::invalid_argument("Invalid 'mode'. Use 'client' or 'server'");
+        if ( m_mode == "caller" )
+            OpenClient(host, port);
+        else if ( m_mode == "listener" )
+            OpenServer(m_adapter, port);
+        else if ( m_mode == "rendezvous" )
+            OpenRendezvous(m_adapter, host, port);
+        else
+        {
+            throw std::invalid_argument("Invalid 'mode'. Use 'client' or 'server'");
+        }
+    }
+    catch (...)
+    {
+        // This is an in-constructor-called function, so
+        // when the exception is thrown, the destructor won't
+        // close the sockets. This intercepts the exception
+        // to close them.
+        Verb() << "Open FAILED - closing SRT sockets";
+        if (m_bindsock != SRT_INVALID_SOCK)
+            srt_close(m_bindsock);
+        if (m_sock != SRT_INVALID_SOCK)
+            srt_close(m_sock);
+        m_sock = m_bindsock = SRT_INVALID_SOCK;
+        throw;
     }
 }
 
@@ -347,13 +363,10 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
         {
             string value = m_options.at(o.name);
             bool ok = o.apply<SocketOption::SRT>(sock, value);
-            if ( Verbose::on )
-            {
-                if ( !ok )
-                    cout << "WARNING: failed to set '" << o.name << "' (post, " << (m_output_direction? "target":"source") << ") to " << value << endl;
-                else
-                    cout << "NOTE: SRT/post::" << o.name << "=" << value << endl;
-            }
+            if ( !ok )
+                Verb() << "WARNING: failed to set '" << o.name << "' (post, " << (m_output_direction? "target":"source") << ") to " << value;
+            else
+                Verb() << "NOTE: SRT/post::" << o.name << "=" << value;
         }
     }
 
@@ -386,7 +399,7 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
 
     //if ( Verbose::on )
     //{
-    //    cout << "PRE: blocking mode set: " << yes << " timeout " << m_timeout << endl;
+    //    Verb() << "PRE: blocking mode set: " << yes << " timeout " << m_timeout;
     //}
 
     // host is only checked for emptiness and depending on that the connection mode is selected.
@@ -402,9 +415,9 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
     {
         if (Verbose::on )
         {
-            cout << "WARNING: failed to set options: ";
+            Verb() << "WARNING: failed to set options: ";
             copy(failures.begin(), failures.end(), ostream_iterator<string>(cout, ", "));
-            cout << endl;
+            Verb();
         }
 
         return SRT_ERROR;
@@ -452,32 +465,32 @@ void SrtCommon::PrepareClient()
 }
 
 /*
- This may be used sometimes for testing, but it's nonportable.
-void SrtCommon::SpinWaitAsync()
-{
-    static string udt_status_names [] = {
-        "INIT" , "OPENED", "LISTENING", "CONNECTING", "CONNECTED", "BROKEN", "CLOSING", "CLOSED", "NONEXIST"
-    };
+   This may be used sometimes for testing, but it's nonportable.
+   void SrtCommon::SpinWaitAsync()
+   {
+   static string udt_status_names [] = {
+   "INIT" , "OPENED", "LISTENING", "CONNECTING", "CONNECTED", "BROKEN", "CLOSING", "CLOSED", "NONEXIST"
+   };
 
-    for (;;)
-    {
-        SRT_SOCKSTATUS state = srt_getsockstate(m_sock);
-        if ( int(state) < SRTS_CONNECTED )
-        {
-            if ( Verbose::on )
-                cout << state << flush;
-            usleep(250000);
-            continue;
-        }
-        else if ( int(state) > SRTS_CONNECTED )
-        {
-            Error(UDT::getlasterror(), "UDT::connect status=" + udt_status_names[state]);
-        }
+   for (;;)
+   {
+   SRT_SOCKSTATUS state = srt_getsockstate(m_sock);
+   if ( int(state) < SRTS_CONNECTED )
+   {
+   if ( Verbose::on )
+   Verb() << state;
+   usleep(250000);
+   continue;
+   }
+   else if ( int(state) > SRTS_CONNECTED )
+   {
+   Error(UDT::getlasterror(), "UDT::connect status=" + udt_status_names[state]);
+   }
 
-        return;
-    }
-}
-*/
+   return;
+   }
+   }
+ */
 
 void SrtCommon::ConnectClient(string host, int port)
 {
@@ -495,8 +508,7 @@ void SrtCommon::ConnectClient(string host, int port)
     // Wait for REAL connected state if nonblocking mode
     if ( !m_blocking_mode )
     {
-        if ( Verbose::on )
-            cout << "[ASYNC] " << flush;
+        Verb() << "[ASYNC] " << VerbNoEOL;
 
         // SPIN-WAITING version. Don't use it unless you know what you're doing.
         // SpinWaitAsync();
@@ -506,7 +518,7 @@ void SrtCommon::ConnectClient(string host, int port)
         SRTSOCKET ready[2];
         if ( srt_epoll_wait(srt_conn_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) != -1 )
         {
-            Verb() << "[EPOLL: " << len << " sockets] "  << VerbNoEOL;
+            Verb() << "[EPOLL: " << len << " sockets] " << VerbNoEOL;
         }
         else
         {
@@ -578,8 +590,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
     // Wait for REAL connected state if nonblocking mode
     if ( !m_blocking_mode )
     {
-        if ( Verbose::on )
-            cout << "[ASYNC] " << flush;
+        Verb() << "[ASYNC] ";
 
         // SPIN-WAITING version. Don't use it unless you know what you're doing.
         // SpinWaitAsync();
@@ -589,7 +600,10 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
         SRTSOCKET ready[2];
         if ( srt_epoll_wait(srt_conn_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) != -1 )
         {
-            Verb() << "[EPOLL: " << len << " sockets] "  << VerbNoEOL;
+            if ( Verbose::on )
+            {
+                Verb() << "[EPOLL: " << len << " sockets] ";
+            }
         }
         else
         {
@@ -670,7 +684,7 @@ bytevector SrtSource::Read(size_t chunk)
                     {
                         if ( Verbose::on )
                         {
-                            cout << "... epoll reported ready " << len << " sockets\n";
+                            Verb() << "... epoll reported ready " << len << " sockets";
                         }
                         continue;
                     }
@@ -696,7 +710,7 @@ bytevector SrtSource::Read(size_t chunk)
     clear_stats = false;
     if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
     {
-        cout << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth << endl;
+        Verb() << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth;
     }
     if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
     {
@@ -1031,10 +1045,10 @@ protected:
             int ttl = stoi(attr.at("ttl"));
             int res = setsockopt(m_sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                cout << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl << endl;
+                Verb() << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl;
             res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                cout << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl << endl;
+                Verb() << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl;
 
             attr.erase("ttl");
         }
@@ -1048,8 +1062,8 @@ protected:
             {
                 string value = m_options.at(o.name);
                 bool ok = o.apply<SocketOption::SYSTEM>(m_sock, value);
-                if ( Verbose::on && !ok )
-                    cout << "WARNING: failed to set '" << o.name << "' to " << value << endl;
+                if ( !ok )
+                    Verb() << "WARNING: failed to set '" << o.name << "' to " << value;
             }
         }
     }
@@ -1072,9 +1086,9 @@ protected:
 #ifdef WIN32
         if (m_sock != -1)
         {
-           shutdown(m_sock, SD_BOTH);
-           closesocket(m_sock);
-           m_sock = -1;
+            shutdown(m_sock, SD_BOTH);
+            closesocket(m_sock);
+            m_sock = -1;
         }
 #else
         close(m_sock);

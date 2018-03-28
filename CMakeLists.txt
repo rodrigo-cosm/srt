@@ -81,6 +81,7 @@ option(ENABLE_HEAVY_LOGGING "Should heavy debug logging be enabled" ${ENABLE_HEA
 option(ENABLE_SHARED "Should libsrt be built as a shared library" ON)
 option(ENABLE_STATIC "Should libsrt be built as a static library" ON)
 option(ENABLE_SUFLIP "Should suflip tool be built" OFF)
+option(ENABLE_GETNAMEINFO "In-logs sockaddr-to-string should do rev-dns" OFF)
 option(USE_GNUTLS "Should use gnutls instead of openssl" OFF)
 option(ENABLE_C_DEPS "Extra library dependencies in srt.pc for C language" OFF)
 option(USE_STATIC_LIBSTDCXX "Should use static rather than shared libstdc++" OFF)
@@ -158,8 +159,6 @@ if (DEFINED WITH_LINKER)
 	# but enforce using libstdc++ from obtained location
     set(CMAKE_CXX_LINK_EXECUTABLE "${WITH_LINKER}  <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> <OBJECTS>  -o <TARGET> <LINK_LIBRARIES> ${LIBSTDCXX_PATH} -lm")
 	message(STATUS "SPECIAL LINKER: ${CMAKE_CXX_LINK_EXECUTABLE}")
-endif()
-
 
 if (DEFINED WITH_SRT_TARGET)
 	set (TARGET_haisrt ${WITH_SRT_TARGET})
@@ -322,6 +321,10 @@ if (ENABLE_LOGGING)
 	if (ENABLE_HEAVY_LOGGING)
 		list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_HEAVY_LOGGING=1")
 	endif()
+endif()
+
+if (ENABLE_GETNAMEINFO)
+	list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_GETNAMEINFO=1")
 endif()
 
 if (ENABLE_THREAD_CHECK)
@@ -519,8 +522,8 @@ endif()
 # transitive or not.
 
 foreach(tar ${srtpack_libspec_common})
-	message(STATUS "ADDING TRANSITIVE LINK DEP to:${tar} : ${EXTRA_LIBRARIES} ${PTHREAD_LIBRARY}")
-	target_link_libraries (${tar} PUBLIC ${EXTRA_LIBRARIES} ${PTHREAD_LIBRARY})
+	message(STATUS "ADDING TRANSITIVE LINK DEP to:${tar} : ${PTHREAD_LIBRARY} ${dep}")
+	target_link_libraries (${tar} PUBLIC ${PTHREAD_LIBRARY} ${dep})
 endforeach()
 
 

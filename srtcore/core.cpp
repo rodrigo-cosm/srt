@@ -1173,9 +1173,6 @@ void CUDT::open()
    m_ullNextNAKTime_tk = currtime_tk + m_ullNAKInt_tk;
    m_ullLastRspAckTime_tk = currtime_tk;
    m_iReXmitCount = 1;
-#ifdef SRT_ENABLE_CBRTIMESTAMP
-   m_ullSndLastCbrTime_tk = currtime_tk;
-#endif
    // Fix keepalive
    m_ullLastSndTime_tk = currtime_tk;
 
@@ -4802,16 +4799,6 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     }
 
     // insert the user buffer into the sending list
-#ifdef SRT_ENABLE_CBRTIMESTAMP
-    if (mctrl.srctime == 0)
-    {
-        uint64_t currtime_tk;
-        CTimer::rdtsc(currtime_tk);
-
-        m_ullSndLastCbrTime_tk = max(currtime_tk, m_ullSndLastCbrTime_tk + m_ullInterval_tk);
-        mctrl.srctime = m_ullSndLastCbrTime_tk / m_ullCPUFrequency;
-    }
-#endif
     m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
     HLOGC(dlog.Debug, log << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size);
 
@@ -5365,7 +5352,7 @@ void CUDT::sample(CPerfMon* perf, bool clear)
    }
 }
 
-void CUDT::bstats(CBytePerfMon* perf, bool clear)
+void CUDT::bstats(CBytePerfMon* perf, bool clear, bool instantaneous)
 {
    if (!m_bConnected)
       throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
@@ -5469,16 +5456,26 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear)
    {
       if (m_pSndBuffer)
       {
-         //new>
-         #ifdef SRT_ENABLE_SNDBUFSZ_MAVG
-         perf->pktSndBuf = m_pSndBuffer->getAvgBufSize(Ref(perf->byteSndBuf), Ref(perf->msSndBuf));
-         #else
+#ifdef SRT_ENABLE_SNDBUFSZ_MAVG
+         if (instantaneous)
+         {
+             /* Get instant SndBuf instead of moving average for application-based Algorithm
+                (such as NAE) in need of fast reaction to network condition changes. */
+             perf->pktSndBuf = m_pSndBuffer->getCurrBufSize(Ref(perf->byteSndBuf), Ref(perf->msSndBuf));
+         }
+         else
+         {
+             perf->pktSndBuf = m_pSndBuffer->getAvgBufSize(Ref(perf->byteSndBuf), Ref(perf->msSndBuf));
+         }
+#else
          perf->pktSndBuf = m_pSndBuffer->getCurrBufSize(Ref(perf->byteSndBuf), Ref(perf->msSndBuf));
-         #endif
+#endif
          perf->byteSndBuf += (perf->pktSndBuf * pktHdrSize);
          //<
          perf->byteAvailSndBuf = (m_iSndBufSize - perf->pktSndBuf) * m_iMSS;
-      } else {
+      }
+      else
+      {
          perf->byteAvailSndBuf = 0;
          //new>
          perf->pktSndBuf = 0;
@@ -5491,13 +5488,22 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear)
       {
          perf->byteAvailRcvBuf = m_pRcvBuffer->getAvailBufSize() * m_iMSS;
          //new>
-         #ifdef SRT_ENABLE_RCVBUFSZ_MAVG
-         perf->pktRcvBuf = m_pRcvBuffer->getRcvAvgDataSize(perf->byteRcvBuf, perf->msRcvBuf);
-         #else
+#ifdef SRT_ENABLE_RCVBUFSZ_MAVG
+         if (instantaneous) //no need for historical API for Rcv side
+         {
+             perf->pktRcvBuf = m_pRcvBuffer->getRcvDataSize(perf->byteRcvBuf, perf->msRcvBuf);
+         }
+         else
+         {
+             perf->pktRcvBuf = m_pRcvBuffer->getRcvAvgDataSize(perf->byteRcvBuf, perf->msRcvBuf);
+         }
+#else
          perf->pktRcvBuf = m_pRcvBuffer->getRcvDataSize(perf->byteRcvBuf, perf->msRcvBuf);
-         #endif
+#endif
          //<
-      } else {
+      }
+      else
+      {
          perf->byteAvailRcvBuf = 0;
          //new>
          perf->pktRcvBuf = 0;
@@ -5536,7 +5542,7 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear)
       m_llTraceSent = m_llTraceRecv = m_iTraceSndLoss = m_iTraceRcvLoss = m_iTraceRetrans = m_iSentACK = m_iRecvACK = m_iSentNAK = m_iRecvNAK = 0;
       m_llSndDuration = 0;
       m_iTraceRcvRetrans = 0;
-	  m_iTraceRcvBelated = 0;
+      m_iTraceRcvBelated = 0;
       m_LastSampleTime = currtime;
    }
 }
@@ -5596,8 +5602,7 @@ void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
             }
             else
             {
-                // XXX Use constant for this 500000
-                m_pSndBuffer->setInputRateSmpPeriod(bw == 0 ? 500000 : 0);
+                m_pSndBuffer->setInputRateSmpPeriod(bw == 0 ? SND_INPUTRATE_FAST_START_US: 0);
             }
 
             HLOGC(mglog.Debug, log << "updateCC/TEV_INIT: updating BW=" << m_llMaxBW
@@ -5614,7 +5619,7 @@ void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
         // This requests internal input rate sampling.
         if (m_llMaxBW == 0 && m_llInputBW == 0)
         {
-            int period;
+            uint64_t period;
             int payloadsz; //CC will use its own average payload size
             int64_t inputbw = m_pSndBuffer->getInputRate(Ref(payloadsz), Ref(period)); //Auto input rate
 
@@ -5632,8 +5637,8 @@ void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
             if (inputbw != 0)
                 m_Smoother->updateBandwidth(0, withOverhead(inputbw)); //Bytes/sec
 
-            if ((m_llSentTotal > 2000) && (period < 5000000))
-                m_pSndBuffer->setInputRateSmpPeriod(5000000); //5 sec period after fast start
+            if ((m_llSentTotal > SND_INPUTRATE_MAX_PACKETS) && (period < SND_INPUTRATE_RUNNING_US))
+                m_pSndBuffer->setInputRateSmpPeriod(SND_INPUTRATE_RUNNING_US); //1 sec period after fast start
         }
     }
 

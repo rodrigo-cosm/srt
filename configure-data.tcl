@@ -52,6 +52,7 @@ set cmake_options {
     enable-shared "Should libsrt be built as a shared library (default: ON)"
     enable-static "Should libsrt be built as a static library (default: ON)"
     enable-suflip "Shuld suflip tool be built (default: OFF)"
+    enable-getnameinfo "In-logs sockaddr-to-string should do rev-dns (default: OFF)"
 	enable-testing "Compile also testing applications (default: OFF)"
 	enable-librt "Link against librt that some systems require for C++11 clock (default: OFF)"
     enable-thread-check "Enable #include <threadcheck.h> that implements THREAD_* macros"
@@ -324,7 +325,7 @@ proc postprocess {} {
 		# Otherwise don't set PKG_CONFIG_PATH and we'll see.
 	}
 
-	if { $::HAVE_DARWIN } {
+	if { $::HAVE_DARWIN && !$toolchain_changed} {
 
 		if { $have_gnutls } {
 			# Use gnutls explicitly, as found in brew
