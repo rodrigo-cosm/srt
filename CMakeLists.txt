@@ -704,6 +704,9 @@ if ( ENABLE_CXX11 )
 	srt_add_application(srt-multiplex ${VIRTUAL_srtsupport})
 
 	if (ENABLE_TESTING)
+		if (ENABLE_URI_EXTENSIONS)
+			add_definitions(-DENABLE_URI_EXTENSIONS)
+		endif()
 
 		macro(srt_add_testprogram name)
 			# Variables in macros are not local. Clear them forcefully.

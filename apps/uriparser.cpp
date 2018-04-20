@@ -184,6 +184,14 @@ void UriParser::Parse(const string& strUrl, DefaultExpect exp)
     while (iQueryStart > -1)
     {
         idx = strUrl.find("&", iQueryStart);
+
+#if ENABLE_URI_EXTENSIONS
+        // Non-standard: you can also specify attributes by:
+        //  scheme://path?attr1=val?attr2=val?attr3=val
+        // If you use & though, then it takes precedense.
+        if (idx == string::npos)
+            idx = strUrl.find("?", iQueryStart);
+#endif
         if (idx != string::npos)
         {
             strQueryPair = strUrl.substr(iQueryStart, idx - iQueryStart);
@@ -198,7 +206,15 @@ void UriParser::Parse(const string& strUrl, DefaultExpect exp)
         idx = strQueryPair.find("=");
         if (idx != string::npos)
         {
+
             m_mapQuery[strQueryPair.substr(0, idx)] = strQueryPair.substr(idx + 1, strQueryPair.size() - (idx + 1));
+        }
+        else
+        {
+#if ENABLE_URI_EXTENSIONS
+            // Otherwise still add this as an attribute, but with empty string value
+            m_mapQuery[strQueryPair] = "";
+#endif
         }
     }
 
