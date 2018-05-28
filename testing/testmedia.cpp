@@ -163,16 +163,16 @@ Iface* CreateFile(const string& name) { return new typename File<Iface>::type (n
 template <class PerfMonType>
 void PrintSrtStats(int sid, const PerfMonType& mon)
 {
-    cout << "======= SRT STATS: sid=" << sid << endl;
-    cout << "PACKETS SENT:     " << setw(11) << mon.pktSent            << "  RECEIVED:   " << setw(11) << mon.pktRecv              << endl;
-    cout << "LOST PKT SENT:    " << setw(11) << mon.pktSndLoss         << "  RECEIVED:   " << setw(11) << mon.pktRcvLoss           << endl;
-    cout << "REXMIT SENT:      " << setw(11) << mon.pktRetrans         << "  RECEIVED:   " << setw(11) << mon.pktRcvRetrans        << endl;
-    cout << "RATE SENDING:     " << setw(11) << mon.mbpsSendRate       << "  RECEIVING:  " << setw(11) << mon.mbpsRecvRate         << endl;
-    cout << "BELATED RECEIVED: " << setw(11) << mon.pktRcvBelated      << "  AVG TIME:   " << setw(11) << mon.pktRcvAvgBelatedTime << endl;
-    cout << "REORDER DISTANCE: " << setw(11) << mon.pktReorderDistance << endl;
-    cout << "WINDOW: FLOW:     " << setw(11) << mon.pktFlowWindow      << "  CONGESTION: " << setw(11) << mon.pktCongestionWindow  << "  FLIGHT: " << setw(11) << mon.pktFlightSize << endl;
-    cout << "RTT:              " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s " << endl;
-    cout << "BUFFERLEFT: SND:  " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
+    Verb() << "======= SRT STATS: sid=" << sid;
+    Verb() << "PACKETS SENT:     " << setw(11) << mon.pktSent            << "  RECEIVED:   " << setw(11) << mon.pktRecv;
+    Verb() << "LOST PKT SENT:    " << setw(11) << mon.pktSndLoss         << "  RECEIVED:   " << setw(11) << mon.pktRcvLoss;
+    Verb() << "REXMIT SENT:      " << setw(11) << mon.pktRetrans         << "  RECEIVED:   " << setw(11) << mon.pktRcvRetrans;
+    Verb() << "RATE SENDING:     " << setw(11) << mon.mbpsSendRate       << "  RECEIVING:  " << setw(11) << mon.mbpsRecvRate;
+    Verb() << "BELATED RECEIVED: " << setw(11) << mon.pktRcvBelated      << "  AVG TIME:   " << setw(11) << mon.pktRcvAvgBelatedTime;
+    Verb() << "REORDER DISTANCE: " << setw(11) << mon.pktReorderDistance;
+    Verb() << "WINDOW: FLOW:     " << setw(11) << mon.pktFlowWindow      << "  CONGESTION: " << setw(11) << mon.pktCongestionWindow  << "  FLIGHT: " << setw(11) << mon.pktFlightSize;
+    Verb() << "RTT:              " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s ";
+    Verb() << "BUFFERLEFT: SND:  " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf;
 }
 
 
@@ -742,7 +742,7 @@ bytevector SrtSource::Read(size_t chunk)
     CBytePerfMon perf;
     srt_bstats(m_sock, &perf, clear_stats);
     clear_stats = false;
-    if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
+    if ( transmit_bw_report && int(counter % transmit_bw_report) == transmit_bw_report - 1 )
     {
         Verb() << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth;
     }
@@ -1258,7 +1258,8 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
     int iport = 0;
     switch ( u.type() )
     {
-    default: ; // do nothing, return nullptr
+    default:
+        break; // do nothing, return nullptr
     case UriParser::FILE:
         if ( u.host() == "con" || u.host() == "console" )
         {
@@ -1275,7 +1276,6 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
         else
             ptr.reset( CreateFile<Base>(u.path()));
         break;
-
 
     case UriParser::SRT:
         iport = atoi(u.port().c_str());

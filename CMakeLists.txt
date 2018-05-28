@@ -38,14 +38,6 @@ endif()
 set (SRT_VERSION 1.3.0)
 set_version_variables(SRT_VERSION ${SRT_VERSION})
 
-
-message(STATUS "System name: ${CMAKE_SYSTEM_NAME}")
-set_if(DARWIN ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-set_if(LINUX ${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-set_if(MICROSOFT WIN32 AND (NOT MINGW AND NOT CYGWIN))
-
-set_if(SYMLINKABLE LINUX OR DARWIN OR CYGWIN)
-
 # The CMAKE_BUILD_TYPE seems not to be always set, weird.
 if (NOT DEFINED ENABLE_DEBUG)
 
@@ -145,6 +137,7 @@ else()
 	message(STATUS "No WITH_COMPILER_PREFIX - using default C++ compiler: ${CMAKE_CXX_COMPILER}")
 endif()
 
+# This option is to help some unusually behaving crosscompiler systems.
 if (DEFINED WITH_LINKER)
 	if (NOT DEFINED USE_STATIC_LIBSTDCXX)
 		message(WARNING "NOTE: WITH_LINKER option implies using static libstdc++")
@@ -169,6 +162,7 @@ if (DEFINED WITH_LINKER)
 	# but enforce using libstdc++ from obtained location
     set(CMAKE_CXX_LINK_EXECUTABLE "${WITH_LINKER}  <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> <OBJECTS>  -o <TARGET> <LINK_LIBRARIES> ${LIBSTDCXX_PATH} -lm")
 	message(STATUS "SPECIAL LINKER: ${CMAKE_CXX_LINK_EXECUTABLE}")
+endif()
 
 if (DEFINED WITH_SRT_TARGET)
 	set (TARGET_haisrt ${WITH_SRT_TARGET})
@@ -693,9 +687,6 @@ macro(srt_make_application name)
 	set_target_properties(${name} PROPERTIES COMPILE_FLAGS "${CFLAGS_CXX_STANDARD} ${EXTRA_stransmit}" ${FORCE_RPATH})
 
 	target_link_libraries(${name} ${srt_link_library})
-	if (ENABLE_LIBRT)
-		target_link_libraries(${name} -lrt)
-	endif()
 endmacro()
 
 macro(srt_add_application name sources)

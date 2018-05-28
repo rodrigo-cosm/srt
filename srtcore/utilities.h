@@ -624,38 +624,39 @@ inline ValueType avg_iir(ValueType old_value, ValueType new_value)
 // Debug support
 inline std::string SockaddrToString(const sockaddr* sadr)
 {
-	void* addr =
+    void* addr =
         sadr->sa_family == AF_INET ?
-            (void*)&((sockaddr_in*)sadr)->sin_addr
+        (void*)&((sockaddr_in*)sadr)->sin_addr
         : sadr->sa_family == AF_INET6 ?
-            (void*)&((sockaddr_in6*)sadr)->sin6_addr
+        (void*)&((sockaddr_in6*)sadr)->sin6_addr
         : 0;
-	// (cast to (void*) is required because otherwise the 2-3 arguments
-	// of ?: operator would have different types, which isn't allowed in C++.
+    // (cast to (void*) is required because otherwise the 2-3 arguments
+    // of ?: operator would have different types, which isn't allowed in C++.
     if ( !addr )
         return "unknown:0";
 
-	std::ostringstream output;
-	char hostbuf[1024];
-	if (getnameinfo(sadr, sizeof(*sadr), hostbuf, 1024, NULL, 0, NI_NAMEREQD) == 0)
-	{
-        // Get the reverse-name if you can. Should that linger, ignore the problem.
-		output << hostbuf;
-	}
-    // If a reverse-name can't be found, use the numeric form
-	else if (inet_ntop(sadr->sa_family, addr, hostbuf, 1024))
+    std::ostringstream output;
+    char hostbuf[1024];
+
+#if ENABLE_GETNAMEINFO
+    if (!getnameinfo(sadr, sizeof(*sadr), hostbuf, 1024, NULL, 0, NI_NAMEREQD))
     {
         output << hostbuf;
     }
-    // Should this also fail, return "unknown"
     else
-	{
-		output << "unknown";
-	}
+#endif
+    {
+        if (inet_ntop(sadr->sa_family, addr, hostbuf, 1024) == NULL)
+        {
+            strcpy(hostbuf, "unknown");
+        }
+        output << hostbuf;
+    }
 
-	output << ":" << ntohs(((sockaddr_in*)sadr)->sin_port); // TRICK: sin_port and sin6_port have the same offset and size
-	return output.str();
+    output << ":" << ntohs(((sockaddr_in*)sadr)->sin_port); // TRICK: sin_port and sin6_port have the same offset and size
+    return output.str();
 }
+
 
 
 

@@ -45,7 +45,6 @@ set cmake_options {
     enable-suflip "Shuld suflip tool be built (default: OFF)"
     enable-getnameinfo "In-logs sockaddr-to-string should do rev-dns (default: OFF)"
 	enable-testing "Compile also testing applications (default: OFF)"
-	enable-librt "Link against librt that some systems require for C++11 clock (default: OFF)"
     enable-thread-check "Enable #include <threadcheck.h> that implements THREAD_* macros"
 	installdir=<path> "Predicted directory where installed files should be eventually copied."
     openssl-crypto-library=<filepath> "Path to a library."

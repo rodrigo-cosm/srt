@@ -98,7 +98,6 @@ struct AllFaOn
 #if ENABLE_HAICRYPT_LOGGING
         allfa.set(SRT_LOGFA_HAICRYPT, true);
 #endif
-
     }
 } logger_fa_all;
 
@@ -3926,8 +3925,9 @@ void* CUDT::tsbpd(void* param)
 
 #if ENABLE_LOGGING
                 int64_t timediff = 0;
+                int64_t now = CTimer::getTime();
                 if ( tsbpdtime )
-                     timediff = int64_t(tsbpdtime) - int64_t(CTimer::getTime());
+                     timediff = int64_t(tsbpdtime) - now;
 #if ENABLE_HEAVY_LOGGING
                 HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: DROPSEQ: up to seq=" << CSeqNo::decseq(skiptoseqno)
                     << " (" << seqlen << " packets) playable at " << logging::FormatTime(tsbpdtime) << " delayed "
@@ -3935,7 +3935,7 @@ void* CUDT::tsbpd(void* param)
 #else
                 // Don't print that log if heavy logging is on, no need to duplicated debug log.
                 LOGC(rxlog.Note, log << "TLPKTDROP FROM seq:" << self->m_iRcvLastSkipAck << " TO PLAY:" << skiptoseqno
-                        << " WITH delay=" << ((int64_t(now) - int64_t(tsbpdtime))/1000.0) << "ms");
+                        << " WITH delay=" << ((now - int64_t(tsbpdtime))/1000.0) << "ms");
 #endif
                 LOGC(dlog.Debug, log << "RCV-DROPPED packet delay=" << (timediff%1000) << "ms");
 #endif
@@ -6118,10 +6118,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
           // Explicitly defined lost sequences 
           if (rparam)
           {
-              int32_t* data = (int32_t*)rparam;
+              int32_t* lossdata = (int32_t*)rparam;
 
-              size_t bytes = sizeof(*data)*size;
-              ctrlpkt.pack(pkttype, NULL, data, bytes);
+              size_t bytes = sizeof(*lossdata)*size;
+              ctrlpkt.pack(pkttype, NULL, lossdata, bytes);
 
               ctrlpkt.m_iID = m_PeerID;
               nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
@@ -6130,7 +6130,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
               ++ m_iSentNAKTotal;
               int losslen = bytes/4;
               LOGC(rxlog.Note, log << "REPORTING LOSS (immediate) - seq: "
-                      << SEQNO_VALUE::unwrap(*data) << " ... " << (losslen > 1 ? data[losslen-1] : *data));
+                      << SEQNO_VALUE::unwrap(*lossdata) << " ... " << (losslen > 1 ? lossdata[losslen-1] : *lossdata));
           }
           // Call with no arguments - get loss list from internal data.
           else if (m_pRcvLossList->getLossLength() > 0)
@@ -6587,9 +6587,12 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
                   ++ i;
 
                   // Check the log manually because either one or the other should be printed.
-                  HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+                  HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...",
+                          losslist_lo, losslist_hi,
+                          CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
 
-                  if ((CSeqNo::seqcmp(losslist_lo, losslist_hi) > 0) || (CSeqNo::seqcmp(losslist_hi, m_iSndCurrSeqNo) > 0))
+                  if ((CSeqNo::seqcmp(losslist_lo, losslist_hi) > 0)
+                          || (CSeqNo::seqcmp(losslist_hi, m_iSndCurrSeqNo) > 0))
                   {
                       // seq_a must not be greater than seq_b; seq_b must not be greater than the most recent sent seq
                       secure = false;
