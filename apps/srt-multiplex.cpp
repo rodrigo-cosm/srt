@@ -1,3 +1,12 @@
+/*
+ * SRT - Secure, Reliable, Transport
+ * Copyright (c) 2018 Haivision Systems Inc.
+ * 
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * 
+ */
 
 #include <memory>
 #include <thread>
@@ -6,10 +15,11 @@
 #include <chrono>
 #include <csignal>
 #include <iterator>
+#include <stdexcept>
 
 #define REQUIRE_CXX11 1
 
-#include "appcommon.hpp"  // CreateAddrInet
+#include "apputil.hpp"  // CreateAddrInet
 #include "uriparser.hpp"  // UriParser
 #include "socketoptions.hpp"
 #include "logsupport.hpp"
@@ -17,6 +27,7 @@
 #include "transmitmedia.hpp"
 #include "netinet_any.h"
 #include "threadname.h"
+#include "verbose.hpp"
 
 #include <srt.h>
 #include <logging.h>
@@ -44,8 +55,6 @@ void OnINT_SetIntState(int)
 {
     cerr << "\n-------- REQUESTED INTERRUPT!\n";
     siplex_int_state = true;
-    if ( transmit_throw_on_interrupt )
-        throw std::runtime_error("Requested exception interrupt");
 }
 
 volatile bool alarm_state = false;
@@ -111,7 +120,8 @@ struct MediumPair
             {
                 ostringstream sout;
                 alarm(1);
-                const bytevector& data = src->Read(chunk);
+                bytevector data;
+                src->Read(chunk, data);
                 alarm(0);
                 if (alarm_state)
                 {
@@ -541,7 +551,7 @@ int main( int argc, char** argv )
 
     string verbo = Option<OutString>(params, "no", "v", "verbose");
     if ( verbo == "" || !false_names.count(verbo) )
-        transmit_verbose = true;
+        Verbose::on = true;
 
 
     string srt_uri = params[""][0];

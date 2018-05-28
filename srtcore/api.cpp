@@ -1,22 +1,12 @@
-/*****************************************************************************
+/*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
- * 
- * Based on UDT4 SDK version 4.11
- *****************************************************************************/
+ */
 
 /*****************************************************************************
 Copyright (c) 2001 - 2011, The Board of Trustees of the University of Illinois.
@@ -72,6 +62,10 @@ modified by
 #include "logging.h"
 #include "threadname.h"
 #include "srt.h"
+
+#ifdef WIN32
+   #include <win/wintime.h>
+#endif
 
 using namespace std;
 
@@ -310,7 +304,7 @@ SRTSOCKET CUDTUnited::newSocket(int af, int)
    CGuard::enterCS(m_ControlLock);
    try
    {
-      LOGC(mglog.Debug, log << CONID(ns->m_SocketID)
+      HLOGC(mglog.Debug, log << CONID(ns->m_SocketID)
          << "newSocket: mapping socket "
          << ns->m_SocketID);
       m_Sockets[ns->m_SocketID] = ns;
@@ -410,7 +404,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr* peer, CHan
 
    CGuard::enterCS(m_IDLock);
    ns->m_SocketID = -- m_SocketIDGenerator;
-   LOGF(mglog.Debug, "newConnection: generated socket id %d", ns->m_SocketID);
+   HLOGF(mglog.Debug, "newConnection: generated socket id %d", ns->m_SocketID);
    CGuard::leaveCS(m_IDLock);
 
    ns->m_ListenSocket = listen;
@@ -432,7 +426,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr* peer, CHan
        // this call causes sending the SRT Handshake through this socket.
        // Without this mapping the socket cannot be found and therefore
        // the SRT Handshake message would fail.
-       LOGF(mglog.Debug, 
+       HLOGF(mglog.Debug, 
                "newConnection: incoming %s, mapping socket %d",
                SockaddrToString(peer).c_str(), ns->m_SocketID);
        {
@@ -470,7 +464,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr* peer, CHan
    CGuard::enterCS(m_ControlLock);
    try
    {
-       LOGF(mglog.Debug, 
+       HLOGF(mglog.Debug, 
                "newConnection: mapping peer %d to that socket (%d)\n",
                ns->m_PeerID, ns->m_SocketID);
        m_PeerRec[ns->getPeerSpec()].insert(ns->m_SocketID);
@@ -920,11 +914,11 @@ int CUDTUnited::close(const SRTSOCKET u)
    if (!s)
       throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-   LOGC(mglog.Debug, log << s->m_pUDT->CONID() << " CLOSE. Acquiring control lock");
+   HLOGC(mglog.Debug, log << s->m_pUDT->CONID() << " CLOSE. Acquiring control lock");
 
    CGuard socket_cg(s->m_ControlLock);
 
-   LOGC(mglog.Debug, log << s->m_pUDT->CONID() << " CLOSING (removing from listening, closing CUDT)");
+   HLOGC(mglog.Debug, log << s->m_pUDT->CONID() << " CLOSING (removing from listening, closing CUDT)");
 
    bool synch_close_snd = s->m_pUDT->m_bSynSending;
    //bool synch_close_rcv = s->m_pUDT->m_bSynRecving;
@@ -948,7 +942,7 @@ int CUDTUnited::close(const SRTSOCKET u)
       // be unable to bind to this port that the about-to-delete listener
       // is currently occupying (due to blocked slot in the RcvQueue).
 
-      LOGC(mglog.Debug, log << s->m_pUDT->CONID() << " CLOSING (removing listener immediately)");
+      HLOGC(mglog.Debug, log << s->m_pUDT->CONID() << " CLOSING (removing listener immediately)");
       {
           CGuard cg(s->m_pUDT->m_ConnectionLock);
           s->m_pUDT->m_bListening = false;
@@ -966,7 +960,7 @@ int CUDTUnited::close(const SRTSOCKET u)
        s->m_pUDT->close();
 
        // synchronize with garbage collection.
-       LOGC(mglog.Debug, log << "%" << id << " CUDT::close done. GLOBAL CLOSE: " << s->m_pUDT->CONID() << ". Acquiring GLOBAL control lock");
+       HLOGC(mglog.Debug, log << "%" << id << " CUDT::close done. GLOBAL CLOSE: " << s->m_pUDT->CONID() << ". Acquiring GLOBAL control lock");
        CGuard manager_cg(m_ControlLock);
 
        // since "s" is located before m_ControlLock, locate it again in case
@@ -990,7 +984,7 @@ int CUDTUnited::close(const SRTSOCKET u)
        CTimer::triggerEvent();
    }
 
-   LOGC(mglog.Debug, log << "%" << id << ": GLOBAL: CLOSING DONE");
+   HLOGC(mglog.Debug, log << "%" << id << ": GLOBAL: CLOSING DONE");
 
    // Check if the ID is still in closed sockets before you access it
    // (the last triggerEvent could have deleted it).
@@ -998,7 +992,7 @@ int CUDTUnited::close(const SRTSOCKET u)
    {
 #if SRT_ENABLE_CLOSE_SYNCH
 
-       LOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sync-waiting for releasing sender resources...");
+       HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sync-waiting for releasing sender resources...");
        for (;;)
        {
            CSndBuffer* sb = s->m_pUDT->m_pSndBuffer;
@@ -1006,14 +1000,14 @@ int CUDTUnited::close(const SRTSOCKET u)
            // Disconnected from buffer - nothing more to check.
            if (!sb)
            {
-               LOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sending buffer disconnected. Allowed to close.");
+               HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sending buffer disconnected. Allowed to close.");
                break;
            }
 
            // Sender buffer empty
            if (sb->getCurrBufSize() == 0)
            {
-               LOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sending buffer depleted. Allowed to close.");
+               HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sending buffer depleted. Allowed to close.");
                break;
            }
 
@@ -1033,16 +1027,16 @@ int CUDTUnited::close(const SRTSOCKET u)
            }
            if (isgone)
            {
-               LOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: ... gone in the meantime, whatever. Exiting close().");
+               HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: ... gone in the meantime, whatever. Exiting close().");
                break;
            }
 
-           LOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: ... still waiting for any update.");
+           HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: ... still waiting for any update.");
            CTimer::EWait wt = CTimer::waitForEvent();
 
            if ( wt == CTimer::WT_ERROR )
            {
-               LOGC(mglog.Debug, log << "GLOBAL CLOSING: ... ERROR WHEN WAITING FOR EVENT. Exiting close() to prevent hangup.");
+               HLOGC(mglog.Debug, log << "GLOBAL CLOSING: ... ERROR WHEN WAITING FOR EVENT. Exiting close() to prevent hangup.");
                break;
            }
 
@@ -1463,7 +1457,7 @@ void CUDTUnited::checkBrokenSockets()
    {
        CUDTSocket* s = i->second;
 
-      // LOGF(mglog.Debug, "checking EXISTING socket: %d\n", i->first);
+      // HLOGF(mglog.Debug, "checking EXISTING socket: %d\n", i->first);
       // check broken connection
       if (s->m_pUDT->m_bBroken)
       {
@@ -1474,7 +1468,7 @@ void CUDTUnited::checkBrokenSockets()
             // in case a client is connecting
             if (elapsed < 3000000) // XXX MAKE A SYMBOLIC CONSTANT HERE!
             {
-               // LOGF(mglog.Debug, "STILL KEEPING socket %d
+               // HLOGF(mglog.Debug, "STILL KEEPING socket %d
                // (listener, too early, w8 %fs)\n", i->first,
                // double(elapsed)/1000000);
                continue;
@@ -1489,13 +1483,13 @@ void CUDTUnited::checkBrokenSockets()
             && s->m_pUDT->m_pRcvBuffer->isRcvDataAvailable()
             && (s->m_pUDT->m_iBrokenCounter -- > 0))
          {
-            // LOGF(mglog.Debug, "STILL KEEPING socket (still have data):
+            // HLOGF(mglog.Debug, "STILL KEEPING socket (still have data):
             // %d\n", i->first);
             // if there is still data in the receiver buffer, wait longer
             continue;
          }
 
-         // LOGF(mglog.Debug, "moving socket to CLOSED: %d\n", i->first);
+         // HLOGF(mglog.Debug, "moving socket to CLOSED: %d\n", i->first);
 
          //close broken connections and start removal timer
          s->m_Status = SRTS_CLOSED;
@@ -1523,7 +1517,7 @@ void CUDTUnited::checkBrokenSockets()
    for (map<SRTSOCKET, CUDTSocket*>::iterator j = m_ClosedSockets.begin();
       j != m_ClosedSockets.end(); ++ j)
    {
-      // LOGF(mglog.Debug, "checking CLOSED socket: %d\n", j->first);
+      // HLOGF(mglog.Debug, "checking CLOSED socket: %d\n", j->first);
       if (j->second->m_pUDT->m_ullLingerExpiration > 0)
       {
          // asynchronous close:
@@ -1543,7 +1537,7 @@ void CUDTUnited::checkBrokenSockets()
          && ((!j->second->m_pUDT->m_pRNode)
             || !j->second->m_pUDT->m_pRNode->m_bOnList))
       {
-         // LOGF(mglog.Debug, "will unref socket: %d\n", j->first);
+         // HLOGF(mglog.Debug, "will unref socket: %d\n", j->first);
          tbr.push_back(j->first);
       }
    }
@@ -1606,9 +1600,9 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
       UDT_EPOLL_IN|UDT_EPOLL_OUT|UDT_EPOLL_ERR, false);
 
    // delete this one
-   LOGC(mglog.Debug, log << "GC/removeSocket: closing associated UDT %" << u);
+   HLOGC(mglog.Debug, log << "GC/removeSocket: closing associated UDT %" << u);
    i->second->m_pUDT->close();
-   LOGC(mglog.Debug, log << "GC/removeSocket: DELETING SOCKET %" << u);
+   HLOGC(mglog.Debug, log << "GC/removeSocket: DELETING SOCKET %" << u);
    delete i->second;
    m_ClosedSockets.erase(i);
 
@@ -1621,11 +1615,11 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
    }
 
    m->second.m_iRefCount --;
-   // LOGF(mglog.Debug, "unrefing underlying socket for %u: %u\n",
+   // HLOGF(mglog.Debug, "unrefing underlying socket for %u: %u\n",
    //    u, m->second.m_iRefCount);
    if (0 == m->second.m_iRefCount)
    {
-       LOGC(mglog.Debug, log << "MUXER id=" << mid << " lost last socket %"
+       HLOGC(mglog.Debug, log << "MUXER id=" << mid << " lost last socket %"
            << u << " - deleting muxer bound to port "
            << m->second.m_pChannel->bindAddressAny().hport());
       m->second.m_pChannel->close();
@@ -1676,7 +1670,7 @@ void CUDTUnited::updateMux(
          {
             if (i->second.m_iPort == port)
             {
-               // LOGF(mglog.Debug, "reusing multiplexer for port
+               // HLOGF(mglog.Debug, "reusing multiplexer for port
                // %hd\n", port);
                // reuse the existing multiplexer
                ++ i->second.m_iRefCount;
@@ -1752,7 +1746,7 @@ void CUDTUnited::updateMux(
    s->m_pUDT->m_pRcvQueue = m.m_pRcvQueue;
    s->m_iMuxID = m.m_iID;
 
-   LOGF(mglog.Debug, 
+   HLOGF(mglog.Debug, 
       "creating new multiplexer for port %i\n", m.m_iPort);
 }
 
@@ -1814,7 +1808,7 @@ void CUDTUnited::updateListenerMux(CUDTSocket* s, const CUDTSocket* ls)
    {
       if (i->second.m_iPort == port)
       {
-         LOGF(mglog.Debug, 
+         HLOGF(mglog.Debug, 
             "updateMux: reusing multiplexer for port %i\n", port);
          // reuse the existing multiplexer
          ++ i->second.m_iRefCount;
@@ -1834,7 +1828,7 @@ void* CUDTUnited::garbageCollect(void* p)
 
    CUDTUnited* self = (CUDTUnited*)p;
 
-   THREAD_STATE_INIT("SRT Collector");
+   THREAD_STATE_INIT("SRT:GC");
 
    CGuard gcguard(self->m_GCStopLock);
 
@@ -2733,12 +2727,12 @@ int CUDT::perfmon(SRTSOCKET u, CPerfMon* perf, bool clear)
    }
 }
 
-int CUDT::bstats(SRTSOCKET u, CBytePerfMon* perf, bool clear)
+int CUDT::bstats(SRTSOCKET u, CBytePerfMon* perf, bool clear, bool instantaneous)
 {
    try
    {
       CUDT* udt = s_UDTUnited.lookup(u);
-      udt->bstats(perf, clear);
+      udt->bstats(perf, clear, instantaneous);
       return 0;
    }
    catch (CUDTException e)

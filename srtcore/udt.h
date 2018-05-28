@@ -1,22 +1,12 @@
-/*****************************************************************************
+/*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
- * 
- * Based on UDT4 SDK version 4.11
- *****************************************************************************/
+ */
 
 /*****************************************************************************
 Copyright (c) 2001 - 2011, The Board of Trustees of the University of Illinois.
@@ -164,7 +154,7 @@ typedef std::set<SRTSOCKET> ud_set;
 #define SRT_OHEADBW SRTO_OHEADBW
 #define SRT_PASSPHRASE SRTO_PASSPHRASE
 #define SRT_PBKEYLEN SRTO_PBKEYLEN
-#define SRT_KMSTATE SRTO_RCVKMSTATE // FIXME: SRTO_KMSTATE is not implemented?
+#define SRT_KMSTATE SRTO_KMSTATE
 #define SRT_IPTTL SRTO_IPTTL
 #define SRT_IPTOS SRTO_IPTOS
 #define SRT_TLPKTDROP SRTO_TLPKTDROP
@@ -396,6 +386,7 @@ UDT_API int perfmon(UDTSOCKET u, TRACEINFO* perf, bool clear = true) SRT_ATR_DEP
 UDT_API int bstats(UDTSOCKET u, TRACEBSTATS* perf, bool clear = true);
 UDT_API SRT_SOCKSTATUS getsockstate(UDTSOCKET u);
 
+// This is a C++ SRT API extension. This is not a part of legacy UDT API.
 UDT_API void setloglevel(logging::LogLevel::type ll);
 UDT_API void addlogfa(logging::LogFA fa);
 UDT_API void dellogfa(logging::LogFA fa);
@@ -409,6 +400,15 @@ UDT_API bool setstreamid(UDTSOCKET u, const std::string& sid);
 UDT_API std::string getstreamid(UDTSOCKET u);
 
 }  // namespace UDT
+
+// This is a log configuration used inside SRT.
+// Applications using SRT, if they want to use the logging mechanism
+// are free to create their own logger configuration objects for their
+// own logger FA objects, or create their own. The object of this type
+// is required to initialize the logger FA object.
+namespace logging { struct LogConfig; }
+UDT_API extern logging::LogConfig srt_logger_config;
+
 
 #endif /* __cplusplus */
 
