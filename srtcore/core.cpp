@@ -3927,7 +3927,7 @@ void* CUDT::tsbpd(void* param)
                 int64_t timediff = 0;
                 int64_t now = CTimer::getTime();
                 if ( tsbpdtime )
-                     timediff = int64_t(tsbpdtime) - now;
+                     timediff = now - int64_t(tsbpdtime);
 #if ENABLE_HEAVY_LOGGING
                 HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: DROPSEQ: up to seq=" << CSeqNo::decseq(skiptoseqno)
                     << " (" << seqlen << " packets) playable at " << logging::FormatTime(tsbpdtime) << " delayed "
@@ -4739,19 +4739,19 @@ void CUDT::checkNeedDrop(ref_t<bool> bCongestion)
             {
                 m_iSndCurrSeqNo = minlastack;
             }
-            LOGC(dlog.Error, log << "SND-DROPPED " << dpkts << " packets - lost delaying for " << timespan_ms << "ms");
+            LOGC(dlog.Error, log << "SND-DROPPED " << dpkts << " packets ("
+                    << dbytes << " bytes) - lost delaying for " << timespan_ms << "ms");
 
-            HLOGF(dlog.Debug, "drop,now %lluus,%d-%d seqs,%d pkts,%d bytes,%d ms",
-                    (unsigned long long)CTimer::getTime(),
-                    realack, m_iSndCurrSeqNo,
-                    dpkts, dbytes, timespan_ms);
+            HLOGC(dlog.Debug, log << "DROPPING: " << realack << " - " << minlastack
+                    << " TOP SND=" << m_iSndCurrSeqNo);
         }
         *bCongestion = true;
         CGuard::leaveCS(m_AckLock);
     }
     else if (timespan_ms > (m_iPeerTsbPdDelay_ms/2))
     {
-        HLOGF(mglog.Debug, "cong, NOW: %lluus, BYTES %d, TMSPAN %dms", (unsigned long long)CTimer::getTime(), bytes, timespan_ms);
+        HLOGC(mglog.Debug, log << "CONGESTION: SND-waiting " << bytes << " bytes, pkt delayed "
+                << timespan_ms << "ms (HALF latency)");
         *bCongestion = true;
     }
 }
