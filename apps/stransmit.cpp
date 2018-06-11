@@ -973,7 +973,7 @@ protected:
 
         if ( !m_blocking_mode )
         {
-            srt_conn_epoll = AddPoller(m_bindsock, SRT_EPOLL_OUT);
+            srt_conn_epoll = AddPoller(m_sock, SRT_EPOLL_OUT);
         }
 
         sockaddr_in localsa = CreateAddrInet(adapter, port);
@@ -1002,6 +1002,49 @@ protected:
         {
             srt_close(m_sock);
             Error(UDT::getlasterror(), "srt_connect");
+        }
+
+        if ( !m_blocking_mode )
+        {
+            if ( transmit_verbose )
+                cout << "[ASYNC] " << flush;
+
+            /* SPIN-WAITING version. Don't use it unless you know what you're doing.
+               
+            for (;;)
+            {
+                int state = UDT::getsockstate(m_sock);
+                if ( state < CONNECTED )
+                {
+                    if ( verbose )
+                        cout << state << flush;
+                    usleep(250000);
+                    continue;
+                }
+                else if ( state > CONNECTED )
+                {
+                    Error(UDT::getlasterror(), "UDT::connect status=" + udt_status_names[state]);
+                }
+
+                stat = 0; // fake that connect() returned 0
+                break;
+            }
+            */
+
+            // Socket readiness for connection is checked by polling on WRITE allowed sockets.
+            int len = 2;
+            SRTSOCKET ready[2];
+            if ( srt_epoll_wait(srt_conn_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) != -1 )
+            {
+                if ( transmit_verbose )
+                {
+                    cout << "[EPOLL: " << len << " sockets] " << flush;
+                }
+            }
+            else
+            {
+                Error(UDT::getlasterror(), "srt_epoll_wait");
+            }
         }
 
         if ( transmit_verbose )
