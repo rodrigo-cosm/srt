@@ -7,3 +7,5 @@ testmedia.cpp
 ../apps/uriparser.cpp
 ../apps/logsupport.cpp
 
+HEADERS
+srt-flow-smoother.h

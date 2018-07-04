@@ -200,10 +200,21 @@ enum EInitEvent
 // Used by TEV_RECEIVE and TEV_CUSTOM
 class CPacket;
 
-// Used by TEV_LOSSREPORT.
-// This typedef is required because without this there is a comma
-// in the type definition, which doesn't compose well with macros :)
+// Typedefs for compound types are required because without this there is a
+// comma in the type definition, which doesn't compose well with macros :)
+
+// Used by TEV_LOSSREPORT, the loss array.
 typedef std::pair<int32_t*, size_t> TevSeqArray;
+
+// Used by TEV_ACK.
+// The structure containing the ack sequence number
+// and the characteristic data for the packet that
+// this sequence confirms.
+struct TevAckData
+{
+    int32_t ack;         //< Sequence number being acked
+    uint64_t send_time;  //< Time when the ACKed packet was sent
+};
 
 // Defines parameter types for particular event
 template <ETransmissionEvent Ev> struct EventMapping;
@@ -212,7 +223,7 @@ template <ETransmissionEvent Ev> struct EventMapping;
 template<> struct EventMapping<EvType> { typedef ArgType type; }
 
 EVENT_ARG_TYPE(TEV_INIT, EInitEvent);              // --> Init stage, see definition
-EVENT_ARG_TYPE(TEV_ACK, uint32_t);                 // --> Sequence number being acked
+EVENT_ARG_TYPE(TEV_ACK, TevAckData);               // --> See TevAckData
 EVENT_ARG_TYPE(TEV_ACKACK, uint32_t);              // --> ACK journal
 EVENT_ARG_TYPE(TEV_LOSSREPORT, TevSeqArray);       // --> Array with loss sequence numbers
 EVENT_ARG_TYPE(TEV_CHECKTIMER, ECheckTimerStage);  // --> Where in checkTimers() it is called

@@ -40,8 +40,8 @@ SmootherBase::SmootherBase(CUDT* parent)
     m_parent = parent;
     m_dMaxCWndSize = m_parent->flowWindowSize();
     // RcvRate (deliveryRate()), RTT and Bandwidth can be read directly from CUDT when needed.
-    m_dCWndSize = 1000;
-    m_dPktSndPeriod = 1;
+    m_dCongestionWindow = 1000;
+    m_dPktSndPeriod_us = 1;
 }
 
 void Smoother::Check()
@@ -155,7 +155,7 @@ private:
             updatePktSndPeriod();
     }
 
-    void updatePktSndPeriod_onAck(ETransmissionEvent , uint32_t )
+    void updatePktSndPeriod_onAck(ETransmissionEvent , TevAckData )
     {
         HLOGC(mglog.Debug, log << "LiveSmoother: updatePktSndPeriod_onAck");
         updatePktSndPeriod();
@@ -165,7 +165,7 @@ private:
     {
         // packet = payload + header
         double pktsize = m_iSndAvgPayloadSize + CPacket::SRT_DATA_HDR_SIZE;
-        m_dPktSndPeriod = 1000*1000.0 * (pktsize/m_llSndMaxBW);
+        m_dPktSndPeriod_us = 1000*1000.0 * (pktsize/m_llSndMaxBW);
         HLOGC(mglog.Debug, log << "LiveSmoother: sending period updated: " << m_iSndAvgPayloadSize);
     }
 
@@ -184,9 +184,9 @@ private:
          * for satellite links with ~1000 msec RTT and high bit rate.
          */
         // XXX Consider making this a socket option.
-        m_dCWndSize = m_dMaxCWndSize;
+        m_dCongestionWindow = m_dMaxCWndSize;
 #else
-        m_dCWndSize = 1000;
+        m_dCongestionWindow = 1000;
 #endif
     }
 
@@ -288,8 +288,8 @@ public:
         m_iDecRandom = 1;
 
         // SmotherBase
-        m_dCWndSize = 16;
-        m_dPktSndPeriod = 1;
+        m_dCongestionWindow = 16;
+        m_dPktSndPeriod_us = 1;
 
         m_maxSR = 0;
 
@@ -331,8 +331,9 @@ public:
 private:
 
     // SLOTS
-    void updateSndPeriod(ETransmissionEvent, uint32_t ack)
+    void updateSndPeriod(ETransmissionEvent, TevAckData ad)
     {
+        int32_t ack = ad.ack;
         int64_t B = 0;
         double inc = 0;
 
@@ -344,39 +345,39 @@ private:
 
         if (m_bSlowStart)
         {
-            m_dCWndSize += CSeqNo::seqlen(m_iLastAck, ack);
+            m_dCongestionWindow += CSeqNo::seqlen(m_iLastAck, ack);
             m_iLastAck = ack;
 
-            if (m_dCWndSize > m_dMaxCWndSize)
+            if (m_dCongestionWindow > m_dMaxCWndSize)
             {
                 m_bSlowStart = false;
                 if (m_parent->deliveryRate() > 0)
                 {
-                    m_dPktSndPeriod = 1000000.0 / m_parent->deliveryRate();
+                    m_dPktSndPeriod_us = 1000000.0 / m_parent->deliveryRate();
                     HLOGC(mglog.Debug, log << "FileSmoother: UPD (slowstart:ENDED) wndsize="
-                        << m_dCWndSize << "/" << m_dMaxCWndSize
-                        << " sndperiod=" << m_dPktSndPeriod << "us = mega/("
+                        << m_dCongestionWindow << "/" << m_dMaxCWndSize
+                        << " sndperiod=" << m_dPktSndPeriod_us << "us = mega/("
                         << m_parent->deliveryRate() << "B/s)");
                 }
                 else
                 {
-                    m_dPktSndPeriod = m_dCWndSize / (m_parent->RTT() + m_iRCInterval);
+                    m_dPktSndPeriod_us = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
                     HLOGC(mglog.Debug, log << "FileSmoother: UPD (slowstart:ENDED) wndsize="
-                        << m_dCWndSize << "/" << m_dMaxCWndSize
-                        << " sndperiod=" << m_dPktSndPeriod << "us = wndsize/(RTT+RCIV) RTT="
+                        << m_dCongestionWindow << "/" << m_dMaxCWndSize
+                        << " sndperiod=" << m_dPktSndPeriod_us << "us = wndsize/(RTT+RCIV) RTT="
                         << m_parent->RTT() << " RCIV=" << m_iRCInterval);
                 }
             }
             else
             {
                 HLOGC(mglog.Debug, log << "FileSmoother: UPD (slowstart:KEPT) wndsize="
-                    << m_dCWndSize << "/" << m_dMaxCWndSize
-                    << " sndperiod=" << m_dPktSndPeriod << "us");
+                    << m_dCongestionWindow << "/" << m_dMaxCWndSize
+                    << " sndperiod=" << m_dPktSndPeriod_us << "us");
             }
         }
         else
         {
-            m_dCWndSize = m_parent->deliveryRate() / 1000000.0 * (m_parent->RTT() + m_iRCInterval) + 16;
+            m_dCongestionWindow = m_parent->deliveryRate() / 1000000.0 * (m_parent->RTT() + m_iRCInterval) + 16;
         }
 
         // During Slow Start, no rate increase
@@ -391,8 +392,8 @@ private:
             goto RATE_LIMIT;
         }
 
-        B = (int64_t)(m_parent->bandwidth() - 1000000.0 / m_dPktSndPeriod);
-        if ((m_dPktSndPeriod > m_dLastDecPeriod) && ((m_parent->bandwidth() / 9) < B))
+        B = (int64_t)(m_parent->bandwidth() - 1000000.0 / m_dPktSndPeriod_us);
+        if ((m_dPktSndPeriod_us > m_dLastDecPeriod) && ((m_parent->bandwidth() / 9) < B))
             B = m_parent->bandwidth() / 9;
         if (B <= 0)
             inc = 1.0 / m_parent->MSS();
@@ -407,17 +408,17 @@ private:
                 inc = 1.0/m_parent->MSS();
         }
 
-        m_dPktSndPeriod = (m_dPktSndPeriod * m_iRCInterval) / (m_dPktSndPeriod * inc + m_iRCInterval);
+        m_dPktSndPeriod_us = (m_dPktSndPeriod_us * m_iRCInterval) / (m_dPktSndPeriod_us * inc + m_iRCInterval);
 
 RATE_LIMIT:
 
 #if ENABLE_HEAVY_LOGGING
-        // Try to do reverse-calculation for m_dPktSndPeriod, as per minSP below
+        // Try to do reverse-calculation for m_dPktSndPeriod_us, as per minSP below
         // sndperiod = mega / (maxbw / MSS)
         // 1/sndperiod = (maxbw/MSS) / mega
         // mega/sndperiod = maxbw/MSS
         // maxbw = (MSS*mega)/sndperiod
-        uint64_t usedbw = (m_parent->MSS() * 1000000.0) / m_dPktSndPeriod;
+        uint64_t usedbw = (m_parent->MSS() * 1000000.0) / m_dPktSndPeriod_us;
 
 #if defined(unix) && defined (SRT_ENABLE_SYSTEMBUFFER_TRACE)
         // Check the outgoing system queue level
@@ -429,8 +430,8 @@ RATE_LIMIT:
 #endif
 
         HLOGC(mglog.Debug, log << "FileSmoother: UPD (slowstart:"
-            << (m_bSlowStart ? "ON" : "OFF") << ") wndsize=" << m_dCWndSize
-            << " sndperiod=" << m_dPktSndPeriod << "us BANDWIDTH USED:" << usedbw << " (limit: " << m_maxSR << ")"
+            << (m_bSlowStart ? "ON" : "OFF") << ") wndsize=" << m_dCongestionWindow
+            << " sndperiod=" << m_dPktSndPeriod_us << "us BANDWIDTH USED:" << usedbw << " (limit: " << m_maxSR << ")"
             " SYSTEM BUFFER LEFT: " << udp_buffer_free);
 #endif
 
@@ -438,11 +439,11 @@ RATE_LIMIT:
         if (m_maxSR)
         {
             double minSP = 1000000.0 / (double(m_maxSR) / m_parent->MSS());
-            if (m_dPktSndPeriod < minSP)
+            if (m_dPktSndPeriod_us < minSP)
             {
-                m_dPktSndPeriod = minSP;
+                m_dPktSndPeriod_us = minSP;
                 HLOGC(mglog.Debug, log << "FileSmoother: BW limited to " << m_maxSR
-                    << " - SLOWDOWN sndperiod=" << m_dPktSndPeriod << "us");
+                    << " - SLOWDOWN sndperiod=" << m_dPktSndPeriod_us << "us");
             }
         }
 
@@ -469,14 +470,14 @@ RATE_LIMIT:
             m_bSlowStart = false;
             if (m_parent->deliveryRate() > 0)
             {
-                m_dPktSndPeriod = 1000000.0 / m_parent->deliveryRate();
-                HLOGC(mglog.Debug, log << "FileSmoother: LOSS, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod << "us AS mega/rate (rate="
+                m_dPktSndPeriod_us = 1000000.0 / m_parent->deliveryRate();
+                HLOGC(mglog.Debug, log << "FileSmoother: LOSS, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod_us << "us AS mega/rate (rate="
                     << m_parent->deliveryRate() << ")");
             }
             else
             {
-                m_dPktSndPeriod = m_dCWndSize / (m_parent->RTT() + m_iRCInterval);
-                HLOGC(mglog.Debug, log << "FileSmoother: LOSS, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod << "us AS wndsize/(RTT+RCIV) (RTT="
+                m_dPktSndPeriod_us = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
+                HLOGC(mglog.Debug, log << "FileSmoother: LOSS, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod_us << "us AS wndsize/(RTT+RCIV) (RTT="
                     << m_parent->RTT() << " RCIV=" << m_iRCInterval << ")");
             }
 
@@ -494,8 +495,8 @@ RATE_LIMIT:
 
         if (seqdiff > 0)
         {
-            m_dLastDecPeriod = m_dPktSndPeriod;
-            m_dPktSndPeriod = ceil(m_dPktSndPeriod * 1.125);
+            m_dLastDecPeriod = m_dPktSndPeriod_us;
+            m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * 1.125);
 
             m_iAvgNAKNum = (int)ceil(m_iAvgNAKNum * 0.875 + m_iNAKCount * 0.125);
             m_iNAKCount = 1;
@@ -511,19 +512,19 @@ RATE_LIMIT:
             HLOGC(mglog.Debug, log << "FileSmoother: LOSS:NEW lastseq=" << m_iLastDecSeq
                 << ", rand=" << m_iDecRandom
                 << " avg NAK:" << m_iAvgNAKNum
-                << ", sndperiod=" << m_dPktSndPeriod << "us");
+                << ", sndperiod=" << m_dPktSndPeriod_us << "us");
         }
         else if ((m_iDecCount ++ < 5) && (0 == (++ m_iNAKCount % m_iDecRandom)))
         {
             // 0.875^5 = 0.51, rate should not be decreased by more than half within a congestion period
-            m_dPktSndPeriod = ceil(m_dPktSndPeriod * 1.125);
+            m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * 1.125);
             m_iLastDecSeq = m_parent->sndSeqNo();
             HLOGC(mglog.Debug, log << "FileSmoother: LOSS:PERIOD lseq=" << lossbegin
                 << ", dseq=" << m_iLastDecSeq
                 << ", seqdiff=" << seqdiff
                 << ", deccnt=" << m_iDecCount
                 << ", decrnd=" << m_iDecRandom
-                << ", sndperiod=" << m_dPktSndPeriod << "us");
+                << ", sndperiod=" << m_dPktSndPeriod_us << "us");
         }
         else
         {
@@ -532,7 +533,7 @@ RATE_LIMIT:
                 << ", seqdiff=" << seqdiff
                 << ", deccnt=" << m_iDecCount
                 << ", decrnd=" << m_iDecRandom
-                << ", sndperiod=" << m_dPktSndPeriod << "us");
+                << ", sndperiod=" << m_dPktSndPeriod_us << "us");
         }
 
     }
@@ -550,15 +551,15 @@ RATE_LIMIT:
             m_bSlowStart = false;
             if (m_parent->deliveryRate() > 0)
             {
-                m_dPktSndPeriod = 1000000.0 / m_parent->deliveryRate();
-                HLOGC(mglog.Debug, log << "FileSmoother: CHKTIMER, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod << "us AS mega/rate (rate="
+                m_dPktSndPeriod_us = 1000000.0 / m_parent->deliveryRate();
+                HLOGC(mglog.Debug, log << "FileSmoother: CHKTIMER, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod_us << "us AS mega/rate (rate="
                     << m_parent->deliveryRate() << ")");
             }
             else
             {
-                m_dPktSndPeriod = m_dCWndSize / (m_parent->RTT() + m_iRCInterval);
-                HLOGC(mglog.Debug, log << "FileSmoother: CHKTIMER, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod << "us AS wndsize/(RTT+RCIV) (wndsize="
-                    << setprecision(6) << m_dCWndSize << " RTT=" << m_parent->RTT() << " RCIV=" << m_iRCInterval << ")");
+                m_dPktSndPeriod_us = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
+                HLOGC(mglog.Debug, log << "FileSmoother: CHKTIMER, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod_us << "us AS wndsize/(RTT+RCIV) (wndsize="
+                    << setprecision(6) << m_dCongestionWindow << " RTT=" << m_parent->RTT() << " RCIV=" << m_iRCInterval << ")");
             }
         }
         else
@@ -566,8 +567,8 @@ RATE_LIMIT:
             // XXX This code is a copy of legacy CUDTCC::onTimeout() body.
             // This part was commented out there already.
             /*
-               m_dLastDecPeriod = m_dPktSndPeriod;
-               m_dPktSndPeriod = ceil(m_dPktSndPeriod * 2);
+               m_dLastDecPeriod = m_dPktSndPeriod_us;
+               m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * 2);
                m_iLastDecSeq = m_iLastAck;
              */
         }
@@ -580,28 +581,58 @@ RATE_LIMIT:
 };
 
 
+
+
 #undef SSLOT
 
-template <class Target>
-struct Creator
-{
-    static SmootherBase* Create(CUDT* parent) { return new Target(parent); }
-};
-
-Smoother::NamePtr Smoother::smoothers[N_SMOOTHERS] =
+Smoother::NamePtr Smoother::builtin_smoothers[] =
 {
     {"live", Creator<LiveSmoother>::Create },
     {"file", Creator<FileSmoother>::Create }
 };
 
+bool Smoother::IsBuiltin(const string& s)
+{
+    size_t size = sizeof builtin_smoothers/sizeof(builtin_smoothers[0]);
+    for (size_t i = 0; i < size; ++i)
+        if (s == builtin_smoothers[i].first)
+            return true;
+
+    return false;
+}
+
+Smoother::smoothers_map_t Smoother::smoothers;
+
+void Smoother::globalInit()
+{
+    // Add the builtin smoothers to the global map.
+    // Users may add their smoothers after that.
+    // This function is called from CUDTUnited::startup,
+    // which is guaranteed to run the initializing
+    // procedures only once per process.
+
+    for (size_t i = 0; i < sizeof builtin_smoothers/sizeof (builtin_smoothers[0]); ++i)
+        smoothers[builtin_smoothers[i].first] = builtin_smoothers[i].second;
+
+    // Actually there's no problem with calling this function
+    // multiple times, at worst it will overwrite existing smoothers
+    // with the same builtin.
+}
+
+bool Smoother::select(const std::string& name)
+{
+    selector = smoothers.find(name);
+    return selector != smoothers.end();
+}
+
 
 bool Smoother::configure(CUDT* parent)
 {
-    if (selector == N_SMOOTHERS)
+    if (selector == smoothers.end())
         return false;
 
     // Found a smoother, so call the creation function
-    smoother = (*smoothers[selector].second)(parent);
+    smoother = (*selector->second)(parent);
 
     // The smoother should have pinned in all events
     // that are of its interest. It's stated that

@@ -112,16 +112,23 @@ enum AckDataItem
     // Extra stats for SRT
 
     ACKD_RCVRATE = 6,
-    ACKD_TOTAL_SIZE_VER101 = 7, // length = 28
-    ACKD_XMRATE = 7, // XXX This is a weird compat stuff. Version 1.1.3 defines it as ACKD_BANDWIDTH*m_iMaxSRTPayloadSize when set. Never got.
-                     // XXX NOTE: field number 7 may be used for something in future, need to confirm destruction of all !compat 1.0.2 version
+    ACKD_TOTAL_SIZE_V130 = 7,
 
-    ACKD_TOTAL_SIZE_VER102 = 8, // 32
+    ACKD_RCVVELOCITY = 7, //< momentary receiving pkt rate
+    ACKD_ACKDELAY = 8, //< time distance bw. receiving acked packet and sending this
+    ACKD_RCVLASTSEQ = 9, //< last packet sequence received at the moment when sending it
+
 // FEATURE BLOCKED. Probably not to be restored.
 //  ACKD_ACKBITMAP = 8,
-    ACKD_TOTAL_SIZE = ACKD_TOTAL_SIZE_VER102 // length = 32 (or more)
+
+    ACKD_TOTAL_SIZE // length = 32 (or more)
 };
 const size_t ACKD_FIELD_SIZE = sizeof(int32_t);
+
+// Cached data from previous time that need to be stuffed in
+// but shall not be calculated due to performance reasons
+const size_t ACKD_CACHE_BEGIN = ACKD_RCVSPEED; // first field cached
+const size_t ACKD_CACHE_SIZE = 3; // rcvspeed, bandwidth, rcvrate
 
 // For HSv4 legacy handshake
 #define SRT_MAX_HSRETRY     10          /* Maximum SRT handshake retry */
@@ -260,17 +267,64 @@ public: // internal API
 
     bool isTsbPd() { return m_bOPT_TsbPd; }
     int RTT() { return m_iRTT; }
+    uint64_t lastSenderRTT() { return m_tLastSenderRTT_us; }
     int32_t sndSeqNo() { return m_iSndCurrSeqNo; }
     int32_t rcvSeqNo() { return m_iRcvCurrSeqNo; }
     int flowWindowSize() { return m_iFlowWindowSize; }
     int32_t deliveryRate() { return m_iDeliveryRate; }
     int bandwidth() { return m_iBandwidth; }
+    // Some better type could be used here, but not in C++03.
+    std::pair<int32_t*, int> rcvAckDataCache()
+    {
+        return std::make_pair(m_RcvAckDataCache, m_iRcvAckDataCacheSize);
+    }
+
     int64_t maxBandwidth() { return m_llMaxBW; }
     int MSS() { return m_iMSS; }
     size_t maxPayloadSize() { return m_iMaxSRTPayloadSize; }
     size_t OPT_PayloadSize() { return m_zOPT_ExpPayloadSize; }
     uint64_t minNAKInterval() { return m_ullMinNakInt_tk; }
     int32_t ISN() { return m_iISN; }
+    void sampleSender(const CPacket& pkt)
+    {
+        CGuard lock(m_StatsLock);
+        m_SndVelocitySource.time_us = CTimer::getTime();
+        m_SndVelocitySource.pktCount++;
+        m_SndVelocitySource.bytesCount += pkt.getLength() + CPacket::SRT_DATA_HDR_SIZE;
+    }
+
+    bool updateSenderSpeed(ref_t<int> r_pkts, ref_t<int64_t> r_bytes)
+    {
+        SndVelocityCell v;
+        {
+            CGuard lock(m_StatsLock);
+            v = m_SndVelocity;
+
+            // Clear the counters, but not time.
+            m_SndVelocitySource.pktCount = 0;
+            m_SndVelocitySource.bytesCount = 0;
+        }
+
+        bool ret = false;
+        if (m_SndVelocity.time_us != 0)
+        {
+            // Don't calculate the speed if only one
+            // packet was sent so far.
+
+            // m_SndVelocity contiains the time of the previous event.
+            uint64_t timediff = v.time_us - m_SndVelocity.time_us;
+
+            m_SndVelocity.pktCount = (1000000*m_SndVelocitySource.pktCount)/timediff;
+            m_SndVelocity.bytesCount = (1000000*m_SndVelocitySource.bytesCount)/timediff;
+            ret = true;
+        }
+
+        // Remember previous time
+        m_SndVelocity.time_us = v.time_us;
+        *r_pkts = m_SndVelocity.pktCount;
+        *r_bytes = m_SndVelocity.bytesCount;
+        return ret;
+    }
 
     // XXX See CUDT::tsbpd() to see how to implement it. This should
     // do the same as TLPKTDROP feature when skipping packets that are agreed
@@ -543,6 +597,11 @@ private: // Identification
     int m_iMSS;                                  // Maximum Segment Size, in bytes
     bool m_bSynSending;                          // Sending syncronization mode
     bool m_bSynRecving;                          // Receiving syncronization mode
+
+    /// This m_iFlightFlagSize field carries a value that is sent as a proposal
+    /// to the other side so that it sets itself as an initial value for
+    /// m_iFlowWindowSize. The value from this field has only two uses:
+    ///    - It's sent to the other side 
     int m_iFlightFlagSize;                       // Maximum number of packets in flight from the peer side
     int m_iSndBufSize;                           // Maximum UDT sender buffer size
     int m_iRcvBufSize;                           // Maximum UDT receiver buffer size
@@ -591,6 +650,18 @@ private: // Identification
     int64_t m_llInputBW;                         // Input stream rate (bytes/sec)
     int m_iOverheadBW;                           // Percent above input stream rate (applies if m_llMaxBW == 0)
     bool m_bRcvNakReport;                        // Enable Receiver Periodic NAK Reports
+
+    // Fields for calculating Sender Velocity
+    struct SndVelocityCell
+    {
+        int pktCount;
+        int bytesCount;
+        uint64_t time_us;
+    };
+
+    SndVelocityCell m_SndVelocitySource;
+    SndVelocityCell m_SndVelocity;
+
 private:
     UniquePtr<CCryptoControl> m_pCryptoControl;                            // congestion control SRT class (small data extension)
     CCache<CInfoBlock>* m_pCache;                // network information cache
@@ -612,12 +683,53 @@ private:
     bool m_bOpened;                              // If the UDT entity has been opened
     int m_iBrokenCounter;                        // a counter (number of GC checks) to let the GC tag this socket as disconnected
 
+    // RTT Measurement rules:
+    //
+    // RTT (in m_iRTT/m_iRTTVar) is measured as a time distance between
+    // the moment when the receiver sent UMSG_ACK and when received UMSG_ACKACK
+    // for the same journal. This value is a "passive RTT" for the site that is
+    // not currently sending, calculated for small packets.
+    //
+    // Additionally, the "Sender RTT" is being measured traditional way (like TCP does):
+    // It's the time distance measured at the moment when received UMSG_ACK against the
+    // time when the packet being ACK-ed (with seq == UMSG_ACK[seq]-1).
+    //
+    // The field only remembers the last measured value and the statistics are
+    // being collected by the smoother, when needed.
+
     int m_iEXPCount;                             // Expiration counter
     int m_iBandwidth;                            // Estimated bandwidth, number of packets per second
     int m_iRTT;                                  // RTT, in microseconds
     int m_iRTTVar;                               // RTT variance
     int m_iDeliveryRate;                         // Packet arrival rate at the receiver side
     int m_iByteDeliveryRate;                     // Byte arrival rate at the receiver side
+
+    // Original values lately received from the ACK message
+    // Copied are only at most so many fields as this version
+    // is prepared to manage. Others are ignored.
+    int32_t m_RcvAckDataCache[ACKD_TOTAL_SIZE];
+    int m_iRcvAckDataCacheSize; // just to know how many data are filled
+
+    // ACKD_RCVSPEED is the first field (with index 0)
+    // This field caches some values that are not to be calculated
+    // when SENDING UMSG_ACK.
+    uint32_t m_iAckDataCache[ACKD_CACHE_SIZE];
+
+    // Velocity is the momentary speed measured during
+    // packet reception. At the moment when the data is being
+    // picked up, it's reset.
+    struct RcvVelocityData
+    {
+        uint64_t start_time_tk;
+        uint32_t number_packets;
+    };
+    RcvVelocityData m_RcvVelocity;
+
+    // Sender side: received last remembered velocity
+    int m_iPeerRcvVelocity;
+
+    // Measured momentary sender RTT
+    uint64_t m_tLastSenderRTT_us;
 
     uint64_t m_ullLingerExpiration;              // Linger expiration time (for GC to close a socket with data in sending buffer)
 
@@ -703,6 +815,8 @@ private: // synchronization: mutexes and conditions
     pthread_mutex_t m_RecvLock;                  // used to synchronize "recv" call
 
     pthread_mutex_t m_RcvLossLock;               // Protects the receiver loss list (access: CRcvQueue::worker, CUDT::tsbpd)
+
+    pthread_mutex_t m_StatsLock;
 
     void initSynch();
     void destroySynch();

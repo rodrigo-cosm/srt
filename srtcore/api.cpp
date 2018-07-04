@@ -59,6 +59,7 @@ modified by
 #include "platform_sys.h"
 #include "api.h"
 #include "core.h"
+#include "smoother.h"
 #include "logging.h"
 #include "threadname.h"
 #include "srt.h"
@@ -184,38 +185,41 @@ std::string CUDTUnited::CONID(SRTSOCKET sock)
 
 int CUDTUnited::startup()
 {
-   CGuard gcinit(m_InitLock);
+    CGuard gcinit(m_InitLock);
 
-   if (m_iInstanceCount++ > 0)
-      return 0;
+    if (m_iInstanceCount++ > 0)
+        return 0;
 
-   // Global initialization code
-   #ifdef WIN32
-      WORD wVersionRequested;
-      WSADATA wsaData;
-      wVersionRequested = MAKEWORD(2, 2);
+    // Global initialization code
+#ifdef WIN32
+    WORD wVersionRequested;
+    WSADATA wsaData;
+    wVersionRequested = MAKEWORD(2, 2);
 
-      if (0 != WSAStartup(wVersionRequested, &wsaData))
-         throw CUDTException(MJ_SETUP, MN_NONE,  WSAGetLastError());
-   #endif
+    if (0 != WSAStartup(wVersionRequested, &wsaData))
+        throw CUDTException(MJ_SETUP, MN_NONE,  WSAGetLastError());
+#endif
 
-   //init CTimer::EventLock
+    Smoother::globalInit();
 
-   if (m_bGCStatus)
-      return true;
 
-   m_bClosing = false;
-   pthread_mutex_init(&m_GCStopLock, NULL);
-   pthread_cond_init(&m_GCStopCond, NULL);
+    //init CTimer::EventLock
 
-   {
-       ThreadName tn("SRT:GC");
-       pthread_create(&m_GCThread, NULL, garbageCollect, this);
-   }
+    if (m_bGCStatus)
+        return true;
 
-   m_bGCStatus = true;
+    m_bClosing = false;
+    pthread_mutex_init(&m_GCStopLock, NULL);
+    pthread_cond_init(&m_GCStopCond, NULL);
 
-   return 0;
+    {
+        ThreadName tn("SRT:GC");
+        pthread_create(&m_GCThread, NULL, garbageCollect, this);
+    }
+
+    m_bGCStatus = true;
+
+    return 0;
 }
 
 int CUDTUnited::cleanup()

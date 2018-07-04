@@ -110,8 +110,9 @@ public:
 
       /// Update the ACK point and may release/unmap/return the user data according to the flag.
       /// @param [in] offset number of packets acknowledged.
+      /// @return Origin time when the packet was stored
 
-   void ackData(int offset);
+   uint64_t ackData(int offset);
 
       /// Read size of data still in the sending list.
       /// @return Current size of the data in the sending list.
@@ -241,7 +242,7 @@ public:
       /// @param [in] len size of data to be acknowledged.
       /// @return 1 if a user buffer is fulfilled, otherwise 0.
 
-   void ackData(int len);
+   uint64_t ackData(int len);
 
       /// Query how many buffer space left for data receiving.
       /// @return size of available buffer space (including user buffer) for data receiving.

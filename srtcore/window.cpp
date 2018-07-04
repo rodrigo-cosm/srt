@@ -157,20 +157,20 @@ int CPktTimeWindowTools::getPktRcvSpeed_in(const int* window, int* replica, cons
 {
     PassFilter<int> filter = GetPeakRange(window, replica, asize);
 
-    unsigned count = 0;
+    int count = 0;
     int sum = 0;
     bytesps = 0;
-    unsigned long bytes = 0;
+    size_t bytes = 0;
 
     AccumulatePassFilterParallel(window, window + asize, filter, abytes,
             Ref(sum), Ref(count), Ref(bytes));
 
    // calculate speed, or return 0 if not enough valid value
-   if (count > (asize >> 1))
+   if (count > int(asize >> 1))
    {
       bytes += (CPacket::SRT_DATA_HDR_SIZE * count); //Add protocol headers to bytes received
       bytesps = (unsigned long)ceil(1000000.0 / (double(sum) / double(bytes)));
-      return (int)ceil(1000000.0 / (sum / count));
+      return (int)ceil(1000000.0 / (sum / count)); // == 1000000.0 * (count/sum) ?
    }
    else
    {

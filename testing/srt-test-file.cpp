@@ -26,12 +26,16 @@ written by
 #include <srt.h>
 #include <udt.h>
 
+#include <smoother.h> // Specific smoother for testing
+
 #include "apputil.hpp"
 #include "uriparser.hpp"
 #include "logsupport.hpp"
 #include "socketoptions.hpp"
 #include "verbose.hpp"
 #include "testmedia.hpp"
+
+#include "srt-flow-smoother.h"
 
 bool Upload(UriParser& srt, UriParser& file);
 bool Download(UriParser& srt, UriParser& file);
@@ -102,6 +106,8 @@ int main( int argc, char** argv )
 
     Verb() << "SOURCE type=" << us.scheme() << ", TARGET type=" << ut.scheme();
 
+    bool mode_upload = false;
+
     try
     {
         if (us.scheme() == "srt")
@@ -111,7 +117,6 @@ int main( int argc, char** argv )
                 cerr << "SRT to FILE should be specified\n";
                 return 1;
             }
-            Download(us, ut);
         }
         else if (ut.scheme() == "srt")
         {
@@ -120,13 +125,23 @@ int main( int argc, char** argv )
                 cerr << "FILE to SRT should be specified\n";
                 return 1;
             }
-            Upload(ut, us);
+            mode_upload = true;
         }
         else
         {
             cerr << "SRT URI must be one of given media.\n";
             return 1;
         }
+
+        srt_startup();
+
+        // Register your own Smoother
+        Smoother::add<FlowSmoother>("flow");
+
+        if (mode_upload)
+            Upload(ut, us);
+        else
+            Download(us, ut);
     }
     catch (std::exception& x)
     {
@@ -366,6 +381,9 @@ bool Upload(UriParser& srt_target_uri, UriParser& fileuri)
 
     // Add some extra parameters.
     srt_target_uri["transtype"] = "file";
+
+    // use our own smoother
+    srt_target_uri["smoother"] = "flow";
 
     return DoUpload(srt_target_uri, path, filename);
 }

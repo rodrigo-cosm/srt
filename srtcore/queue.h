@@ -71,6 +71,7 @@ struct CUnit
    CPacket m_Packet;		// packet
    enum Flag { FREE = 0, GOOD = 1, PASSACK = 2, DROPPED = 3 };
    Flag m_iFlag;			// 0: free, 1: occupied, 2: msg read but not freed (out-of-order), 3: msg dropped
+   uint64_t m_tReceived_us;
 };
 
 class CUnitQueue
@@ -172,7 +173,7 @@ public:
       /// @param [out] pkt the next packet to be sent
       /// @return 1 if successfully retrieved, -1 if no packet found.
 
-   int pop(sockaddr*& addr, CPacket& pkt);
+   int pop(ref_t<sockaddr*> addr, ref_t<CPacket> pkt, ref_t<CUDT*> from);
 
       /// Remove UDT instance from the list.
       /// @param [in] u pointer to the UDT instance

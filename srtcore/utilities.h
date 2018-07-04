@@ -65,6 +65,7 @@ written by
 
 #include <string>
 #include <algorithm>
+#include <numeric> // std::accumulate
 #include <bitset>
 #include <map>
 #include <functional>
@@ -442,7 +443,7 @@ struct PairProxy
 template <class T1, class T2> inline
 PairProxy<T1, T2> Tie2(T1& v1, T2& v2)
 {
-    return PairProxy<T1, T2<(v1, v2);
+    return PairProxy<T1, T2>(v1, v2);
 }
 
 template<class T>
@@ -489,7 +490,7 @@ inline PassFilter<int> GetPeakRange(const int* window, int* replica, size_t size
     return filter;
 }
 
-inline pair<int, int> AccumulatePassFilter(const int* p, const int* end, PassFilter<int> filter)
+inline std::pair<int, int> AccumulatePassFilter(const int* p, const int* end, PassFilter<int> filter)
 {
     int count = 0;
     int sum = 0;
@@ -503,12 +504,12 @@ inline pair<int, int> AccumulatePassFilter(const int* p, const int* end, PassFil
         ++count;
     }
 
-    return make_pair(sum, count);
+    return std::make_pair(sum, count);
 }
 
 inline void AccumulatePassFilterParallel(const int* p, const int* end, PassFilter<int> filter,
         const int* para,
-        ref_t<int> r_sum, ref_t<int> r_count, ref_t<int> r_paracount)
+        ref_t<int> r_sum, ref_t<int> r_count, ref_t<size_t> r_paracount)
 {
     int count = 0;
     int sum = 0;
@@ -527,6 +528,179 @@ inline void AccumulatePassFilterParallel(const int* p, const int* end, PassFilte
     *r_sum = sum;
     *r_paracount = parasum;
 }
+
+template <size_t NUMBER, typename ValueType>
+struct AccumulateTools
+{
+    static ValueType Calculate(const ValueType* begin)
+    {
+        return *begin + AccumulateTools<NUMBER-1, ValueType>::Calculate(begin+1);
+    }
+};
+
+template<typename ValueType>
+struct AccumulateTools<1, ValueType>
+{
+    static ValueType Calculate(const ValueType* last) { return *last; }
+};
+
+
+// TRAP
+template<typename ValueType>
+struct AccumulateTools<0, ValueType>
+{
+};
+
+template <size_t NUMBER, typename ValueType>
+inline ValueType accumulate_array(const ValueType (&array) [NUMBER])
+{
+    return AccumulateTools<NUMBER, ValueType>::Calculate(&array[0]);
+}
+
+template <size_t NUMBER, typename ValueType>
+inline ValueType accumulate_array(const ValueType* array)
+{
+    return AccumulateTools<NUMBER, ValueType>::Calculate(&array[0]);
+}
+
+template <typename TYPE, unsigned N, bool ok = true>
+struct IndexArray
+{
+    static TYPE perform(TYPE* array)
+    {
+        return array[N];
+    }
+};
+
+template <typename TYPE, unsigned N>
+struct IndexArray<TYPE, N, false>
+{
+
+};
+
+// This is a stack, onto which you push values, but
+// you never pop them. They stay there forever, but 
+// the oldest get dropped. You can backtrack up to
+// the last N items backward using the index:
+// - 0: the top of the stack
+// - 1, 2... the N'th older in the push history.
+// - up to SPAN value
+template <typename TYPE, unsigned SPAN>
+class RingLossyStack
+{
+    TYPE m_qValueStack[SPAN];
+
+    size_t m_zStackPos;
+    size_t m_zStackSize;
+
+    template <unsigned N, bool CORRECT /*true*/>
+    TYPE history_tracker_hlp()
+    {
+        return m_qValueStack[(SPAN + m_zStackPos-N)%SPAN];
+    }
+
+public:
+
+    RingLossyStack(): m_zStackPos(), m_zStackSize() {}
+
+    void push(const TYPE& val)
+    {
+        ++m_zStackPos;
+        if (m_zStackPos == SPAN)
+            m_zStackPos = 0;
+        if (m_zStackSize < SPAN)
+            ++m_zStackSize;
+        m_qValueStack[m_zStackPos] = val;
+    }
+
+    template <unsigned N>
+    TYPE history()
+    {
+        return IndexArray<TYPE, N, (N < SPAN) >::perform(m_qValueStack);
+    }
+};
+
+
+template <typename TYPE, unsigned N_SEGMENTS, unsigned SEGMENT_SPAN>
+class JumpingAverage
+{
+    TYPE m_qSegments[N_SEGMENTS]; // variables that keep the fragmentary average
+    TYPE m_qValueStack[SEGMENT_SPAN]; // values collected during updating
+
+    size_t m_zRingPos; // First position in the ring-buffer segment array
+    size_t m_zRingSize; // How many of the ring items are in use (grows up to N_SEGMENTS)
+    size_t m_zStackPos; // Position to be filled by the next update
+
+    TYPE m_qStableAverage;
+
+public:
+
+    JumpingAverage():
+        m_zRingPos(),
+        m_zRingSize(),
+        m_zStackPos(),
+        m_qStableAverage()
+    {
+    }
+
+    void update(TYPE value)
+    {
+        // Try to add the value to the position in the value stack first.
+        m_qValueStack[m_zStackPos] = value;
+        ++m_zStackPos;
+
+        if (m_zStackPos == SEGMENT_SPAN)
+        {
+            // Good, time to sum up everything and dump to the segments.
+            TYPE average = accumulate_array(m_qValueStack)/SEGMENT_SPAN;
+            m_zStackPos = 0; // start here
+
+            // Now put it under the ring position.
+            m_qSegments[m_zRingPos] = average;
+
+            // Now move the ring. Mind the ring.
+            ++m_zRingPos;
+            if (m_zRingPos == N_SEGMENTS)
+                m_zRingPos = 0;
+
+            // Extend the size, if not reached yet already
+            if (m_zRingSize < N_SEGMENTS)
+                ++m_zRingSize;
+
+            // Otherwise the ring size stays with the maximum value,
+            // which means that it will use N segments backwards.
+
+            // As a new segment has been added, calculate now
+            // the jumping average value out of all segments
+            // and save it.
+            if (m_zRingSize == N_SEGMENTS)
+                m_qStableAverage = accumulate_array(m_qSegments)/N_SEGMENTS;
+            else
+            {
+                m_qStableAverage = std::accumulate(m_qSegments, m_qSegments+m_zRingSize, 0)/m_zRingSize;
+            }
+        }
+    }
+
+    TYPE stableAverage()
+    {
+        return m_qStableAverage;
+    }
+
+    // Needs external mutex in case of multithreading
+    TYPE currentAverage()
+    {
+        TYPE stav = m_qStableAverage;
+        if ( m_zStackPos > 0)
+        {
+            TYPE adstav = std::accumulate(m_qValueStack, m_qValueStack + m_zStackPos, 0)/m_zStackPos;
+            stav = (stav + adstav)/2;
+        }
+        return stav;
+    }
+};
+
+
 
 template<unsigned SEGMENT_SPAN_I, unsigned SEGMENT_NUMBER_I, int MAX_DRIFT_I>
 class FastDriftTracer

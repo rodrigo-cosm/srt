@@ -476,16 +476,18 @@ int CSndBuffer::readData(char** data, const int offset, int32_t& msgno_bitset, u
    return readlen;
 }
 
-void CSndBuffer::ackData(int offset)
+uint64_t CSndBuffer::ackData(int offset)
 {
    CGuard bufferguard(m_BufLock);
 
    bool move = false;
+   Block* lastblock = 0; // we know that offset > 0
    for (int i = 0; i < offset; ++ i)
    {
       m_iBytesCount -= m_pFirstBlock->m_iLength;
       if (m_pFirstBlock == m_pCurrBlock)
           move = true;
+      lastblock = m_pFirstBlock;
       m_pFirstBlock = m_pFirstBlock->m_pNext;
    }
    if (move)
@@ -498,6 +500,7 @@ void CSndBuffer::ackData(int offset)
 #endif
 
    CTimer::triggerEvent();
+   return lastblock ? lastblock->m_ullOriginTime_us : 0;
 }
 
 int CSndBuffer::getCurrBufSize() const
@@ -894,8 +897,9 @@ int CRcvBuffer::readBufferToFile(fstream& ofs, int len)
    return len - rs;
 }
 
-void CRcvBuffer::ackData(int len)
+uint64_t CRcvBuffer::ackData(int len)
 {
+   CUnit* lastunit = 0;
    {
       int pkts = 0;
       int bytes = 0;
@@ -905,6 +909,7 @@ void CRcvBuffer::ackData(int len)
           {
               pkts++;
               bytes += m_pUnit[i]->m_Packet.getLength();
+              lastunit = m_pUnit[i];
           }
       }
       if (pkts > 0) countBytes(pkts, bytes, true);
@@ -914,7 +919,9 @@ void CRcvBuffer::ackData(int len)
    if (m_iMaxPos < 0)
       m_iMaxPos = 0;
 
+   uint64_t recvtime = lastunit ? lastunit->m_tReceived_us : 0;
    CTimer::triggerEvent();
+   return recvtime;
 }
 
 void CRcvBuffer::skipData(int len)

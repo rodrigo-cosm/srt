@@ -305,8 +305,11 @@ void CSndUList::update(const CUDT* u, EReschedule reschedule)
    insert_(1, u);
 }
 
-int CSndUList::pop(sockaddr*& addr, CPacket& pkt)
+int CSndUList::pop(ref_t<sockaddr*> r_addr, ref_t<CPacket> r_pkt, ref_t<CUDT*> r_core)
 {
+   sockaddr*& addr = *r_addr;
+   CPacket& pkt = *r_pkt;
+   *r_core = 0;
    CGuard listguard(m_ListLock);
 
    if (-1 == m_iLastEntry)
@@ -320,6 +323,7 @@ int CSndUList::pop(sockaddr*& addr, CPacket& pkt)
 
    CUDT* u = m_pHeap[0]->m_pUDT;
    remove_(u);
+   *r_core = u;
 
    if (!u->m_bConnected || u->m_bBroken)
       return -1;
@@ -557,7 +561,8 @@ void* CSndQueue::worker(void* param)
             // it is time to send the next pkt
             sockaddr* addr;
             CPacket pkt;
-            if (self->m_pSndUList->pop(addr, pkt) < 0) 
+            CUDT* pu;
+            if (self->m_pSndUList->pop(Ref(addr), Ref(pkt), Ref(pu)) < 0) 
             {
                 continue;
 
@@ -574,6 +579,7 @@ void* CSndQueue::worker(void* param)
                 HLOGC(dlog.Debug, log << self->CONID() << "chn:SENDING SIZE " << pkt.getLength() << " SEQ: " << pkt.getSeqNo());
             }
             self->m_pChannel->sendto(addr, pkt);
+            pu->sampleSender(pkt);
 
 #if      defined(SRT_DEBUG_SNDQ_HIGHRATE)
             self->m_WorkerStats.lSendTo++;
@@ -1260,6 +1266,7 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_
     THREAD_PAUSED();
     EReadStatus rst = m_pChannel->recvfrom(addr, r_unit->m_Packet);
     THREAD_RESUMED();
+    r_unit->m_tReceived_us = CTimer::getTime();
 
     if (rst == RST_OK)
     {
