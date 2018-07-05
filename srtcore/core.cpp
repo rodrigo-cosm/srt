@@ -50,6 +50,7 @@ modified by
    Haivision Systems Inc.
 *****************************************************************************/
 
+#define __STDC_LIMIT_MACROS 1
 #ifndef WIN32
    #include <unistd.h>
    #include <netdb.h>
@@ -57,12 +58,16 @@ modified by
    #include <cerrno>
    #include <cstring>
    #include <cstdlib>
+   #include <stdint.h> // kinda nonstarndard, standardized as <cstdint> in C++11
 #else
    #include <winsock2.h>
    #include <ws2tcpip.h>
+   #include "win/inttypes.h"
 #endif
+
 #include <cmath>
 #include <sstream>
+
 #include "srt.h"
 #include "queue.h"
 #include "core.h"
