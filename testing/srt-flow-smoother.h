@@ -568,6 +568,7 @@ private:
         if (m_State.probe_index == m_zProbeSize)
         {
             // Reached end of probe size. Analyze results.
+            // This shall always RESET THE INDEX.
             analyzeSpeed();
         }
     }
@@ -576,9 +577,11 @@ private:
     {
         // Ok, don't do really speed analysis.
         // Just keep the current conditions for stats - experimental
+        unsigned last_index = m_State.probe_index;
+        m_State.probe_index = 0;
 
         HLOGC(mglog.Debug, log << "SPEED STATS:  SP  | Tx Speed | Rx Speed | RT Speed | Lossrate | Congestion Rate");
-        for (unsigned i = 0; i < m_State.probe_index; ++i)
+        for (unsigned i = 0; i < last_index; ++i)
         {
             Probe& p = m_adStats[i];
             HLOGF(mglog.Debug, "%17f | %8d | %8d | %8d | %8.6f | %f",
