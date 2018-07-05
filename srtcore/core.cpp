@@ -3708,8 +3708,8 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
     // acknowledde any waiting epolls to write
     s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, true);
 
-   HLOGC(mglog.Debug, log << "XXX Resetting velocity time");
     CTimer::rdtsc(m_RcvVelocity.start_time_tk);
+    HLOGC(mglog.Debug, log << "XXX Resetting velocity time to " << m_RcvVelocity.start_time_tk);
 
     LOGC(mglog.Note, log << "Connection established to: " << SockaddrToString(m_pPeerAddr));
 
