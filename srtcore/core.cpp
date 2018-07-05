@@ -6368,6 +6368,8 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
 
                     m_RcvVelocity.number_packets = 0;
                     m_RcvVelocity.start_time_tk = currtime_tk;
+                    HLOGC(mglog.Debug, log << "ACK: resetting velocity calc time to: " << currtime_tk
+                            << " (" << logging::FormatTime(currtime_tk/m_ullCPUFrequency) << ")");
 
                     // Set the extra size.
                     ctrlsz = ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE;

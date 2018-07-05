@@ -98,7 +98,7 @@ class FlowSmoother: public SmootherBase
     JumpingAverage<double, 3, 2> m_LossRateMeasure;
 
     size_t m_zTimerCounter;
-    int m_iLastFlowWindowSize;
+    double m_dLastCWNDSize;
 
     // The long time measurements rely on collecting information with every
     // received UMSG_ACK and handled in the TEV_ACK handler.
@@ -237,7 +237,6 @@ public:
         m_MaxSenderSpeed_pps = 0;
         m_SenderSpeed_bps = 0;
         m_zTimerCounter = 0;
-        m_iLastFlowWindowSize = 0;
 
         m_LastAckTime = 0; // Don't measure anything at the first ever ACK
         m_LastAckSeq = m_iLastRCTimeAck;
@@ -250,6 +249,8 @@ public:
         // SmotherBase
         m_dCongestionWindow = 16;
         m_dPktSndPeriod_us = 1;
+
+        m_dLastCWNDSize = 16;
 
         // Initial zero to declare them "not measured yet"
         m_dPktSndPeriod_HI_us = 0;
@@ -382,9 +383,28 @@ private:
         analyzeSpeed();
     }
 
+    void measureSenderSpeed()
+    {
+        int pps;
+        int64_t bps;
+        m_parent->updateSenderSpeed(Ref(pps), Ref(bps));
+        if (m_SenderSpeed_bps == 0)
+            m_SenderSpeed_bps = bps;
+        else
+            m_SenderSpeed_bps = avg_iir<4>(m_SenderSpeed_bps, bps);
+
+        if (m_SenderSpeed_pps == 0)
+            m_SenderSpeed_pps = pps;
+        else
+            m_SenderSpeed_pps = avg_iir<4>(m_SenderSpeed_pps, pps);
+
+    }
+
     // SLOTS
     void onACK(ETransmissionEvent, TevAckData ad)
     {
+        m_zTimerCounter = 0; // Clear the timer that counts TIMERS between ACKs
+
         uint64_t currtime = CTimer::getTime();
 
         uint64_t ack_period = currtime - m_LastAckTime;
@@ -429,15 +449,11 @@ private:
             HLOGC(mglog.Debug, log << "FlowSmoother: STATE: " << DisplayState(m_State) << " BITE state not executed");
         }
 
-        int last_flow_window_size = m_iLastFlowWindowSize;
-        m_iLastFlowWindowSize = m_parent->flowWindowSize();
+        double last_cwnd_size = m_dLastCWNDSize;
+        m_dLastCWNDSize = m_dCongestionWindow;
 
         // Measure the sender speed
-        int pps;
-        int64_t bps;
-        m_parent->updateSenderSpeed(Ref(pps), Ref(bps));
-        m_SenderSpeed_bps = avg_iir<4>(m_SenderSpeed_bps, bps);
-        m_SenderSpeed_pps = avg_iir<4>(m_SenderSpeed_pps, pps);
+        measureSenderSpeed();
 
         int number_loss, number_ack;
         double loss_rate;
@@ -563,13 +579,15 @@ private:
             rcv_velocity,
             m_SenderRTT_us,
             loss_rate,
-            (m_parent->flowWindowSize() - last_flow_window_size)/double(m_parent->flowWindowSize())
+            (m_dCongestionWindow - last_cwnd_size)/m_dCongestionWindow
         };
 
-        HLOGC(mglog.Debug, log << "FlowSmoother(ACK): Collecting stat {"
-                << DisplayState(m_State) << "}s: ACKDELAY=" << ack_delay
-                << "us pkt_loss=" << number_loss << "LastSndRTT=" << acked_rcv_time << "us"
+        HLOGC(mglog.Debug, log << "FlowSmoother(ACK): Collecting stats {"
+                << DisplayState(m_State) << "}: ACKDELAY=" << ack_delay
+                << "us LastSndRTT=" << acked_rcv_time
+                << "us SndSpeed=" << m_SenderSpeed_pps << "pkt/s"
                 << " RcvVelocity=" << rcv_velocity << " RcvSpeed=" << rcv_speed
+                << "pkt/s pkt_loss=" << number_loss
                 << " lossrate: " << m_dLossRate << "pkt/ack " << m_dTimedLossRate << "pkt/s");
 
         ++m_State.probe_index;
@@ -589,12 +607,12 @@ private:
         unsigned last_index = m_State.probe_index;
         m_State.probe_index = 0;
 
-        HLOGC(mglog.Debug, log << "SPEED STATS:  SP  | Tx Speed | Rx Speed | RT Speed | Lossrate | Congestion Rate");
+        HLOGC(mglog.Debug, log << "SPEED STATS:  SP  | Tx Speed | Rx Speed |Snd RTT[ms]| Lossrate | Congestion Rate");
         for (unsigned i = 0; i < last_index; ++i)
         {
             Probe& p = m_adStats[i];
-            HLOGF(mglog.Debug, "%17f | %8d | %8d | %8d | %8.6f | %f",
-                    p.snd_period, int(p.tx_speed), int(p.rx_speed), int(p.sender_rtt), p.lossrate, p.congestion_rate);
+            HLOGF(mglog.Debug, "%17f | %8d | %8d | %9.7f | %8.6f | %f",
+                    p.snd_period, int(p.tx_speed), int(p.rx_speed), double(p.sender_rtt/1000.0), p.lossrate, p.congestion_rate);
         }
 
         // No decision taken yet.
@@ -1030,6 +1048,8 @@ NoMoreCalcLoss:
         if (stg == TEV_CHT_INIT)
             return;
 
+        HLOGC(mglog.Debug, log << "FlowSmoother: TIMER EVENT. State: " << DisplayState(m_State));
+
         ++m_zTimerCounter;
 
         // XXX Not sure about that, looxlike it will exit the WARMUP
@@ -1054,12 +1074,7 @@ NoMoreCalcLoss:
             HLOGC(mglog.Warn, log << "32 CHECKTIMER events without ACK - resetting stats!");
             m_zTimerCounter = 0;
 
-            int pps;
-            int64_t bps;
-            m_parent->updateSenderSpeed(Ref(pps), Ref(bps));
-
-            m_SenderSpeed_bps = avg_iir<4>(m_SenderSpeed_bps, bps);
-            m_SenderSpeed_pps = avg_iir<4>(m_SenderSpeed_pps, pps);
+            measureSenderSpeed();
         }
     }
 
