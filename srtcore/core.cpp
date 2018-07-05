@@ -204,6 +204,7 @@ void CUDT::construct()
     m_uKmRefreshRatePkt = 0;
     m_uKmPreAnnouncePkt = 0;
 
+    HLOGC(mglog.Debug, log << "XXX Resetting velocity data");
     m_RcvVelocity = RcvVelocityData();
     m_tLastSenderRTT_us = 0;
     m_iPeerRcvVelocity = 0;
@@ -1203,7 +1204,7 @@ void CUDT::open()
    m_iRTT = 10 * COMM_SYN_INTERVAL_US;
    m_iRTTVar = m_iRTT >> 1;
    std::fill(m_iAckDataCache, m_iAckDataCache + Size(m_iAckDataCache), 0);
-   memset(&m_RcvVelocity, 0, sizeof(m_RcvVelocity));
+
    m_ullCPUFrequency = CTimer::getCPUFrequency();
 
    // set up the timers
@@ -3707,6 +3708,7 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
     // acknowledde any waiting epolls to write
     s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, true);
 
+   HLOGC(mglog.Debug, log << "XXX Resetting velocity time");
     CTimer::rdtsc(m_RcvVelocity.start_time_tk);
 
     LOGC(mglog.Note, log << "Connection established to: " << SockaddrToString(m_pPeerAddr));
@@ -4431,8 +4433,6 @@ void CUDT::acceptAndRespond(const sockaddr* peer, CHandShake* hs, const CPacket&
    // register this socket for receiving data packets
    m_pRNode->m_bOnList = true;
    m_pRcvQueue->setNewEntry(this);
-
-   CTimer::rdtsc(m_RcvVelocity.start_time_tk);
 
    //send the response to the peer, see listen() for more discussions about this
    // XXX Here create CONCLUSION RESPONSE with:
@@ -7567,6 +7567,9 @@ int CUDT::processData(CUnit* unit)
    ++ m_llTraceRecv;
    ++ m_llRecvTotal;
    ++m_RcvVelocity.number_packets;
+
+   HLOGC(mglog.Debug, log << "XXX Velocity data: packets=" << m_RcvVelocity.number_packets
+           << " since: " << (m_RcvVelocity.start_time_tk == 0 ? string("UNSET") : logging::FormatTime(m_RcvVelocity.start_time_tk)));
 
    {
       /*

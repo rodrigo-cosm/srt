@@ -491,6 +491,9 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr* peer, CHan
    // acknowledge users waiting for new connections on the listening socket
    m_EPoll.update_events(listen, ls->m_pUDT->m_sPollID, UDT_EPOLL_IN, true);
 
+   HLOGC(mglog.Debug, log << "XXX Resetting velocity time");
+   CTimer::rdtsc(ns->m_pUDT->m_RcvVelocity.start_time_tk);
+
    CTimer::triggerEvent();
 
    ERR_ROLLBACK:
