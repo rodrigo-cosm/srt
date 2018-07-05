@@ -1203,7 +1203,7 @@ void CUDT::open()
 
    m_iRTT = 10 * COMM_SYN_INTERVAL_US;
    m_iRTTVar = m_iRTT >> 1;
-   std::fill(m_iAckDataCache, m_iAckDataCache + Size(m_iAckDataCache), 0);
+   std::fill(m_AckDataCache, m_AckDataCache + Size(m_AckDataCache), 0);
 
    m_ullCPUFrequency = CTimer::getCPUFrequency();
 
@@ -6368,23 +6368,23 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
 
                     m_RcvVelocity.number_packets = 0;
                     m_RcvVelocity.start_time_tk = currtime_tk;
-                    HLOGC(mglog.Debug, log << "ACK: resetting velocity calc time to: " << currtime_tk
-                            << " (" << logging::FormatTime(currtime_tk/m_ullCPUFrequency) << ")");
 
                     // Set the extra size.
                     ctrlsz = ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE;
 
                     // Copy these vales to the cache for later usage.
-                    std::copy(data+ACKD_RCVSPEED, data+ACKD_TOTAL_SIZE,
-                            m_iAckDataCache);
+                    std::copy(data + ACKD_CACHE_BEGIN, data + ACKD_CACHE_BEGIN + ACKD_CACHE_SIZE,
+                            m_AckDataCache);
 
+                    HLOGC(mglog.Debug, log << "XXX Velocity: resetting calc time to: " << currtime_tk
+                            << " (" << logging::FormatTime(currtime_tk/m_ullCPUFrequency) << ")");
                     CTimer::rdtsc(m_ullLastAckTime_tk);
                 }
-                else if ( m_iAckDataCache[0] != 0 )
+                else if ( m_AckDataCache[0] != 0 )
                 {
                     // Stuff in the cached values (this is only to save performance
                     // to not calculate the speed too often).
-                    copy(m_iAckDataCache, m_iAckDataCache + ACKD_CACHE_SIZE,
+                    copy(m_AckDataCache, m_AckDataCache + ACKD_CACHE_SIZE,
                             data + ACKD_CACHE_BEGIN);
                     ctrlsz = ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE;
                 }
