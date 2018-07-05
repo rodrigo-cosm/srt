@@ -390,6 +390,7 @@ private:
         uint64_t ack_period = currtime - m_LastAckTime;
         if (ack_period == 0)
         {
+            HLOGC(mglog.Debug, log << "FlowSmoother: IPE: impossible same-time ACK as previous @ " << logging::FormatTime(m_LastAckTime));
             // Some mistake, would make it div/0. Ignore the event.
             return;
         }
@@ -397,6 +398,14 @@ private:
         int32_t* ackdata;
         int acksize;
         Tie2(ackdata, acksize) = m_parent->rcvAckDataCache();
+
+        if (acksize == 1)
+        {
+            HLOGC(mglog.Debug, log << "LITE ACK DETECTED, not doing anything");
+            // For LITE ACK don't make any measurements.
+            // (you don't have appropriate data to do it).
+            return;
+        }
 
         int32_t last_ack = m_LastAckSeq;
         m_LastAckSeq = ad.ack;
@@ -413,18 +422,15 @@ private:
             // BELOW we have the procedure for speedup.
             // May be reused when FS_CLIMB state is set
             continue_stats = updateSndPeriod(currtime, ad.ack);
+            HLOGC(mglog.Debug, log << "FlowSmoother: BITE STATE managed - " << (continue_stats?"":"NOT ") << "continuing on collecting stats");
+        }
+        else
+        {
+            HLOGC(mglog.Debug, log << "FlowSmoother: STATE: " << DisplayState(m_State) << " BITE state not executed");
         }
 
         int last_flow_window_size = m_iLastFlowWindowSize;
         m_iLastFlowWindowSize = m_parent->flowWindowSize();
-
-        if (last_ack == 0)
-        {
-            // This is the very first ACK, just remember the characteristics
-            // of the "previous ACK" for the next one and do nothing more.
-
-            return;
-        }
 
         // Measure the sender speed
         int pps;
@@ -432,13 +438,6 @@ private:
         m_parent->updateSenderSpeed(Ref(pps), Ref(bps));
         m_SenderSpeed_bps = avg_iir<4>(m_SenderSpeed_bps, bps);
         m_SenderSpeed_pps = avg_iir<4>(m_SenderSpeed_pps, pps);
-
-        if (acksize == 1)
-        {
-            // For LITE ACK don't make any measurements.
-            // (you don't have appropriate data to do it).
-            return;
-        }
 
         int number_loss, number_ack;
         double loss_rate;
@@ -455,6 +454,7 @@ private:
         // Trigger, if the loss rate exceeds 50%
         if (2*loss_rate > 1)
         {
+            HLOGC(mglog.Debug, log << "FlowSmoother(ACK): Loss rate " << int(100*loss_rate) << "%, EMERGENCY BREAK");
             emergencyBrake();
             return;
         }
@@ -532,14 +532,17 @@ private:
         m_LossRateMeasure.update(loss_rate);
         m_dLossRate = m_LossRateMeasure.currentAverage();
 
+
         if (m_dTimedLossRate == 0)
             m_dTimedLossRate = timed_loss_rate;
         else
             m_dTimedLossRate = avg_iir<4>(m_dTimedLossRate, timed_loss_rate);
 
+
         // Ok, we have a loss rate and sender speed.
         // Receiver velocity will be extracted from the data
         int32_t rcv_velocity = acksize > ACKD_RCVVELOCITY ? ackdata[ACKD_RCVVELOCITY] : 0;
+        int32_t rcv_speed = acksize > ACKD_RCVSPEED ? ackdata[ACKD_RCVSPEED] : 0;
         // Zero means "not measured".
         //
         // And we need also the Sender RTT in order to have a delivery speed.
@@ -562,6 +565,12 @@ private:
             loss_rate,
             (m_parent->flowWindowSize() - last_flow_window_size)/double(m_parent->flowWindowSize())
         };
+
+        HLOGC(mglog.Debug, log << "FlowSmoother(ACK): Collecting stat {"
+                << DisplayState(m_State) << "}s: ACKDELAY=" << ack_delay
+                << "us pkt_loss=" << number_loss << "LastSndRTT=" << acked_rcv_time << "us"
+                << " RcvVelocity=" << rcv_velocity << " RcvSpeed=" << rcv_speed
+                << " lossrate: " << m_dLossRate << "pkt/ack " << m_dTimedLossRate << "pkt/s");
 
         ++m_State.probe_index;
 
