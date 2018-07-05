@@ -400,6 +400,8 @@ bool Download(UriParser& srt_source_uri, UriParser& fileuri)
     ExtractPath(path, Ref(directory), Ref(filename));
 
     srt_source_uri["transtype"] = "file";
+    // use our own smoother
+    srt_source_uri["smoother"] = "flow";
 
     return DoDownload(srt_source_uri, directory, filename);
 }
