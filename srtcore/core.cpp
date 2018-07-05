@@ -4427,6 +4427,8 @@ void CUDT::acceptAndRespond(const sockaddr* peer, CHandShake* hs, const CPacket&
    m_pRNode->m_bOnList = true;
    m_pRcvQueue->setNewEntry(this);
 
+   CTimer::rdtsc(m_RcvVelocity.start_time_tk);
+
    //send the response to the peer, see listen() for more discussions about this
    // XXX Here create CONCLUSION RESPONSE with:
    // - just the UDT handshake, if HS_VERSION_UDT4,
