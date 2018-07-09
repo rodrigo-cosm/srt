@@ -168,7 +168,7 @@ class FlowSmoother: public SmootherBase
     // Values here will be updated with IIR-calculated average, then reset. When
     // resetting the calculated value will be placed in m_adStats.
 
-    static const size_t FS_SAMPLE_WIDTH = 16;
+    static const size_t FS_SAMPLE_WIDTH = 32;
     static const size_t FS_HISTORY_SIZE = 4;
 
     // After collecting consecutive results in m_adProbe, collect them with snapping
@@ -247,7 +247,7 @@ public:
 
         memset(&m_adStats, 0, sizeof(m_adStats));
 
-        m_zProbeSize = 16; // Initial, might be changed later.
+        m_zProbeSize = FS_SAMPLE_WIDTH; // Initial for FS_WARMUP, might be changed later.
         m_zProbeSpan = 1;
 
         // SmotherBase
@@ -341,18 +341,18 @@ private:
         if (m_parent->deliveryRate() > 0)
         {
             m_dPktSndPeriod_us = 1000000.0 / m_parent->deliveryRate();
-            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (slowstart:ENDED) wndsize="
-                    << m_dCongestionWindow << "/" << m_dMaxCWndSize
-                    << " sndperiod=" << m_dPktSndPeriod_us << "us = mega/("
-                    << m_parent->deliveryRate() << "B/s)");
+            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (slowstart:ENDED) CWND="
+                    << setprecision(6) << m_dCongestionWindow << "/" << m_dMaxCWndSize
+                    << " sndperiod=" << m_dPktSndPeriod_us << "us [EQUAL TO DELIVERY RATE]");
         }
         else
         {
             m_dPktSndPeriod_us = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
-            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (slowstart:ENDED) wndsize="
+            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (slowstart:ENDED) CWND="
                     << setprecision(6) << m_dCongestionWindow << "/" << m_dMaxCWndSize
-                    << " sndperiod=" << m_dPktSndPeriod_us << "us = wndsize/(RTT+RCIV) RTT="
-                    << m_parent->RTT() << " RCIV=" << m_iRCInterval);
+                    << " sndperiod=" << m_dPktSndPeriod_us
+                    << "us [BASED ON RTT+RCI=" << ((m_parent->RTT() + m_iRCInterval)/1000.0)
+                    << "ms = " << (1000000.0/(m_parent->RTT() + m_iRCInterval)) << "Hz of CWND]");
         }
 
         switchState(FS_BITE, 16, 1, m_dPktSndPeriod_us, 0);
@@ -428,6 +428,8 @@ private:
             // Some mistake, would make it div/0. Ignore the event.
             return;
         }
+
+        int flight_span = CSeqNo::seqoff(ad.ack, m_parent->sndSeqNo());
 
         // THIS is the only thing done in the update
         bool continue_stats = updateSndPeriod(currtime, ad.ack);
@@ -588,10 +590,12 @@ private:
         HLOGC(mglog.Debug, log << "FlowSmoother(ACK): Collecting stats {"
                 << DisplayState(m_State) << "}: ACKDELAY=" << ack_delay
                 << "us LastSndRTT=" << acked_rcv_time
-                << "us SndSpeed=" << m_SenderSpeed_pps << "pkt/s"
-                << " RcvVelocity=" << rcv_velocity << " RcvSpeed=" << rcv_speed
-                << "pkt/s pkt_loss=" << number_loss
-                << " lossrate: " << m_dLossRate << "pkt/ack " << m_dTimedLossRate << "pkt/s");
+                << "us Snd: Speed=" << m_SenderSpeed_pps << "p/s"
+                << " Flight: " << flight_span << "p "
+                << " CWND: " << setprecision(6) << m_dCongestionWindow
+                << " RcvVelocity=" << rcv_velocity << "p/s RcvSpeed=" << rcv_speed
+                << "p/s LOSS n=" << number_loss
+                << "p, rate: " << m_dLossRate << "p/ack, freq: " << m_dTimedLossRate << "p/s");
 
         ++m_State.probe_index;
 
@@ -764,6 +768,8 @@ RATE_LIMIT:
                 // Add the sequence difference
                 nloss += r.size;
                 m_UnackLossRange.push_back(r);
+                HLOGC(mglog.Debug, log << "FlowSmoother: ... LOSS [" << r.begin << " - " << ar.first[i]
+                        << "] (" << r.size << ")");
             }
             else
             {
@@ -771,6 +777,7 @@ RATE_LIMIT:
                 r.set_one(val);
                 ++nloss;
                 m_UnackLossRange.push_back(r);
+                HLOGC(mglog.Debug, log << "FlowSmoother: ... LOSS [" << r.begin << "]");
             }
         }
 
@@ -783,7 +790,7 @@ RATE_LIMIT:
     size_t collectLossAndAck(TevSeqArray ar)
     {
         // Check the current state.
-        int32_t first_loss = ar.first[0] & LOSSDATA_SEQNO_RANGE_FIRST;
+        int32_t first_loss = SEQNO_VALUE::unwrap(ar.first[0]);
 
         // Check first if this is already collected.
         // Enough to check the first one.
@@ -839,6 +846,8 @@ RATE_LIMIT:
         // If this happened to be a NAKREPORT sent after a lost LOSSREPORT,
         // ignore packets that are received, but happen to be between
         // various lost packets.
+        HLOGC(mglog.Debug, log << "FlowSmoother: collecting loss: ACK [" << last_unseen << " - "
+                << CSeqNo::decseq(first_loss) << "] (" << CSeqNo::seqoff(last_unseen, first_loss) << ") ...");
         return addLossRanges(ar);
     }
 
@@ -952,7 +961,7 @@ NoMoreCalcLoss:
         }
 
         // Needed for old algo marked by FS_BITE
-        int lossbegin = losslist[0] & LOSSDATA_SEQNO_RANGE_FIRST;
+        int lossbegin = SEQNO_VALUE::unwrap(losslist[0]);
 
         if (m_State.state == FS_WARMUP)
         {
@@ -960,26 +969,8 @@ NoMoreCalcLoss:
             // Stop when probe size reached or when loss rate exceeds 50%.
 
             // XXX Temporary experimental: turn on the "old measurement method from UDT"
-            m_State.state = FS_BITE;
-
-            /*
-            m_State.probe_index = 0;
-            m_zProbeSize = 4;
-            */
-            if (m_parent->deliveryRate() > 0) // ACKD_RCVSPEED, average speed.
-            {
-                // snd-period = 1 / ( delivery_rate / M ) ; or
-                m_dPktSndPeriod_us = 1000000.0 / m_parent->deliveryRate();
-                HLOGC(mglog.Debug, log << "FlowSmoother: LOSS, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod_us << "us AS mega/rate (rate="
-                    << m_parent->deliveryRate() << ")");
-            }
-            else
-            {
-                m_dPktSndPeriod_us = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
-                HLOGC(mglog.Debug, log << "FlowSmoother: LOSS, SLOWSTART:OFF, sndperiod=" << m_dPktSndPeriod_us << "us AS wndsize/(RTT+RCIV) (RTT="
-                    << m_parent->RTT() << " RCIV=" << m_iRCInterval << ")");
-            }
-
+            analyzeSpeed();
+            reachCWNDTop("LOSS");
         }
 
         if (m_State.state != FS_SLIDE)
