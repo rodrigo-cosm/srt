@@ -682,7 +682,7 @@ private:
     // ACKD_RCVSPEED is the first field (with index 0)
     // This field caches some values that are not to be calculated
     // when SENDING UMSG_ACK.
-    uint32_t m_iAckDataCache[ACKD_CACHE_SIZE];
+    uint32_t m_AckDataCache[ACKD_CACHE_SIZE];
 
     // Velocity is the momentary speed measured during
     // packet reception. At the moment when the data is being
