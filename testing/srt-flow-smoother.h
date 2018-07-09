@@ -484,7 +484,8 @@ private:
         // Stats will not continue in FS_BITE state, if speed
         // was not updated.
         if (!continue_stats)
-            return;
+            continue_stats = false;
+            /* return */;
 
         // During warmup time (barely possible, but still)
 
@@ -595,7 +596,10 @@ private:
                 << " CWND: " << setprecision(6) << m_dCongestionWindow
                 << " RcvVelocity=" << rcv_velocity << "p/s RcvSpeed=" << rcv_speed
                 << "p/s LOSS n=" << number_loss
-                << "p, rate: " << m_dLossRate << "p/ack, freq: " << m_dTimedLossRate << "p/s");
+                << setprecision(6)
+                << "p, rate: " << loss_rate << "("
+                << m_dLossRate << ")p/ack, freq: "
+                << (1000.0*m_dTimedLossRate) << "p/ms");
 
         ++m_State.probe_index;
 
