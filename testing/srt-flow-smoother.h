@@ -2,6 +2,7 @@
 #include "core.h"
 
 //#include "ext_hash_map.h"
+#include <cmath>
 #include <map>
 
 class FlowSmoother: public SmootherBase
@@ -96,6 +97,8 @@ class FlowSmoother: public SmootherBase
     JumpingAverage<int, 3, 4> m_SenderSpeedMeasure;
     JumpingAverage<int, 3, 4> m_SenderRTTMeasure;
     JumpingAverage<double, 3, 2> m_LossRateMeasure;
+
+    bool m_bLoss; // XXX temporarily kept for the time of experiments
 
     size_t m_zTimerCounter;
     double m_dLastCWNDSize;
@@ -232,6 +235,7 @@ public:
         m_dLastPktSndPeriod = 1;
         m_dLossRate = 0;
         m_dTimedLossRate = 0;
+        m_bLoss = false;
         m_SenderRTT_us = 0;
         m_SenderSpeed_pps = 0;
         m_MaxSenderSpeed_pps = 0;
@@ -300,11 +304,15 @@ public:
 
 private:
 
-    void updateCongestionWindowSize(int seqlen)
+    void updateCongestionWindowSize(int32_t ack)
     {
         if (m_State.state == FS_WARMUP)
         {
-            m_dCongestionWindow += seqlen;
+            // During Slow Start period, update with the number of
+            // newly ack-ed packets, and if exceeds the maximum, exit Slow Start.
+            // Otherwise update the size from delivery rate and RTT.
+            m_dCongestionWindow += CSeqNo::seqlen(m_iLastRCTimeAck, ack);
+            m_iLastRCTimeAck = ack;
 
             if (m_dCongestionWindow > m_dMaxCWndSize)
             {
@@ -387,16 +395,22 @@ private:
     {
         int pps;
         int64_t bps;
-        m_parent->updateSenderSpeed(Ref(pps), Ref(bps));
-        if (m_SenderSpeed_bps == 0)
-            m_SenderSpeed_bps = bps;
-        else
-            m_SenderSpeed_bps = avg_iir<4>(m_SenderSpeed_bps, bps);
+        bool got = m_parent->updateSenderSpeed(Ref(pps), Ref(bps));
+        if (!got)
+            return;
 
-        if (m_SenderSpeed_pps == 0)
+        // First time measured
+        if (m_MaxSenderSpeed_pps == 0)
+        {
+            m_MaxSenderSpeed_pps = pps;
             m_SenderSpeed_pps = pps;
+            m_SenderSpeed_bps = bps;
+        }
         else
+        {
+            m_SenderSpeed_bps = avg_iir<4>(m_SenderSpeed_bps, bps);
             m_SenderSpeed_pps = avg_iir<4>(m_SenderSpeed_pps, pps);
+        }
 
     }
 
@@ -415,13 +429,16 @@ private:
             return;
         }
 
+        // THIS is the only thing done in the update
+        bool continue_stats = updateSndPeriod(currtime, ad.ack);
+
         int32_t* ackdata;
         int acksize;
         Tie2(ackdata, acksize) = m_parent->rcvAckDataCache();
 
         if (acksize == 1)
         {
-            HLOGC(mglog.Debug, log << "LITE ACK DETECTED, not doing anything");
+            HLOGC(mglog.Debug, log << "FlowSmoother: LITE ACK DETECTED, not doing anything");
             // For LITE ACK don't make any measurements.
             // (you don't have appropriate data to do it).
             return;
@@ -435,19 +452,6 @@ private:
         // this data so far.
         // uint64_t last_time = m_LastAckTime;
         m_LastAckTime = currtime;
-
-        bool continue_stats = true;
-        if (m_State.state == FS_BITE)
-        {
-            // BELOW we have the procedure for speedup.
-            // May be reused when FS_CLIMB state is set
-            continue_stats = updateSndPeriod(currtime, ad.ack);
-            HLOGC(mglog.Debug, log << "FlowSmoother: BITE STATE managed - " << (continue_stats?"":"NOT ") << "continuing on collecting stats");
-        }
-        else
-        {
-            HLOGC(mglog.Debug, log << "FlowSmoother: STATE: " << DisplayState(m_State) << " BITE state not executed");
-        }
 
         double last_cwnd_size = m_dLastCWNDSize;
         m_dLastCWNDSize = m_dCongestionWindow;
@@ -548,7 +552,6 @@ private:
         m_LossRateMeasure.update(loss_rate);
         m_dLossRate = m_LossRateMeasure.currentAverage();
 
-
         if (m_dTimedLossRate == 0)
             m_dTimedLossRate = timed_loss_rate;
         else
@@ -611,11 +614,11 @@ private:
         for (unsigned i = 0; i < last_index; ++i)
         {
             Probe& p = m_adStats[i];
-            HLOGF(mglog.Debug, "%17f | %8d | %8d | %9.7f | %8.6f | %f",
+            HLOGF(mglog.Debug, "%17f | %8d | %8d | %9f | %8.6f | %f",
                     p.snd_period, int(p.tx_speed), int(p.rx_speed), double(p.sender_rtt/1000.0), p.lossrate, p.congestion_rate);
         }
 
-        // No decision taken yet.
+        // No decision taken yet. Keep the same state and continue analyzing stats.
     }
 
     /*
@@ -673,25 +676,27 @@ private:
             return false;
 
         m_LastRCTime = currtime;
-
-        int32_t last_ack = m_iLastRCTimeAck;
-        m_iLastRCTimeAck = ack;
-
-        // During Slow Start period, update with the number of
-        // newly ack-ed packets, and if exceeds the maximum, exit Slow Start.
-        // Otherwise update the size from delivery rate and RTT.
-        int seqlen = CSeqNo::seqlen(last_ack, ack);
-        updateCongestionWindowSize(seqlen);
+        updateCongestionWindowSize(ack);
 
         // Increase rate only in "climb" state (when the rate gets
         // increased in order to pick up the maximum receiver speed 
 
         // This is currently the experimental version with only FS_BITE
         // after exiting FS_WARMUP, that is, it's still done the old way.
-        if (m_State.state == FS_BITE)
+        if (m_State.state == FS_WARMUP)
         {
-            slowIncrease();
+            goto RATE_LIMIT;
         }
+
+        if (m_bLoss)
+        {
+            m_bLoss = false;
+            goto RATE_LIMIT;
+        }
+
+        slowIncrease();
+
+RATE_LIMIT:
 
         showUpdateLog();
 
@@ -732,8 +737,9 @@ private:
         int udp_buffer_free = -1;
 #endif
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: UPD (state:" << DisplayState(m_State)
-            << m_dCongestionWindow << " sndperiod=" << m_dPktSndPeriod_us
+        HLOGC(mglog.Debug, log << "FlowSmoother: UPD (state:"
+            << DisplayState(m_State) << ") wndsize=" << m_dCongestionWindow
+            << " sndperiod=" << m_dPktSndPeriod_us
             << "us BANDWIDTH USED:" << usedbw << " (limit: " << m_llMaxBW
             << ") SYSTEM BUFFER LEFT: " << udp_buffer_free);
 #endif
@@ -931,6 +937,7 @@ NoMoreCalcLoss:
             return;
         }
 
+        m_bLoss = true;
         collectLossAndAck(arg);
         double lossrate;
         int number_loss, number_acked;
@@ -1058,13 +1065,20 @@ NoMoreCalcLoss:
         {
             // This is the very first update of sender speed.
             // Next sender speed update will be done at ACK events.
-            m_parent->updateSenderSpeed(Ref(m_SenderSpeed_pps), Ref(m_SenderSpeed_bps));
-
-            // This is the last moment when the maximum sender speed can be notified
-            // because the packets are being sent with highest possible speed. If there's
-            // any slowdown applied to the sender speed, the sender speed will be slower than
-            // the maximum possible anyway.
-            m_MaxSenderSpeed_pps = m_SenderSpeed_pps;
+            if ( !m_parent->updateSenderSpeed(Ref(m_SenderSpeed_pps), Ref(m_SenderSpeed_bps)))
+            {
+                // Too early
+                m_SenderSpeed_bps = 0;
+                m_SenderSpeed_pps = 0;
+            }
+            else
+            {
+                // This is the last moment when the maximum sender speed can be notified
+                // because the packets are being sent with highest possible speed. If there's
+                // any slowdown applied to the sender speed, the sender speed will be slower than
+                // the maximum possible anyway.
+                m_MaxSenderSpeed_pps = m_SenderSpeed_pps;
+            }
             reachCWNDTop("TIMER");
             return;
         }

@@ -293,38 +293,7 @@ public: // internal API
         m_SndVelocitySource.bytesCount += pkt.getLength() + CPacket::SRT_DATA_HDR_SIZE;
     }
 
-    bool updateSenderSpeed(ref_t<int> r_pkts, ref_t<int64_t> r_bytes)
-    {
-        SndVelocityCell v;
-        {
-            CGuard lock(m_StatsLock);
-            v = m_SndVelocity;
-
-            // Clear the counters, but not time.
-            m_SndVelocitySource.pktCount = 0;
-            m_SndVelocitySource.bytesCount = 0;
-        }
-
-        bool ret = false;
-        if (m_SndVelocity.time_us != 0)
-        {
-            // Don't calculate the speed if only one
-            // packet was sent so far.
-
-            // m_SndVelocity contiains the time of the previous event.
-            uint64_t timediff = v.time_us - m_SndVelocity.time_us;
-
-            m_SndVelocity.pktCount = (1000000*m_SndVelocitySource.pktCount)/timediff;
-            m_SndVelocity.bytesCount = (1000000*m_SndVelocitySource.bytesCount)/timediff;
-            ret = true;
-        }
-
-        // Remember previous time
-        m_SndVelocity.time_us = v.time_us;
-        *r_pkts = m_SndVelocity.pktCount;
-        *r_bytes = m_SndVelocity.bytesCount;
-        return ret;
-    }
+    SRT_ATR_NODISCARD bool updateSenderSpeed(ref_t<int> r_pkts, ref_t<int64_t> r_bytes);
 
     // XXX See CUDT::tsbpd() to see how to implement it. This should
     // do the same as TLPKTDROP feature when skipping packets that are agreed

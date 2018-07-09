@@ -6363,7 +6363,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                     else
                     {
                         int64_t elapsed_us = (currtime_tk - m_RcvVelocity.start_time_tk)/m_ullCPUFrequency;
-                        data[ACKD_RCVVELOCITY] = (m_RcvVelocity.number_packets*1000000.0)/elapsed_us;
+                        data[ACKD_RCVVELOCITY] = ceil(1000000.0/(double(elapsed_us)/double(m_RcvVelocity.number_packets)));
                     }
 
                     m_RcvVelocity.number_packets = 0;
@@ -8676,3 +8676,40 @@ int CUDT::getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes)
 
     return std::abs(timespan);
 }
+
+SRT_ATR_NODISCARD bool CUDT::updateSenderSpeed(ref_t<int> r_pkts, ref_t<int64_t> r_bytes)
+{
+    SndVelocityCell source;
+    uint64_t time_begin = m_SndVelocity.time_us;
+    {
+        CGuard lock(m_StatsLock);
+        source = m_SndVelocitySource;
+
+        // Clear the counters, but not time.
+        // Time history will be written in m_SndVelocity.
+        m_SndVelocitySource.pktCount = 0;
+        m_SndVelocitySource.bytesCount = 0;
+    }
+    uint64_t time_end = source.time_us;
+    // Remember previous time
+    m_SndVelocity.time_us = time_end;
+
+    // Don't calculate the speed if only one
+    // packet was sent so far.
+    if (!time_begin)
+    {
+        return false;
+    }
+
+    // m_SndVelocity contiains the time of the previous event.
+    uint64_t timediff = time_end - time_begin;
+
+    m_SndVelocity.pktCount = ceil(1000000.0 / (double(timediff)/double(source.pktCount)));
+    m_SndVelocity.bytesCount = ceil(1000000.0 / (double(timediff)/double(source.bytesCount)));
+
+    *r_pkts = m_SndVelocity.pktCount;
+    *r_bytes = m_SndVelocity.bytesCount;
+    return true;
+}
+
+

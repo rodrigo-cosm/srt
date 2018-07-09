@@ -170,7 +170,7 @@ int CPktTimeWindowTools::getPktRcvSpeed_in(const int* window, int* replica, cons
    {
       bytes += (CPacket::SRT_DATA_HDR_SIZE * count); //Add protocol headers to bytes received
       bytesps = (unsigned long)ceil(1000000.0 / (double(sum) / double(bytes)));
-      return (int)ceil(1000000.0 / (sum / count)); // == 1000000.0 * (count/sum) ?
+      return (int)ceil(1000000.0 / (sum / count)); // == 1000000.0 * (count/sum) | [1M * pkt/us] | [pkt/s]
    }
    else
    {
