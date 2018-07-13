@@ -200,7 +200,7 @@ class FlowSmoother: public SmootherBase
     {
         static std::string stnames[5] = {"WARMUP", "SLIDE", "CLIMB", "KEEP", "BITE"};
         std::ostringstream os;
-        os << stnames[st.state] << "[" << st.probe_index << "." << st.span_index << "]";
+        os << stnames[st.state] << "[" << setfill('_') << setw(2) << st.probe_index << "." << st.span_index << "]";
         return os.str();
     }
 
@@ -384,6 +384,8 @@ private:
         if (slower > MIN_SPEED_SND_PERIOD)
             slower = MIN_SPEED_SND_PERIOD;
 
+        HLOGC(mglog.Debug, log << "FlowSmoother: LOSS >50%, EMERGENCY BRAKE. sndperiod=" << slower);
+
         // Set the lowest speed as the current speed and highest as 0 (to be measured).
         switchState(FS_KEEP, 16, 1, slower, 0);
         m_dPktSndPeriod_us = slower;
@@ -429,7 +431,8 @@ private:
             return;
         }
 
-        int flight_span = CSeqNo::seqoff(ad.ack, m_parent->sndSeqNo());
+        int32_t farthest_ack = CSeqNo::incseq(m_parent->sndSeqNo());
+        int flight_span = CSeqNo::seqlen(ad.ack, farthest_ack) - 1;
 
         // THIS is the only thing done in the update
         bool continue_stats = updateSndPeriod(currtime, ad.ack);
@@ -448,6 +451,7 @@ private:
 
         int32_t last_ack = m_LastAckSeq;
         m_LastAckSeq = ad.ack;
+        int32_t last_rcv = acksize > ACKD_RCVLASTSEQ ? ackdata[ACKD_RCVLASTSEQ] : 0;
 
         // XXX Not used currently - might be used here to
         // calculate the "ack speed", but there's no use of 
@@ -492,8 +496,8 @@ private:
         uint64_t acked_rcv_time = 0;
 
         // Extract the acked-to-ack delay from the ack data
-        int ack_delay = acksize > ACKD_ACKDELAY ? ackdata[ACKD_ACKDELAY] : 0;
-        if (ack_delay != 0)
+        int ack_delay = acksize > ACKD_ACKDELAY ? ackdata[ACKD_ACKDELAY] : -1; // Also received ACKDELAY may be -1
+        if (ack_delay != -1)
         {
             // Now we have the previous data, the difference can be calculated.
             int ack_span = CSeqNo::seqcmp(ad.ack, last_ack);
@@ -551,6 +555,13 @@ private:
             // of Sender RTT.
             acked_rcv_time = currtime - ad.send_time;
         }
+        else
+        {
+            // We can fall back to measuring the time of the last sequence number, find the
+            // packet with that sequence number and get its sending time. We state here that
+            // the "ack delay time" here is negligible.
+            acked_rcv_time = currtime - m_parent->sndTimeOf(ackdata[ACKD_RCVLASTSEQ]);
+        }
 
         m_LossRateMeasure.update(loss_rate);
         m_dLossRate = m_LossRateMeasure.currentAverage();
@@ -588,10 +599,11 @@ private:
             (m_dCongestionWindow - last_cwnd_size)/m_dCongestionWindow
         };
 
-        HLOGC(mglog.Debug, log << "FlowSmoother(ACK): Collecting stats {"
-                << DisplayState(m_State) << "}: ACKDELAY=" << ack_delay
-                << "us LastSndRTT=" << acked_rcv_time
+        HLOGC(mglog.Debug, log << "FlowSmoother(ACK): STATS {"
+                << DisplayState(m_State) << "}: ADKdel=" << ack_delay
+                << "us LastSndRTT=" << acked_rcv_time << "(" << m_SenderRTT_us << ")"
                 << "us Snd: Speed=" << m_SenderSpeed_pps << "p/s"
+                << " ACK span [" << last_ack << "-" << ad.ack << "*" << last_rcv
                 << " Flight: " << flight_span << "p "
                 << " CWND: " << setprecision(6) << m_dCongestionWindow
                 << " RcvVelocity=" << rcv_velocity << "p/s RcvSpeed=" << rcv_speed
@@ -599,7 +611,7 @@ private:
                 << setprecision(6)
                 << "p, rate: " << loss_rate << "("
                 << m_dLossRate << ")p/ack, freq: "
-                << (1000.0*m_dTimedLossRate) << "p/ms");
+                << int(1000.0*m_dTimedLossRate) << "p/ms");
 
         ++m_State.probe_index;
 
@@ -618,13 +630,16 @@ private:
         unsigned last_index = m_State.probe_index;
         m_State.probe_index = 0;
 
-        HLOGC(mglog.Debug, log << "SPEED STATS:  SP  | Tx Speed | Rx Speed |Snd RTT[ms]| Lossrate | Congestion Rate");
+#ifdef ENABLE_HEAVY_LOGGING
+        if ( last_index)
+            HLOGC(mglog.Debug, log << "SPEED STATS:  SP  | Tx Speed | Rx Speed |Snd RTT[ms]| Lossrate | Congestion Rate");
         for (unsigned i = 0; i < last_index; ++i)
         {
             Probe& p = m_adStats[i];
             HLOGF(mglog.Debug, "%17f | %8d | %8d | %9f | %8.6f | %f",
                     p.snd_period, int(p.tx_speed), int(p.rx_speed), double(p.sender_rtt/1000.0), p.lossrate, p.congestion_rate);
         }
+#endif
 
         // No decision taken yet. Keep the same state and continue analyzing stats.
     }

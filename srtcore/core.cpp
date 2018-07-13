@@ -6270,7 +6270,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                 // This releases CTimer::waitForEvent() call used in CUDTUnited::selectEx().
                 // Preventing to call this on zero size makes sense, if it prevents false alerts.
                 if (acksize > 0)
+                {
+                    HLOGC(mglog.Debug, log << "ACK HANDOFF(core): [" << m_iRcvLastSkipAck << " - " << ack << "] size=" << acksize);
                     acked_recvtime = m_pRcvBuffer->ackData(acksize);
+                }
 
                 {
                     InvertedGuard l_unlocker(&m_AckLock);
@@ -6392,11 +6395,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
 
                 if (ctrlsz > ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE_SMALL)
                 {
-                    uint64_t calctime = CTimer::getTime();
                     int32_t ackslip = -1;
                     if (acked_recvtime)
                     {
-                        calctime -= acked_recvtime;
+                        uint64_t calctime = currtime_tk/m_ullCPUFrequency - acked_recvtime;
                         if (calctime < INT32_MAX)
                         {
                             ackslip = calctime;
@@ -6405,6 +6407,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                         {
                             HLOGC(mglog.Warn, log << "Time distance to ACK-ed pkt reception time exceeds max 32-bit integer");
                         }
+                    }
+                    else
+                    {
+                        HLOGC(mglog.Debug, log << "ACK: RCVTIME not found on seq=" << CSeqNo::decseq(ack));
                     }
 
                     data[ACKD_ACKDELAY] = ackslip;
@@ -8712,4 +8718,14 @@ SRT_ATR_NODISCARD bool CUDT::updateSenderSpeed(ref_t<int> r_pkts, ref_t<int64_t>
     return true;
 }
 
+uint64_t CUDT::sndTimeOf(int32_t sndseq)
+{
+    // protect m_iSndLastDataAck from updating by ACK processing
+    CGuard ackguard(m_AckLock);
 
+    int offset = CSeqNo::seqoff(m_iSndLastDataAck, sndseq);
+    if (offset < 0)
+        return 0;
+
+    return m_pSndBuffer->getOriginTimeAt(offset);
+}

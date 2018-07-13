@@ -278,6 +278,7 @@ public: // internal API
     {
         return std::make_pair(m_RcvAckDataCache, m_iRcvAckDataCacheSize);
     }
+    uint64_t sndTimeOf(int32_t sndseq);
 
     int64_t maxBandwidth() { return m_llMaxBW; }
     int MSS() { return m_iMSS; }

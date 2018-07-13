@@ -406,6 +406,20 @@ int CSndBuffer::readData(char** data, int32_t& msgno_bitset, uint64_t& srctime, 
    return readlen;
 }
 
+uint64_t CSndBuffer::getOriginTimeAt(const int offset)
+{
+   CGuard bufferguard(m_BufLock);
+
+   Block* p = m_pFirstBlock;
+
+   // XXX Suboptimal procedure to keep the blocks identifiable
+   // by sequence number. Consider using some circular buffer.
+   for (int i = 0; i < offset; ++ i)
+      p = p->m_pNext;
+
+   return p->m_ullOriginTime_us;
+}
+
 int CSndBuffer::readData(char** data, const int offset, int32_t& msgno_bitset, uint64_t& srctime, int& msglen)
 {
    CGuard bufferguard(m_BufLock);
@@ -905,11 +919,11 @@ uint64_t CRcvBuffer::ackData(int len)
       int bytes = 0;
       for (int i = m_iLastAckPos, n = (m_iLastAckPos + len) % m_iSize; i != n; i = shift_forward(i))
       {
+          lastunit = m_pUnit[i]; // Even if NULL, no matter. If it's not the last one, you get no measurement
           if (m_pUnit[i] != NULL)
           {
               pkts++;
               bytes += m_pUnit[i]->m_Packet.getLength();
-              lastunit = m_pUnit[i];
           }
       }
       if (pkts > 0) countBytes(pkts, bytes, true);
@@ -919,7 +933,19 @@ uint64_t CRcvBuffer::ackData(int len)
    if (m_iMaxPos < 0)
       m_iMaxPos = 0;
 
-   uint64_t recvtime = lastunit ? lastunit->m_tReceived_us : 0;
+   uint64_t recvtime = 0;
+
+   // XXX Compat issue: The SRT before version 1.2.0 doesn't
+   // support file/stream transmission, for which this measurement
+   // is predicted. This may simply give you stupid results, if you
+   // use a version that doesn't support retransmission flag, that is,
+   // for some longer period you simply won't get ACKDELAY measurement,
+   // if you try some client of version before 1.2.0 that supports file
+   // transmission, but beside the original UDT no such client is known.
+   if (lastunit && !lastunit->m_Packet.getRexmitFlag())
+   {
+       recvtime = lastunit->m_tReceived_us;
+   }
    CTimer::triggerEvent();
    return recvtime;
 }

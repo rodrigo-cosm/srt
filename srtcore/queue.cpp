@@ -1266,11 +1266,12 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_
     THREAD_PAUSED();
     EReadStatus rst = m_pChannel->recvfrom(addr, r_unit->m_Packet);
     THREAD_RESUMED();
-    r_unit->m_tReceived_us = CTimer::getTime();
+    r_unit->m_tReceived_us = 0; // Default for all cases when the time can't be picked up reliably.
 
     if (rst == RST_OK)
     {
         *r_id = r_unit->m_Packet.m_iID;
+        r_unit->m_tReceived_us = CTimer::getTime();
         HLOGC(mglog.Debug, log << "INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddress()) << " " << PacketInfo(r_unit->m_Packet));
     }
     return rst;
