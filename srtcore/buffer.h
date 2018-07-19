@@ -95,8 +95,7 @@ public:
       /// @param [in] kflags Odd|Even crypto key flag
       /// @return Actual length of data read.
 
-   int readData(char** data, int32_t& msgno, uint64_t& origintime, int kflgs);
-
+   int readData(ref_t<char*> data, ref_t<int32_t> msgno, ref_t<uint64_t> origintime, int kflgs, ref_t<uint64_t*> sendertime_location);
 
       /// Find data position to pack a DATA packet for a retransmission.
       /// @param [out] data the pointer to the data position.
@@ -106,7 +105,7 @@ public:
       /// @param [out] msglen length of the message
       /// @return Actual length of data read.
 
-   int readData(char** data, const int offset, int32_t& msgno, uint64_t& origintime, int& msglen);
+   int readData(ref_t<char*> data, const int offset, ref_t<int32_t> r_msgno_bitset, ref_t<uint64_t> r_srctime, ref_t<int> r_msglen);
 
       /// Update the ACK point and may release/unmap/return the user data according to the flag.
       /// @param [in] offset number of packets acknowledged.
@@ -115,7 +114,7 @@ public:
    uint64_t ackData(int offset);
 
    /// Get just the origin time of the packet stored at this offset
-   uint64_t getOriginTimeAt(const int offset);
+   uint64_t getSendingTimeAt(const int offset);
 
       /// Read size of data still in the sending list.
       /// @return Current size of the data in the sending list.
@@ -147,6 +146,7 @@ private:
       int32_t m_iMsgNoBitset;                 // message number
       uint64_t m_ullOriginTime_us;            // original request time
       uint64_t m_ullSourceTime_us;
+      uint64_t m_ullSendingTime_us;
       int m_iTTL;                       // time to live (milliseconds)
 
       Block* m_pNext;                   // next block

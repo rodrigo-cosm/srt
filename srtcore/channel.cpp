@@ -330,7 +330,7 @@ void CChannel::getPeerAddr(sockaddr* addr) const
 }
 
 
-int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
+uint64_t CChannel::sendto(const sockaddr* addr, CPacket& packet) const
 {
 #if ENABLE_LOGGING
     std::ostringstream spec;
@@ -370,23 +370,30 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
       ++ p;
    }
 
-   #ifndef WIN32
-      msghdr mh;
-      mh.msg_name = (sockaddr*)addr;
-      mh.msg_namelen = m_iSockAddrSize;
-      mh.msg_iov = (iovec*)packet.m_PacketVector;
-      mh.msg_iovlen = 2;
-      mh.msg_control = NULL;
-      mh.msg_controllen = 0;
-      mh.msg_flags = 0;
+   uint64_t sndtime = 0;
 
-      int res = ::sendmsg(m_iSocket, &mh, 0);
-   #else
-      DWORD size = CPacket::HDR_SIZE + packet.getLength();
-      int addrsize = m_iSockAddrSize;
-      int res = ::WSASendTo(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, 0, addr, addrsize, NULL, NULL);
-      res = (0 == res) ? size : -1;
-   #endif
+#ifndef WIN32
+   msghdr mh;
+   mh.msg_name = (sockaddr*)addr;
+   mh.msg_namelen = m_iSockAddrSize;
+   mh.msg_iov = (iovec*)packet.m_PacketVector;
+   mh.msg_iovlen = 2;
+   mh.msg_control = NULL;
+   mh.msg_controllen = 0;
+   mh.msg_flags = 0;
+
+   sndtime = CTimer::getTime();
+   /*int res = */::sendmsg(m_iSocket, &mh, 0);
+#else
+   DWORD size = CPacket::HDR_SIZE + packet.getLength();
+   int addrsize = m_iSockAddrSize;
+   sndtime = CTimer::getTime();
+   /*int res = */ ::WSASendTo(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, 0, addr, addrsize, NULL, NULL);
+   //res = (0 == res) ? size : -1;
+#endif
+
+   // Errors from sending are ignored - worst case they will be
+   // packet-lost even before reaching the first router.
 
    // convert back into local host order
    //for (int k = 0; k < 4; ++ k)
@@ -404,7 +411,7 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
          *((uint32_t *)packet.m_pcData + l) = ntohl(*((uint32_t *)packet.m_pcData + l));
    }
 
-   return res;
+   return sndtime;
 }
 
 EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const

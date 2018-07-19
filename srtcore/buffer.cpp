@@ -190,6 +190,7 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
 
         s->m_ullSourceTime_us = srctime;
         s->m_ullOriginTime_us = time;
+        s->m_ullSendingTime_us = 0; // To be set when sending!
         s->m_iTTL = ttl;
 
         // XXX unchecked condition: s->m_pNext == NULL.
@@ -350,7 +351,7 @@ int CSndBuffer::addBufferFromFile(fstream& ifs, int len)
    return total;
 }
 
-int CSndBuffer::readData(char** data, int32_t& msgno_bitset, uint64_t& srctime, int kflgs)
+int CSndBuffer::readData(ref_t<char*> data, ref_t<int32_t> r_msgno_bitset, ref_t<uint64_t> r_srctime, int kflgs, ref_t<uint64_t*> sendertime_location)
 {
    // No data to read
    if (m_pCurrBlock == m_pLastBlock)
@@ -393,11 +394,13 @@ int CSndBuffer::readData(char** data, int32_t& msgno_bitset, uint64_t& srctime, 
    {
        m_pCurrBlock->m_iMsgNoBitset |= MSGNO_ENCKEYSPEC::wrap(kflgs);
    }
-   msgno_bitset = m_pCurrBlock->m_iMsgNoBitset;
+   *r_msgno_bitset = m_pCurrBlock->m_iMsgNoBitset;
 
-   srctime =
+   *r_srctime =
       m_pCurrBlock->m_ullSourceTime_us ? m_pCurrBlock->m_ullSourceTime_us :
       m_pCurrBlock->m_ullOriginTime_us;
+
+   *sendertime_location = &m_pCurrBlock->m_ullSendingTime_us;
 
    m_pCurrBlock = m_pCurrBlock->m_pNext;
 
@@ -406,7 +409,7 @@ int CSndBuffer::readData(char** data, int32_t& msgno_bitset, uint64_t& srctime, 
    return readlen;
 }
 
-uint64_t CSndBuffer::getOriginTimeAt(const int offset)
+uint64_t CSndBuffer::getSendingTimeAt(const int offset)
 {
    CGuard bufferguard(m_BufLock);
 
@@ -417,10 +420,10 @@ uint64_t CSndBuffer::getOriginTimeAt(const int offset)
    for (int i = 0; i < offset; ++ i)
       p = p->m_pNext;
 
-   return p->m_ullOriginTime_us;
+   return p->m_ullSendingTime_us;
 }
 
-int CSndBuffer::readData(char** data, const int offset, int32_t& msgno_bitset, uint64_t& srctime, int& msglen)
+int CSndBuffer::readData(ref_t<char*> data, const int offset, ref_t<int32_t> r_msgno_bitset, ref_t<uint64_t> r_srctime, ref_t<int> r_msglen)
 {
    CGuard bufferguard(m_BufLock);
 
@@ -448,7 +451,7 @@ int CSndBuffer::readData(char** data, const int offset, int32_t& msgno_bitset, u
    if ((p->m_iTTL >= 0) && ((CTimer::getTime() - p->m_ullOriginTime_us) / 1000 > (uint64_t)p->m_iTTL))
    {
       int32_t msgno = p->getMsgSeq();
-      msglen = 1;
+      int msglen = 1;
       p = p->m_pNext;
       bool move = false;
       while (msgno == p->getMsgSeq())
@@ -466,7 +469,8 @@ int CSndBuffer::readData(char** data, const int offset, int32_t& msgno_bitset, u
       // If readData returns -1, then msgno_bitset is understood as a Message ID to drop.
       // This means that in this case it should be written by the message sequence value only
       // (not the whole 4-byte bitset written at PH_MSGNO).
-      msgno_bitset = msgno;
+      *r_msgno_bitset = msgno;
+      *r_msglen = msglen;
       return -1;
    }
 
@@ -479,9 +483,9 @@ int CSndBuffer::readData(char** data, const int offset, int32_t& msgno_bitset, u
    // encrypted, and with all ENC flags already set. So, the first call to send
    // the packet originally (the other overload of this function) must set these
    // flags.
-   msgno_bitset = p->m_iMsgNoBitset;
+   *r_msgno_bitset = p->m_iMsgNoBitset;
 
-   srctime = 
+   *r_srctime = 
       p->m_ullSourceTime_us ? p->m_ullSourceTime_us :
       p->m_ullOriginTime_us;
 
@@ -514,7 +518,7 @@ uint64_t CSndBuffer::ackData(int offset)
 #endif
 
    CTimer::triggerEvent();
-   return lastblock ? lastblock->m_ullOriginTime_us : 0;
+   return lastblock ? lastblock->m_ullSendingTime_us : 0;
 }
 
 int CSndBuffer::getCurrBufSize() const

@@ -7246,6 +7246,10 @@ int CUDT::packData(CPacket& packet, uint64_t& ts_tk)
 
    string reason;
 
+   // This will be the location when the current time should be
+   // written to, as late as possible.
+   uint64_t* pSenderTimeField = NULL;
+
    // Loss retransmission always has higher priority.
    packet.m_iSeqNo = m_pSndLossList->getLostSeq();
    if (packet.m_iSeqNo >= 0)
@@ -7259,7 +7263,7 @@ int CUDT::packData(CPacket& packet, uint64_t& ts_tk)
 
       int msglen;
 
-      payload = m_pSndBuffer->readData(&(packet.m_pcData), offset, packet.m_iMsgNo, origintime, msglen);
+      payload = m_pSndBuffer->readData(Ref(packet.m_pcData), offset, Ref(packet.m_iMsgNo), Ref(origintime), Ref(msglen));
 
       if (-1 == payload)
       {
@@ -7317,7 +7321,8 @@ int CUDT::packData(CPacket& packet, uint64_t& ts_tk)
          // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
          // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
          kflg = m_pCryptoControl->getSndCryptoFlags();
-         if (0 != (payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo, origintime, kflg)))
+         if (0 != (payload = m_pSndBuffer->readData(Ref(packet.m_pcData),
+                         Ref(packet.m_iMsgNo), Ref(origintime), kflg, Ref(pSenderTimeField))))
          {
             m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
             //m_pCryptoControl->m_iSndCurrSeqNo = m_iSndCurrSeqNo;
@@ -7456,6 +7461,9 @@ int CUDT::packData(CPacket& packet, uint64_t& ts_tk)
    }
 
    m_ullTargetTime_tk = ts_tk;
+
+   if (pSenderTimeField)
+       *pSenderTimeField = CTimer::getTime();
 
    return payload;
 }
@@ -8696,8 +8704,20 @@ SRT_ATR_NODISCARD bool CUDT::updateSenderSpeed(ref_t<int> r_pkts, ref_t<int64_t>
         m_SndVelocitySource.pktCount = 0;
         m_SndVelocitySource.bytesCount = 0;
     }
+
+    // The last time when the stats were updated
     uint64_t time_end = source.time_us;
-    // Remember previous time
+
+    if (time_end < time_begin)
+    {
+        // WHAT? That's something kinda ridiculous
+        HLOGC(mglog.Error, log << "updateSenderSpeed: extracted source time=" << logging::FormatTime(time_end)
+                << " (" << time_end << ") in the past towards now and beginning: "
+                << logging::FormatTime(time_begin) << " (" << time_begin << ") - NOT measuring speed, not recording begin time");
+        return false;
+    }
+
+    // Remember previous time to be time_begin for the next time
     m_SndVelocity.time_us = time_end;
 
     // Don't calculate the speed if only one
@@ -8710,8 +8730,18 @@ SRT_ATR_NODISCARD bool CUDT::updateSenderSpeed(ref_t<int> r_pkts, ref_t<int64_t>
     // m_SndVelocity contiains the time of the previous event.
     uint64_t timediff = time_end - time_begin;
 
-    m_SndVelocity.pktCount = ceil(1000000.0 / (double(timediff)/double(source.pktCount)));
-    m_SndVelocity.bytesCount = ceil(1000000.0 / (double(timediff)/double(source.bytesCount)));
+    int pktcount = ceil(1000000.0 / (double(timediff)/double(source.pktCount)));
+    int bytescount = ceil(1000000.0 / (double(timediff)/double(source.bytesCount)));
+
+    if (pktcount < 0)
+    {
+        HLOGC(mglog.Error, log << "NEGATIVE SPEED '" << pktcount << "' with timediff " << timediff
+                << " = " << time_end << "-" << time_begin << " pktCount=" << source.pktCount);
+        return false;
+    }
+
+    m_SndVelocity.pktCount = pktcount;
+    m_SndVelocity.bytesCount = bytescount;
 
     *r_pkts = m_SndVelocity.pktCount;
     *r_bytes = m_SndVelocity.bytesCount;
@@ -8727,5 +8757,6 @@ uint64_t CUDT::sndTimeOf(int32_t sndseq)
     if (offset < 0)
         return 0;
 
-    return m_pSndBuffer->getOriginTimeAt(offset);
+    // May be also 0, if the packet hasn't ever been sent yet
+    return m_pSndBuffer->getSendingTimeAt(offset);
 }

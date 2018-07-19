@@ -167,6 +167,10 @@ inline bool SocketOption::applyt(int socket, std::string value) const
 {
     OptionValue o; // common meet point
     extract<T>(value, o);
+    if (o.value == nullptr)
+    {
+        return false; // DO NOT attempt to call the function, it WILL throw
+    }
     int result = setso<D>(socket, protocol, symbol, o.value, o.size);
     return result != -1;
 }

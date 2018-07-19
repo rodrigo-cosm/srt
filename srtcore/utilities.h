@@ -268,7 +268,7 @@ public:
         { }
 #else
     explicit ref_t(Type& __indata)
-        : m_data((Type*)(&(char&)(__indata)))
+        : m_data((Type*)(&(unsigned char&)(__indata)))
         { }
 #endif
 

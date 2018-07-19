@@ -119,14 +119,14 @@ public:
       /// Send a packet to the given address.
       /// @param [in] addr pointer to the destination address.
       /// @param [in] packet reference to a CPacket entity.
-      /// @return Actual size of data sent.
+      /// @return The exact time of sending
 
-   int sendto(const sockaddr* addr, CPacket& packet) const;
+   uint64_t sendto(const sockaddr* addr, CPacket& packet) const;
 
       /// Receive a packet from the channel and record the source address.
       /// @param [in] addr pointer to the source address.
       /// @param [in] packet reference to a CPacket entity.
-      /// @return Actual size of data received.
+      /// @return Read status.
 
    EReadStatus recvfrom(sockaddr* addr, CPacket& packet) const;
 

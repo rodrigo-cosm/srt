@@ -582,7 +582,7 @@ private:
             // packet with that sequence number and get its sending time. We state here that
             // the "ack delay time" here is negligible.
             acked_rcv_time = currtime - m_parent->sndTimeOf(ackdata[ACKD_RCVLASTSEQ]);
-            rttform << "(@snd:" << ackdata[ACKD_RCVLASTSEQ] << ")=" << acked_rcv_time;
+            rttform << "(@snd." << ackdata[ACKD_RCVLASTSEQ] << ")=" << acked_rcv_time;
         }
 
         m_LossRateMeasure.update(loss_rate);
@@ -707,8 +707,17 @@ private:
     {
         int mss = m_parent->MSS();
         int64_t B = (m_parent->bandwidth() - 1000000.0 / m_dPktSndPeriod_us);
-        if ((m_dPktSndPeriod_us > m_dLastDecPeriod) && ((m_parent->bandwidth() / 9) < B))
-            B = m_parent->bandwidth() / 9;
+        int64_t B9 = m_parent->bandwidth() / 9;
+        if ((m_dPktSndPeriod_us > m_dLastDecPeriod) && (B > B9))
+        {
+            B = B9;
+            HLOGC(mglog.Debug, log << "FlowSmoother: INCREASE: continued, using B=" << B);
+        }
+        else
+        {
+            HLOGC(mglog.Debug, log << "FlowSmoother: INCREASE: initial, using B=" << B << " with BW/sndperiod="
+                    << (m_parent->bandwidth() / m_dPktSndPeriod_us));
+        }
 
         double inc = 0;
         double i_mss = 1.0/mss;
@@ -726,7 +735,24 @@ private:
                 inc = i_mss;
         }
 
-        m_dPktSndPeriod_us = (m_dPktSndPeriod_us * m_iRCInterval) / (m_dPktSndPeriod_us * inc + m_iRCInterval);
+        double new_period = (m_dPktSndPeriod_us * m_iRCInterval) / (m_dPktSndPeriod_us * inc + m_iRCInterval);
+
+        /*
+        if (m_dPktSndPeriod_HI_us != 0 && m_dPktSndPeriod_us - m_dPktSndPeriod_HI_us > 1)
+        {
+            // Divide the range between the highest speed and current speed into 10.
+            // Take the 9/10 of the distance between current and max and set to the
+            // middle point between these values.
+
+            double distance = (m_dPktSndPeriod_us - m_dPktSndPeriod_HI_us)/10*9;
+            HLOGC(mglog.Debug, log << "FlowSmoother: FAST SPEEDUP by " << (distance/2) << " -> " << (m_dPktSndPeriod_us - (distance/2)));
+            m_dPktSndPeriod_us -= distance/2;
+        } else */ {
+
+            HLOGC(mglog.Debug, log << "FlowSmoother: INCREASE factor: " << inc << " with 1/MSS=" << i_mss);
+
+            m_dPktSndPeriod_us = new_period;
+        }
     }
 
     bool updateSndPeriod(uint64_t currtime, int32_t ack)
@@ -1012,8 +1038,8 @@ RATE_LIMIT:
         }
         */
 
-        // Needed for old algo marked by FS_BITE
-        int lossbegin = SEQNO_VALUE::unwrap(losslist[0]);
+        FlowState prevstate = m_State.state;
+        double avg_loss_rate = avg_iir<4>(m_dLossRate, loss_rate);
 
         if (m_State.state == FS_WARMUP)
         {
@@ -1030,6 +1056,14 @@ RATE_LIMIT:
             HLOGC(mglog.Debug, log << "FlowSmoother: LOSS, state {" << DisplayState(m_State) << "} - NOT decreasing speed YET.");
         }
 
+        if (m_dPktSndPeriod_us > 5) // less than 5 is "ridiculously high", so disregard it
+        {
+            m_dPktSndPeriod_HI_us = m_dPktSndPeriod_us;
+        }
+
+        // Needed for old algo marked by FS_BITE
+        int lossbegin = SEQNO_VALUE::unwrap(losslist[0]);
+
         // Do not undertake any action on the loss. This will be collected
         // and a decision taken later after statistics are collected.
         string decision = "WARMUP";
@@ -1045,10 +1079,29 @@ RATE_LIMIT:
 
             int loss_span = CSeqNo::seqcmp(lossbegin, m_iLastRCTimeSndSeq);
 
+            double slowdown_factor = 1.125;
+            /*
+            if (prevstate == FS_WARMUP)
+            {
+                HLOGC(mglog.Debug, log << "FlowSmoother: exitting WARMUP, lossrate=" << (100*avg_loss_rate) << "%");
+            }
+            else
+            {
+                if (avg_loss_rate/2 < 0.125)
+                {
+                    slowdown_factor = 1 + avg_loss_rate/2;
+                }
+                HLOGC(mglog.Debug, log << "FlowSmoother: still BITE, lossrate="
+                        << setprecision(6) << fixed
+                        << (100*avg_loss_rate) << "%"
+                        << " slowdown by " << (100*(slowdown_factor-1)) << "%" );
+            }
+            */
+
             if (loss_span > 0)
             {
                 m_dLastDecPeriod = m_dPktSndPeriod_us;
-                m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * 1.125);
+                m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * slowdown_factor);
 
                 m_iAvgNAKNum = (int)ceil(m_iAvgNAKNum * 0.875 + m_iNAKCount * 0.125);
                 m_iNAKCount = 1;
@@ -1069,7 +1122,7 @@ RATE_LIMIT:
             else if ((m_iDecCount ++ < 5) && (0 == (++ m_iNAKCount % m_iDecRandom)))
             {
                 // 0.875^5 = 0.51, rate should not be decreased by more than half within a congestion period
-                m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * 1.125);
+                m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * slowdown_factor);
                 m_iLastRCTimeSndSeq = m_parent->sndSeqNo();
                 HLOGC(mglog.Debug, log << "FlowSmoother: LOSS:PERIOD: loss_span=" << loss_span
                         << ", decrnd=" << m_iDecRandom
@@ -1105,7 +1158,7 @@ RATE_LIMIT:
                 << "us Speed=" << m_SenderSpeed_pps << "p/s"
                 << " ACKspan:[" << m_LastAckSeq << "-"
                     << last_contig << ">" << CSeqNo::seqcmp(last_rcv, last_contig)
-                    << "](" << CSeqNo::seqlen(m_LastAckSeq, last_contig) << ")"
+                    << "](0)" // Keep consistent format, but LOSS event could not increase ACK size here.
                 << " Flight:" << flight_span << "p"
                 << " CWND:" << setprecision(6) << std::fixed << m_dCongestionWindow
                 << " RcvVelocity=" << m_LastRcvVelocity << "p/s RcvSpeed=" << m_LastRcvSpeed << "(" << m_parent->deliveryRate() << ")"

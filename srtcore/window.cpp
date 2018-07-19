@@ -190,6 +190,7 @@ int CPktTimeWindowTools::getBandwidth_in(const int* window, int* replica, size_t
     count += 1;
     sum += filter.median;
 
+    // RESULT: (count/sum) [pkt/us] * 1M == (count/sum) [pkt/s]
     return (int)ceil(1000000.0 / (double(sum) / double(count)));
 }
 
