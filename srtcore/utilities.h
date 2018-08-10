@@ -601,6 +601,36 @@ class RingLossyStack
 
 public:
 
+    struct iterator
+    {
+        TYPE* array;
+        size_t index;
+
+        iterator& operator++()
+        {
+            if (index == 0)
+                index = SPAN-1;
+            else
+                --index;
+        }
+
+        TYPE& operator*()
+        {
+            return array[index];
+        }
+
+        bool operator==(const iterator& y)
+        {
+            return index == y.index;
+        }
+    };
+
+    iterator begin()
+    {
+        iterator i = {m_qValueStack, m_zStackPos};
+        return i;
+    }
+
     RingLossyStack(): m_zStackPos(), m_zStackSize() {}
 
     void push(const TYPE& val)
@@ -613,10 +643,37 @@ public:
         m_qValueStack[m_zStackPos] = val;
     }
 
+    /* This doesn't make sense in case of a ring buffer
     template <unsigned N>
     TYPE history()
     {
         return IndexArray<TYPE, N, (N < SPAN) >::perform(m_qValueStack);
+    }
+    */
+
+    size_t size() { return m_zStackSize; }
+    TYPE top() { return m_qValueStack[m_zStackPos]; }
+    bool empty() { return m_zStackSize == 0; }
+    bool full() { return m_zStackSize == SPAN; }
+
+    TYPE operator[](size_t index)
+    {
+        return m_qValueStack[(SPAN + m_zStackPos-index)%SPAN];
+    }
+
+    TYPE average()
+    {
+        if (m_zStackSize == SPAN)
+            return accumulate_array(m_qValueStack)/SPAN;
+
+        size_t firstsize = SPAN - m_zStackPos;
+        if (firstsize > m_zStackSize) // all used data are in the second segment
+            return std::accumulate(m_qValueStack+m_zStackPos, m_qValueStack+m_zStackPos+m_zStackSize, TYPE())/m_zStackSize;
+
+        size_t remainsize = m_zStackSize - firstsize;
+        return std::accumulate(m_qValueStack+m_zStackPos, m_qValueStack+SPAN,
+                // as the initial value, we use the sum from the first segment
+                std::accumulate(m_qValueStack, m_qValueStack+remainsize, TYPE()))/m_zStackSize;
     }
 };
 

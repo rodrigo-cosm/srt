@@ -121,7 +121,9 @@ enum AckDataItem
 // FEATURE BLOCKED. Probably not to be restored.
 //  ACKD_ACKBITMAP = 8,
 
-    ACKD_TOTAL_SIZE // length = 32 (or more)
+    ACKD_TOTAL_SIZE, // length = 32 (or more)
+
+    ACKD_TOTAL_SIZE_V130f = ACKD_TOTAL_SIZE
 };
 const size_t ACKD_FIELD_SIZE = sizeof(int32_t);
 

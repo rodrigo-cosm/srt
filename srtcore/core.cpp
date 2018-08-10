@@ -6369,6 +6369,13 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                         data[ACKD_RCVVELOCITY] = ceil(1000000.0/(double(elapsed_us)/double(m_RcvVelocity.number_packets)));
                     }
 
+                    HLOGC(mglog.Debug, log << "ACK/snd: Reporting transmission stats:"
+                            << " Speed=" << data[ACKD_RCVSPEED]
+                            << " Byterate=" << data[ACKD_RCVRATE]
+                            << " Velocity=" << data[ACKD_RCVVELOCITY]
+                            << " BW=" << data[ACKD_BANDWIDTH]
+                            );
+
                     m_RcvVelocity.number_packets = 0;
                     m_RcvVelocity.start_time_tk = currtime_tk;
 
@@ -6773,14 +6780,51 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
               /* SRT v1.0.2 Bytes-based stats: bandwidth (pcData[ACKD_XMRATE]) and delivery rate (pcData[ACKD_RCVRATE]) in bytes/sec instead of pkts/sec */
               /* SRT v1.0.3 Bytes-based stats: only delivery rate (pcData[ACKD_RCVRATE]) in bytes/sec instead of pkts/sec */
-              if (acksize > ACKD_TOTAL_SIZE_UDTBASE)
+              if (acksize >= ACKD_TOTAL_SIZE_V130)
                   bytesps = ackdata[ACKD_RCVRATE];
               else
                   bytesps = pktps * m_iMaxSRTPayloadSize;
 
-              m_iBandwidth = avg_iir<8>(m_iBandwidth, bandwidth);
-              m_iDeliveryRate = avg_iir<8>(m_iDeliveryRate, pktps);
-              m_iByteDeliveryRate = avg_iir<8>(m_iByteDeliveryRate, bytesps);
+              int velocity = 0;
+              if (acksize >= ACKD_TOTAL_SIZE_V130f)
+                  velocity = ackdata[ACKD_RCVVELOCITY];
+
+              if (m_iBandwidth == 1)
+              {
+                  // We are in the very first measurement event.
+                  // Take the received values as a good deal.
+                  // They are still better than the initial hardcoded
+                  // values as a base.
+
+                  if (velocity != 0 && pktps < velocity)
+                  {
+                      // Velocity is a more reliable measurement, but it's for
+                      // the shortest possible time range, so it may include a
+                      // high variance factor, which should be cleared up by
+                      // IIR average, this forming the "speed". But at this
+                      // moment we have too little data collected for it to be
+                      // reliable. Therefore velocity can be used to rule out
+                      // a ridiculously low value of "speed" received with the
+                      // first ACK command.
+                      //
+                      // This is fixing only the DeliveryRate value because it's
+                      // vital for the speed control in the initial spike-edge
+                      // period ("Slow Start" or "Warmup"). ByteDelveryRate is
+                      // only used for statistics and it's meaningful only in long
+                      // term, mainly for the Live mode.
+                      HLOGC(mglog.Debug, log << "ACK: overriding rcv-speed:" << pktps
+                              << " with rcv-velocity:" << velocity);
+                      pktps = velocity;
+                  }
+                  m_iBandwidth = bandwidth;
+                  m_iDeliveryRate = pktps;
+                  m_iByteDeliveryRate = bytesps;
+              } else {
+
+                  m_iBandwidth = avg_iir<8>(m_iBandwidth, bandwidth);
+                  m_iDeliveryRate = avg_iir<8>(m_iDeliveryRate, pktps);
+                  m_iByteDeliveryRate = avg_iir<8>(m_iByteDeliveryRate, bytesps);
+              }
 
           }
       }
