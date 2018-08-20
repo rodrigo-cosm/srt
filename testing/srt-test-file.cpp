@@ -83,7 +83,10 @@ int main( int argc, char** argv )
 
     string verbo = Option<OutString>(params, "no", o_verbose);
     if ( verbo == "" || !false_names.count(verbo) )
+    {
         Verbose::on = true;
+        Verbose::cverb = &std::cout;
+    }
 
     string bs = Option<OutString>(params, "", o_buffer);
     if ( bs != "" )

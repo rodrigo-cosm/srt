@@ -919,7 +919,7 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
     int new_head_status = 0;
     if (empty())
     {
-        LOGP(dlog.Debug, "addData: WILL NEED SIGNAL because this is the first packet");
+        HLOGP(dlog.Debug, "addData: WILL NEED SIGNAL because this is the first packet");
         new_head_status = 1;
     }
 
@@ -954,7 +954,7 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
                 // or indefinitely, that is, it expects to be woken up on
                 // a signal from here.
                 new_head_status = 1;
-                LOGP(dlog.Debug, "addData: WILL NEED SIGNAL because it's new head");
+                HLOGP(dlog.Debug, "addData: WILL NEED SIGNAL because it's new head");
                 break;
             }
         }
