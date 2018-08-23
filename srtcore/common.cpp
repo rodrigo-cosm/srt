@@ -458,13 +458,21 @@ bool CCondDelegate::wait_until(uint64_t timestamp)
     return signaled;
 }
 
+bool CCondDelegate::wait_for(uint64_t delay)
+{
+    timeval now;
+    gettimeofday(&now, 0); //  CTimer::getTime ???
+    uint64_t time_us = now.tv_sec * uint64_t(1000000) + now.tv_usec + delay;
+    return wait_until(time_us);
+}
+
 void CCondDelegate::lock_signal()
 {
     // We expect nolock == true.
 #if ENABLE_DEBUG
     if (!nolock)
     {
-        LOGS(cerr, log << "Cond: INTERNAL ERROR: lock_signal done on LOCKED Cond.");
+        LOGS(cerr, log << "Cond: IPE: lock_signal done on LOCKED Cond.");
         return;
     }
 #endif
@@ -479,13 +487,13 @@ void CCondDelegate::signal_locked(CGuard& lk SRT_ATR_UNUSED)
 #if ENABLE_DEBUG
     if (nolock)
     {
-        LOGS(cerr, log << "Cond: INTERNAL ERROR: signal done on no-lock-checked Cond.");
+        LOGS(cerr, log << "Cond: IPE: signal done on no-lock-checked Cond.");
         return;
     }
 
     if (&lk.m_Mutex != m_mutex)
     {
-        LOGS(cerr, log << "Cond: INTERNAL ERROR: signal declares CGuard.mutex=" << (&lk.m_Mutex) << " but Cond.mutex=" << m_mutex);
+        LOGS(cerr, log << "Cond: IPE: signal declares CGuard.mutex=" << (&lk.m_Mutex) << " but Cond.mutex=" << m_mutex);
         return;
     }
     LOGS(cerr, log << "Cond: SIGNAL:" << m_cond << " (with locked:" << (&m_mutex) << ")");

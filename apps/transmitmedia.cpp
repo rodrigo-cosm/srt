@@ -102,7 +102,7 @@ Iface* CreateFile(const string& name) { return new typename File<Iface>::type (n
 
 
 template <class PerfMonType>
-void PrintSrtStats(int sid, const PerfMonType& mon)
+static void PrintSrtStats(int sid, const PerfMonType& mon)
 {
     std::ostringstream output;
 
@@ -156,6 +156,19 @@ void PrintSrtStats(int sid, const PerfMonType& mon)
         output << "WINDOW      FLOW: " << setw(11) << mon.pktFlowWindow      << "  CONGESTION: " << setw(11) << mon.pktCongestionWindow  << "  FLIGHT: " << setw(11) << mon.pktFlightSize << endl;
         output << "LINK         RTT: " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s " << endl;
         output << "BUFFERLEFT:  SND: " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
+    }
+
+    cerr << output.str() << std::flush;
+}
+
+static void PrintSrtBandwidth(double mbpsBandwidth)
+{
+    std::ostringstream output;
+
+    if (printformat_json) {
+        output << "{\"bandwidth\":" << mbpsBandwidth << '}' << endl;
+    } else {
+        output << "+++/+++SRT BANDWIDTH: " << mbpsBandwidth << endl;
     }
 
     cerr << output.str() << std::flush;
@@ -247,7 +260,7 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
 
 void SrtCommon::PrepareListener(string host, int port, int backlog)
 {
-    m_bindsock = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    m_bindsock = srt_create_socket();
     if ( m_bindsock == SRT_ERROR )
         Error(UDT::getlasterror(), "srt_socket");
 
@@ -448,7 +461,7 @@ void SrtCommon::OpenClient(string host, int port)
 
 void SrtCommon::PrepareClient()
 {
-    m_sock = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
         Error(UDT::getlasterror(), "srt_socket");
 
@@ -490,7 +503,7 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src)
 
 void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 {
-    m_sock = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
         Error(UDT::getlasterror(), "srt_socket");
 
@@ -601,7 +614,7 @@ bool SrtSource::Read(size_t chunk, bytevector& data)
     clear_stats = false;
     if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
     {
-        cerr << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth << endl;
+        PrintSrtBandwidth(perf.mbpsBandwidth);
     }
     if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
     {
@@ -647,11 +660,7 @@ bool SrtTarget::Write(const bytevector& data)
     clear_stats = false;
     if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
     {
-        if (printformat_json) {
-            cerr << "{\"bandwidth\":" << perf.mbpsBandwidth << '}' << endl;
-        } else {
-            cerr << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth << endl;
-        }
+        PrintSrtBandwidth(perf.mbpsBandwidth);
     }
     if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
     {

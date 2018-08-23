@@ -512,7 +512,7 @@ void* CSndQueue::worker(void* param)
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
     CTimer::rdtsc(self->m_ullDbgTime);
-    self->m_ullDbgPeriod = 5000000LL * CTimer::getCPUFrequency();
+    self->m_ullDbgPeriod = uint64_t(5000000) * CTimer::getCPUFrequency();
     self->m_ullDbgTime += self->m_ullDbgPeriod;
 #endif /* SRT_DEBUG_SNDQ_HIGHRATE */
 
@@ -809,7 +809,7 @@ CRendezvousQueue::~CRendezvousQueue()
    m_lRendezvousID.clear();
 }
 
-void CRendezvousQueue::insert(const UDTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl)
+void CRendezvousQueue::insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl)
 {
    CGuard vg(m_RIDVectorLock);
 
@@ -920,7 +920,9 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
             // done when "it's not the time"?
             if (CTimer::getTime() >= i->m_ullTTL)
             {
-                HLOGC(mglog.Debug, log << "RendezvousQueue: EXPIRED. removing from queue");
+                HLOGC(mglog.Debug, log << "RendezvousQueue: EXPIRED ("
+                        << (i->m_ullTTL ? "enforced on FAILURE" : "passed TTL")
+                        << ". removing from queue");
                 // connection timer expired, acknowledge app via epoll
                 i->m_pUDT->m_bConnecting = false;
                 CUDT::s_UDTUnited.m_EPoll.update_events(i->m_iID, i->m_pUDT->m_sPollID, UDT_EPOLL_ERR, true);
@@ -1097,6 +1099,11 @@ void* CRcvQueue::worker(void* param)
                cst = self->worker_ProcessAddressedPacket(id, unit, sa);
            }
            HLOGC(mglog.Debug, log << self->CONID() << "worker: result for the unit: " << ConnectStatusStr(cst));
+           if (cst == CONN_AGAIN)
+           {
+               HLOGC(mglog.Debug, log << self->CONID() << "worker: packet not dispatched, continuing reading.");
+               continue;
+           }
            have_received = true;
        }
        else if (rst == RST_ERROR)
@@ -1323,8 +1330,8 @@ EConnectStatus CRcvQueue::worker_ProcessAddressedPacket(int32_t id, CUnit* unit,
         HLOGC(mglog.Debug, log << CONID() << "Packet for SID=" << id << " asoc with " << SockaddrToString(u->m_PeerAddr)
             << " received from " << SockaddrToString(addr) << " (CONSIDERED ATTACK ATTEMPT)");
         // This came not from the address that is the peer associated
-        // with the socket. Reject.
-        return CONN_REJECT;
+        // with the socket. Ignore it.
+        return CONN_AGAIN;
     }
 
     if (!u->m_bConnected || u->m_bBroken || u->m_bClosing)
@@ -1365,19 +1372,29 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
     CUDT* u = m_pRendezvousQueue->retrieve(addr, Ref(id));
     if ( !u )
     {
-        // XXX this socket is then completely unknown to the system.
-        // May be nice to send some rejection info to the peer.
+        // this socket is then completely unknown to the system.
+        // Note that this situation may also happen at a very unfortunate
+        // coincidence that the socket is already bound, but the registerConnector()
+        // has not yet started. In case of rendezvous this may mean that the other
+        // side just started sending its handshake packets, the local side has already
+        // run the CRcvQueue::worker thread, and this worker thread is trying to dispatch
+        // the handshake packet too early, before the dispatcher has a chance to see
+        // this socket registerred in the RendezvousQueue, which causes the packet unable
+        // to be dispatched. Therefore simply treat every "out of band" packet (with socket
+        // not belonging to the connection and not registered as rendezvous) as "possible
+        // attack" and ignore it. This also should better protect the rendezvous socket
+        // against a rogue connector.
         if ( id == 0 )
         {
             HLOGC(mglog.Debug, log << CONID() << "AsyncOrRND: no sockets expect connection from "
-                << SockaddrToString(addr) << " - POSSIBLE ATTACK");
+                << SockaddrToString(addr) << " - POSSIBLE ATTACK, ignore packet");
         }
         else
         {
             HLOGC(mglog.Debug, log << CONID() << "AsyncOrRND: no sockets expect socket " << id << " from "
-                << SockaddrToString(addr) << " - POSSIBLE ATTACK");
+                << SockaddrToString(addr) << " - POSSIBLE ATTACK, ignore packet");
         }
-        return CONN_REJECT;
+        return CONN_AGAIN; // This means that the packet should be ignored.
     }
 
     // asynchronous connect: call connect here
@@ -1478,7 +1495,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
 
    if (i == m_mBuffer.end())
    {  //XXX Use the advanced condition variable facility here!
-      CTimer::condTimedWaitUS(&m_PassCond, &m_PassLock, 1000000ULL);
+      CTimer::condTimedWaitUS(&m_PassCond, &m_PassLock, 1000000);
 
       i = m_mBuffer.find(id);
       if (i == m_mBuffer.end())

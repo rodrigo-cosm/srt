@@ -379,11 +379,11 @@ int main( int argc, char** argv )
         cerr << "SUPPORTED URI SCHEMES:\n";
         cerr << "    srt: use SRT connection\n";
         cerr << "    udp: read from bound UDP socket or send to given address as UDP\n";
-        cerr << "    file (default if scheme not specified):\n";
+        cerr << "    file (default if scheme not specified) specified as:\n";
         cerr << "       - empty host/port and absolute file path in the URI\n";
         cerr << "       - only a filename, also as a relative path\n";
         cerr << "       - file://con ('con' as host): designates stdin or stdout\n";
-        cerr << "OPTIONS SYNTAX: -option <parameter[unit]=default[meaning]>:\n";
+        cerr << "OPTIONS HELP SYNTAX: -option <parameter[unit]=default[meaning]>:\n";
         for (auto os: optargs)
             cout << OptionHelpItem(os.id) << endl;
         return 1;

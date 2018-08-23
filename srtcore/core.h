@@ -651,7 +651,7 @@ private:
     SRT_ATR_NODISCARD SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
     void synchronizeGroupTime(CUDTGroup* grp);
 
-    void updateAfterSrtHandshake();
+    void updateAfterSrtHandshake(int srt_cmd, int hsv);
 
     void updateSrtRcvSettings();
     void updateSrtSndSettings();
@@ -859,6 +859,7 @@ private: // Identification
     int m_iOPT_TsbPdDelay;           // Agent's Rx latency
     int m_iOPT_PeerTsbPdDelay;       // Peer's Rx latency for the traffic made by Agent's Tx.
     bool m_bOPT_TLPktDrop;            // Whether Agent WILL DO TLPKTDROP on Rx.
+    int m_iOPT_SndDropDelay;         // Extra delay when deciding to snd-drop for TLPKTDROP, -1 to off
     bool m_bOPT_GroupConnect;
     std::string m_sStreamName;
 
@@ -1019,7 +1020,7 @@ private: // Receiving related data
 
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
     pthread_cond_t m_RcvTsbPdCond;
-    //bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
+    //bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent (removed due to immediate ACK)
 
 private: // synchronization: mutexes and conditions
     pthread_mutex_t m_ConnectionLock;            // used to synchronize connection operation

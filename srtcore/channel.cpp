@@ -206,13 +206,32 @@ void CChannel::setUDPSockOpt()
    #endif
 
 #ifdef SRT_ENABLE_IPOPTS
-      if ((-1 != m_iIpTTL)
-      &&  (0 != ::setsockopt(m_iSocket, IPPROTO_IP, IP_TTL, (const char*)&m_iIpTTL, sizeof(m_iIpTTL))))
-         throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
-         
-      if ((-1 != m_iIpToS)
-      &&  (0 != ::setsockopt(m_iSocket, IPPROTO_IP, IP_TOS, (const char*)&m_iIpToS, sizeof(m_iIpToS))))
-         throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+      if (-1 != m_iIpTTL)
+      {
+         if(m_BindAddr.family() == AF_INET)
+         {
+            if(0 != ::setsockopt(m_iSocket, IPPROTO_IP, IP_TTL, (const char*)&m_iIpTTL, sizeof(m_iIpTTL)))
+               throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+         }
+         else //Assuming AF_INET6
+         {
+            if(0 != ::setsockopt(m_iSocket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (const char*)&m_iIpTTL, sizeof(m_iIpTTL)))
+               throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+         }
+      }   
+      if (-1 != m_iIpToS)
+      {
+         if(m_BindAddr.family() == AF_INET)
+         {
+            if(0 != ::setsockopt(m_iSocket, IPPROTO_IP, IP_TOS, (const char*)&m_iIpToS, sizeof(m_iIpToS)))
+               throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+         }
+         else //Assuming AF_INET6
+         {
+            if(0 != ::setsockopt(m_iSocket, IPPROTO_IPV6, IPV6_TCLASS, (const char*)&m_iIpToS, sizeof(m_iIpToS)))
+               throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+         }
+      }
 #endif
 
    timeval tv;
@@ -279,14 +298,28 @@ void CChannel::setRcvBufSize(int size)
 int CChannel::getIpTTL() const
 {
    socklen_t size = sizeof(m_iIpTTL);
-   ::getsockopt(m_iSocket, IPPROTO_IP, IP_TTL, (char *)&m_iIpTTL, &size);
+   if (m_BindAddr.family() == AF_INET)
+   {
+      ::getsockopt(m_iSocket, IPPROTO_IP, IP_TTL, (char *)&m_iIpTTL, &size);
+   }
+   else
+   {
+      ::getsockopt(m_iSocket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&m_iIpTTL, &size);
+   }
    return m_iIpTTL;
 }
 
 int CChannel::getIpToS() const
 {
    socklen_t size = sizeof(m_iIpToS);
-   ::getsockopt(m_iSocket, IPPROTO_IP, IP_TOS, (char *)&m_iIpToS, &size);
+   if(m_BindAddr.family() == AF_INET)
+   {
+      ::getsockopt(m_iSocket, IPPROTO_IP, IP_TOS, (char *)&m_iIpToS, &size);
+   }
+   else
+   {
+      ::getsockopt(m_iSocket, IPPROTO_IPV6, IPV6_TCLASS, (char *)&m_iIpToS, &size);
+   }
    return m_iIpToS;
 }
 

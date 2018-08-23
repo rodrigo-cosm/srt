@@ -385,7 +385,7 @@ public:
    enum Whether2SelfDelete { KEEP_ORPHAN, DELETE_ORPHAN };
 
    // Typical Usage:
-   // m_pRcvBuffer->unref(CRcvBuffer::DELETE_ORPHAN);
+   // m_pRcvBuffer->release(CRcvBuffer::DELETE_ORPHAN);
    bool release(Whether2SelfDelete should_delete) // [[nullable]]
    {
        // Allow this method to be called also for the sake of

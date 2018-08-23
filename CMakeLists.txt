@@ -35,7 +35,7 @@ if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
 	include(GNUInstallDirs)
 endif()
 
-set (SRT_VERSION 1.3.0)
+set (SRT_VERSION 1.3.1)
 set_version_variables(SRT_VERSION ${SRT_VERSION})
 
 # The CMAKE_BUILD_TYPE seems not to be always set, weird.
@@ -53,6 +53,7 @@ endif()
 
 if (ENABLE_DEBUG EQUAL 1)
 	set (CMAKE_BUILD_TYPE "Debug")
+    list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_DEBUG=1")
 elseif (ENABLE_DEBUG EQUAL 2)
 	set (CMAKE_BUILD_TYPE "RelWithDebInfo")
 else()
@@ -165,9 +166,11 @@ if ( USE_GNUTLS )
 	)
 	message(STATUS "SSL Dependency: using GNUTLS with Nettle, as requested")
 else()
-	set (SSL_REQUIRED_MODULES "openssl libcrypto zlib")
 
 	if (USE_OPENSSL_PC)
+
+	        # Only use the .pc files if we actually try to find them
+	        set (SSL_REQUIRED_MODULES "openssl libcrypto zlib")
 
 		pkg_check_modules(SSL REQUIRED ${SSL_REQUIRED_MODULES})
 
@@ -282,9 +285,9 @@ set (SRT_SRC_TOOLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools)
 
 if(WIN32)
 	message(STATUS "DETECTED SYSTEM: WINDOWS;  WIN32=1; PTW32_STATIC_LIB=1")
-    add_definitions(-DWIN32=1 -DPTW32_STATIC_LIB)
+    add_definitions(-DWIN32=1 -DPTW32_STATIC_LIB=1)
 elseif(DARWIN)
-    message(STATUS "DETECTED SYSTEM: DARWIN;  OSX=11; MACOSX_RPATH=OFF")
+    message(STATUS "DETECTED SYSTEM: DARWIN;  OSX=1; MACOSX_RPATH=OFF")
     add_definitions(-DOSX=1)
 	set(MACOSX_RPATH OFF)
 elseif(LINUX)
@@ -334,9 +337,6 @@ if (ENABLE_THREAD_CHECK)
                -I${WITH_THREAD_CHECK_INCLUDEDIR}
         )
 endif()
-if (ENABLE_DEBUG)
-    list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_DEBUG=1")
-endif()
 
 if (${ENABLE_PROFILE} AND HAVE_COMPILER_GNU_COMPAT)
     # They are actually cflags, not definitions, but CMake is stupid enough.
@@ -345,15 +345,7 @@ if (${ENABLE_PROFILE} AND HAVE_COMPILER_GNU_COMPAT)
 endif()
 
 if (MINGW)
-	set (PTHREAD_LIBRARY -lpthreadGC2)
-	# XXX CONSIDER THIS. It came from a merged previous master version
-	# and was under an if(NOT MINGW)...elseif(THREADS_FOUND) condition.
-	# Might be that the current form still suffices; resolve this and remove comment.
-	#if(THREADS_FOUND)
-	#set(PTHREAD_LIBRARY ${CMAKE_THREAD_LIBS_INIT})
-	#else()
 	find_library(PTHREAD_LIBRARY NAMES pthread pthreadGC2 pthreadGC)
-	#endif() 
 elseif (PTHREAD_LIBRARY AND PTHREAD_INCLUDE_DIR)
 	message(STATUS "Pthread library: ${PTHREAD_LIBRARY}")
 	message(STATUS "Pthread include dir: ${PTHREAD_INCLUDE_DIR}")
@@ -457,7 +449,7 @@ endif()
 # will now apply to the dependent library.
 #list(APPEND SOURCES_srt ${SOURCES_haicrypt})
 set (VIRTUAL_srt $<TARGET_OBJECTS:srt_virtual> $<TARGET_OBJECTS:haicrypt_virtual>)
-set (HEADERS_srt ${HEADERS_srt} ${HEADERS_srt_win32})
+#set (HEADERS_srt ${HEADERS_srt} ${HEADERS_srt_win32})
 
 if (srt_libspec_shared)
 	add_library(${TARGET_srt}_shared SHARED ${VIRTUAL_srt})
@@ -468,6 +460,8 @@ if (srt_libspec_shared)
 	target_link_libraries(${TARGET_srt}_shared PRIVATE ${SSL_LIBRARIES})
 	if (MICROSOFT)
 		target_link_libraries(${TARGET_srt}_shared PRIVATE ws2_32.lib)
+	elseif (MINGW)
+		target_link_libraries(${TARGET_srt}_shared PRIVATE wsock32.lib ws2_32.lib)
 	endif()
 endif()
 
@@ -492,6 +486,8 @@ if (srt_libspec_static)
 	target_link_libraries(${TARGET_srt}_static PRIVATE ${SSL_LIBRARIES})
 	if (MICROSOFT)
 		target_link_libraries(${TARGET_srt}_static PRIVATE ws2_32.lib)
+	elseif (MINGW)
+		target_link_libraries(${TARGET_srt}_static PRIVATE wsock32.lib ws2_32.lib)
 	endif()
 endif()
 
@@ -509,10 +505,15 @@ endif()
 
 target_include_directories(haicrypt_virtual PRIVATE  ${SSL_INCLUDE_DIRS})
 
-set (SRT_LIBS_PRIVATE ${SSL_LIBRARIES})
+# Only set the libraries directly if they're in the Requires.private
+if (NOT SSL_REQUIRED_MODULES)
+  set (SRT_LIBS_PRIVATE ${SSL_LIBRARIES})
+endif()
 
 if (MICROSOFT)
 	set (SRT_LIBS_PRIVATE ${SRT_LIBS_PRIVATE} ws2_32.lib)
+elseif (MINGW)
+	set (SRT_LIBS_PRIVATE ${SRT_LIBS_PRIVATE} wsock32.lib ws2_32.lib)
 endif()
 
 # ---
@@ -679,10 +680,9 @@ endmacro()
 if ( ENABLE_CXX11 )
 
 	# Make a virtual library of all shared app files
-	MafRead(apps/support.maf
-		SOURCES SOURCES_support_indir
+	MafReadDir(apps support.maf
+		SOURCES SOURCES_support
 	)
-	adddirname(apps "${SOURCES_support_indir}" SOURCES_support)
 
 	# A special trick that makes the shared application sources
 	# to be compiled once for all applications. Maybe this virtual
@@ -740,8 +740,7 @@ if ( ENABLE_CXX11 )
 			#
 			# For testing applications, every application has its exclusive
 			# list of source files in its own Manifest file.
-			MafRead(testing/${name}.maf SOURCES SOURCES_app_indir)
-			adddirname(testing "${SOURCES_app_indir}" SOURCES_app)
+			MafReadDir(testing ${name}.maf SOURCES SOURCES_app)
 			srt_add_program(${name} ${SOURCES_app})
 		endmacro()
 

@@ -1257,13 +1257,17 @@ bool CRcvBuffer::getFirstAvailMsg(ref_t<uint64_t> r_playtime, ref_t<int32_t> r_p
 
     int rmpkts = 0;
     int rmbytes = 0;
+#if ENABLE_HEAVY_LOGGING
     bool empty = true;
+#endif
 
     // Delete all cells that are invalid or contain bad cell (delete the latter as well).
     // No such cells should be here, but well, various things may happen, so this is a sanity check.
     for ( ; m_iReadHead != read_tail; m_iReadHead = shift_forward(m_iReadHead))
     {
+#if ENABLE_HEAVY_LOGGING
         empty = false;
+#endif
         if (m_aUnits[m_iReadHead] == NULL)
         {
 #if ENABLE_HEAVY_LOGGING

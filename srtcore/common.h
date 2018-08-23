@@ -165,7 +165,6 @@ std::string ConnectStatusStr(EConnectStatus est);
 const int64_t BW_INFINITE =  30000000/8;         //Infinite=> 30Mbps
 
 
-
 enum ETransmissionEvent
 {
     TEV_INIT,       // --> After creation, and after any parameters were updated.
@@ -644,10 +643,14 @@ public:
     // Wait indefinitely, until getting a signal on CV.
     void wait();
 
-    // Wait only up to given time (seconds since epoch, the same unit as
+    // Wait only up to given time (microseconds since epoch, the same unit as
     // for CTimer::getTime()).
     // Return: true, if interrupted by a signal. False if exit on timeout.
     bool wait_until(uint64_t timestamp);
+
+    // Wait only for a given time delay (in microseconds). This function
+    // extracts first current time using gettimeofday().
+    bool wait_for(uint64_t delay);
 
     // You can signal using two methods:
     // - lock_signal: expect the mutex NOT locked, lock it, signal, then unlock.

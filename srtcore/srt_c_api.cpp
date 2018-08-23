@@ -26,9 +26,6 @@ written by
 using namespace std;
 
 
-using namespace std;
-
-
 extern "C" {
 
 int srt_startup() { return CUDT::startup(); }
