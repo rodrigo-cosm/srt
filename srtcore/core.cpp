@@ -2296,8 +2296,9 @@ int CUDT::processSrtMsg_HSRSP(const uint32_t* srtdata, size_t len, uint32_t ts, 
         uint64_t oldPeerStartTime = m_ullRcvPeerStartTime;
         m_ullRcvPeerStartTime = CTimer::getTime() - (uint64_t)((uint32_t)ts);
         if (oldPeerStartTime) {
-            LOGF(mglog.Note,  "rcvSrtMsg: 2nd PeerStartTime diff=%lld usec", 
-                    (long long)(m_ullRcvPeerStartTime - oldPeerStartTime));
+            LOGC(mglog.Note, log << "rcvSrtMsg: 2nd PeerStartTime diff=" <<  
+                    (m_ullRcvPeerStartTime - oldPeerStartTime) << " usec");
+
         }
     }
 #else
@@ -3074,7 +3075,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
     // RendezevousQueue is used to temporarily store incoming handshake, non-rendezvous connections also require this function
     // (Yes, because RendezevousQueue is, as the name states, used to handle the asynchronous connections :D)
 #ifdef SRT_ENABLE_CONNTIMEO
-    uint64_t ttl = m_iConnTimeOut * 1000ULL;
+    uint64_t ttl = m_iConnTimeOut * uint64_t(1000);
 #else
     uint64_t ttl = 3000000;
 #endif
@@ -5055,6 +5056,9 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
        throw CUDTException(MJ_SETUP, MN_REJECTED, 0);
    }
 
+   // Set target socket ID to the value from received handshake's source ID.
+   response.m_iID = m_PeerID;
+
 #if ENABLE_HEAVY_LOGGING
    {
        // To make sure what REALLY is being sent, parse back the handshake
@@ -5084,6 +5088,9 @@ bool CUDT::createCrypter(HandshakeSide side, bool bidirectional)
     // Lazy initialization
     if ( m_pCryptoControl )
         return true;
+
+    // Write back this value, when it was just determined.
+    m_SrtHsSide = side;
 
     m_pCryptoControl.reset(new CCryptoControl(this, m_SocketID));
 
@@ -5649,6 +5656,7 @@ void CUDT::checkNeedDrop(ref_t<bool> bCongestion)
                     CTimer::getTime() << "us," <<
                     realack << "-" <<  m_iSndCurrSeqNo << " seqs," <<
                     dpkts << " pkts," <<  dbytes << " bytes," <<  timespan_ms << " ms");
+
         }
         *bCongestion = true;
         CGuard::leaveCS(m_AckLock);
@@ -5732,11 +5740,15 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
     }
 
+    /* XXX
+       This might be worth preserving for several occasions, but it
+       must be at least conditional because it breaks backward compat.
     if (!m_pCryptoControl || !m_pCryptoControl->isSndEncryptionOK())
     {
         LOGC(dlog.Error, log << "Encryption is required, but the peer did not supply correct credentials. Sending rejected.");
         throw CUDTException(MJ_SETUP, MN_SECURITY, 0);
     }
+    */
 
     CGuard sendguard(m_SendLock);
 
@@ -6060,7 +6072,7 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
 
             do
             {
-                uint64_t exptime = CTimer::getTime() + (recvtmo * 1000ULL);
+                uint64_t exptime = CTimer::getTime() + (recvtmo * uint64_t(1000));
 
                 HLOGC(tslog.Debug, log << "receiveMessage: fall asleep up to TS="
                     << logging::FormatTime(exptime) << " lock=" << (&m_RecvLock) << " cond=" << (&m_RecvDataCond));
@@ -6762,7 +6774,8 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
 
 #if 0//debug
     static int callcnt = 0;
-    if (!(callcnt++ % 250)) fprintf(stderr, "SndPeriod=%llu\n", (unsigned long long)m_ullInterval_tk/m_ullCPUFrequency);
+    if (!(callcnt++ % 250)) cerr << "SndPeriod=" << (m_ullInterval_tk/m_ullCPUFrequency) << "\n");
+
 #endif
 
     return true;
@@ -8505,9 +8518,6 @@ int CUDT::processData(CUnit* unit)
        EncryptionStatus rc = m_pCryptoControl ? m_pCryptoControl->decrypt(Ref(packet)) : ENCS_NOTSUP;
        if ( rc != ENCS_CLEAR )
        {
-#if ENABLE_LOGGING
-           static int nereport = 0;
-#endif
            /*
             * Could not decrypt
             * Keep packet in received buffer
@@ -8518,13 +8528,6 @@ int CUDT::processData(CUnit* unit)
            m_ullTraceRcvBytesUndecrypt += pktsz;
            m_iRcvUndecryptTotal += 1;
            m_ullRcvBytesUndecryptTotal += pktsz;
-#if ENABLE_LOGGING
-           // XXX G maybe it should be better limited in time rather
-           // than in number of packets because with high bitrates it may
-           // still be often as hell.
-           if (nereport++%100 == 0)
-               LOGC(dlog.Error, log << "DECRYPT ERROR - dropping a packet of " << packet.getLength() << " bytes");
-#endif
        }
    }
    else

@@ -1494,7 +1494,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
    map<int32_t, std::queue<CPacket*> >::iterator i = m_mBuffer.find(id);
 
    if (i == m_mBuffer.end())
-   {  //XXX Use the advanced condition variable facility here!
+   {  //XXX G Use the advanced condition variable facility here!
       CTimer::condTimedWaitUS(&m_PassCond, &m_PassLock, 1000000);
 
       i = m_mBuffer.find(id);

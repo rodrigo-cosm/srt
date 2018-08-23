@@ -99,8 +99,8 @@ extern logging::Logger mglog;
 CChannel::CChannel():
 m_iSocket(),
 #ifdef SRT_ENABLE_IPOPTS
-m_iIpTTL(-1),
-m_iIpToS(-1),
+m_iIpTTL(-1),   /* IPv4 TTL or IPv6 HOPs [1..255] (-1:undefined) */
+m_iIpToS(-1),   /* IPv4 Type of Service or IPv6 Traffic Class [0x00..0xff] (-1:undefined) */
 #endif
 m_iSndBufSize(65536),
 m_iRcvBufSize(65536)
