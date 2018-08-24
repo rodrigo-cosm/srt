@@ -317,7 +317,7 @@ int CTimer::condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64
     return pthread_cond_timedwait(cond, mutex, &timeout);
 }
 
-#ifdef ENABLE_DEBUG
+#ifdef ENABLE_THREAD_LOGGING
 struct CGuardLogMutex
 {
     pthread_mutex_t mx;
@@ -380,7 +380,7 @@ int CGuard::leaveCS(pthread_mutex_t& lock)
 void CGuard::createMutex(pthread_mutex_t& lock)
 {
     pthread_mutexattr_t* pattr = NULL;
-#if ENABLE_DEBUG
+#if ENABLE_THREAD_LOGGING
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
@@ -406,7 +406,7 @@ void CGuard::releaseCond(pthread_cond_t& cond)
 
 CCondDelegate::CCondDelegate(pthread_cond_t& cond, CGuard& g): m_cond(&cond), m_mutex(&g.m_Mutex), nolock(false)
 {
-#if ENABLE_DEBUG
+#if ENABLE_THREAD_LOGGING
     // This constructor expects that the mutex is locked, and 'g' should designate
     // the CGuard variable that holds the mutex. Test in debug mode whether the
     // mutex is locked
@@ -469,7 +469,7 @@ bool CCondDelegate::wait_for(uint64_t delay)
 void CCondDelegate::lock_signal()
 {
     // We expect nolock == true.
-#if ENABLE_DEBUG
+#if ENABLE_THREAD_LOGGING
     if (!nolock)
     {
         LOGS(cerr, log << "Cond: IPE: lock_signal done on LOCKED Cond.");
@@ -484,7 +484,7 @@ void CCondDelegate::lock_signal()
 void CCondDelegate::signal_locked(CGuard& lk SRT_ATR_UNUSED)
 {
     // We expect nolock == false.
-#if ENABLE_DEBUG
+#if ENABLE_THREAD_LOGGING
     if (nolock)
     {
         LOGS(cerr, log << "Cond: IPE: signal done on no-lock-checked Cond.");

@@ -79,7 +79,7 @@ written by
 
 #endif
 
-#ifndef ENABLE_DEBUG
+#ifndef ENABLE_THREAD_LOGGING
 #define LOGS(...)
 #else
 

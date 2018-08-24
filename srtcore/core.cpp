@@ -63,7 +63,7 @@ modified by
 #endif
 
 // For crash-asserts
-#if ENABLE_DEBUG
+#if ENABLE_THREAD_LOGGING
 #include <stdexcept>
 #endif
 
@@ -8279,7 +8279,7 @@ bool CUDT::overrideSndSeqNo(int32_t seq)
 
 inline void ThreadCheckAffinity(const char* function SRT_ATR_UNUSED, pthread_t thr SRT_ATR_UNUSED)
 {
-#if ENABLE_DEBUG
+#if ENABLE_THREAD_LOGGING
     if (thr == pthread_self())
         return;
 
