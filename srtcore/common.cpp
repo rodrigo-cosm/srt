@@ -537,6 +537,11 @@ CUDTException::~CUDTException()
 
 const char* CUDTException::getErrorMessage()
 {
+    return getErrorString().c_str();
+}
+
+const string& CUDTException::getErrorString()
+{
    // translate "Major:Minor" code into text message.
 
    switch (m_iMajor)
@@ -746,7 +751,7 @@ const char* CUDTException::getErrorMessage()
    m_strMsg += ".";
    #endif
 
-   return m_strMsg.c_str();
+   return m_strMsg;
 }
 
 #define UDT_XCODE(mj, mn) (int(mj)*1000)+int(mn)

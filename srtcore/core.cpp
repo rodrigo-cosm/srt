@@ -9964,6 +9964,9 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     int rstat = -1;
 
+        int stat = 0;
+        SRT_ATR_UNUSED CUDTException cx (MJ_SUCCESS, MN_NONE, 0);
+
     CGuard guard(m_GroupLock);
 
     // XXX G make a distinction here for an exact group type of managed sending.
@@ -10004,11 +10007,30 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in RUNNING state: %" << d->id << " - will send a payload");
         // Remaining sndstate is GST_RUNNING. Send a payload through it.
-        int stat = d->ps->core().sendmsg2(buf, len, r_mc);
-        // Check the status to sndstate whether this link is still active
-        if (stat == -1)
+        try
         {
-            HLOGC(dlog.Debug, log << "... sending FAILED. Setting this socket broken status.");
+            // This must be wrapped in try-catch because on error it throws an exception.
+            // Possible return values are only 0, in case of some stupid error, or a positive
+            // >0 value that defines the size of the data that it has sent, that is, in case
+            // of Live mode, equal to 'len'.
+            stat = d->ps->core().sendmsg2(buf, len, r_mc);
+        }
+        catch (CUDTException& e)
+        {
+            cx = e;
+            stat = -1;
+        }
+
+        if (stat != len)
+        {
+#if ENABLE_HEAVY_LOGGING
+            string errmsg;
+            if (stat == -1)
+                errmsg = cx.getErrorString();
+            else
+                errmsg = "Sent size: " + Sprint(stat);
+            HLOGC(dlog.Debug, log << "... sending FAILED (" << errmsg << "). Setting this socket broken status.");
+#endif
             // Turn this link broken
             d->sndstate = GST_BROKEN;
             d->laststatus = d->ps->getStatus();
@@ -10057,6 +10079,11 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // no LOSSREPORT is sent even if the sequence looks like a "jumped over".
     // Only for activated links is the LOSSREPORT sent upon seqhole detection.
 
+    // NOTE: This is a "vector of list iterators". Every element here
+    // is an iterator to another container.
+    // Note that "list" is THE ONLY container in standard C++ library,
+    // for which NO ITERATORS ARE INVALIDATED after a node at particular
+    // iterator has been removed, except for that iterator itself.
     for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
     {
         gli_t d = *i;
@@ -10079,13 +10106,29 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Now send and check the status
         // The link could have got broken
 
-        int stat = d->ps->core().sendmsg2(buf, len, r_mc);
+        try
+        {
+            stat = d->ps->core().sendmsg2(buf, len, r_mc);
+        }
+        catch (CUDTException& e)
+        {
+            cx = e;
+            stat = -1;
+        }
+
         d->laststatus = d->ps->getStatus();
 
         // Check the status to sndstate whether this link is still active
-        if (stat == -1)
+        if (stat != len)
         {
-            HLOGC(dlog.Debug, log << "... sending FAILED. Setting this socket broken status.");
+#if ENABLE_HEAVY_LOGGING
+            string errmsg;
+            if (stat == -1)
+                errmsg = cx.getErrorString();
+            else
+                errmsg = "Sent size: " + Sprint(stat);
+            HLOGC(dlog.Debug, log << "... sending FAILED (" << errmsg << "). Setting this socket broken status.");
+#endif
             // Turn this link broken
             d->sndstate = GST_BROKEN;
             // However don't delete the socket right now.
@@ -10113,11 +10156,6 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     }
 
     // delete all sockets that were broken at the entrance
-    // NOTE: This is a "vector of list iterators". Every element here
-    // is an iterator to another container.
-    // Note that "list" is THE ONLY container in standard C++ library,
-    // for which NO ITERATORS ARE INVALIDATED after a node at particular
-    // iterator has been removed, except for that iterator itself.
     for (vector<gli_t>::iterator i = wipeme.begin(); i != wipeme.end(); ++i)
     {
         // XXX send-blocking should be probably immediately turned off,
