@@ -475,6 +475,10 @@ CSndQueue::~CSndQueue()
    delete m_pSndUList;
 }
 
+#if ENABLE_LOGGING
+    int CSndQueue::m_counter = 0;
+#endif
+
 void CSndQueue::init(CChannel* c, CTimer* t)
 {
    m_pChannel = c;
@@ -484,7 +488,11 @@ void CSndQueue::init(CChannel* c, CTimer* t)
    m_pSndUList->m_pWindowCond = &m_WindowCond;
    m_pSndUList->m_pTimer = m_pTimer;
 
-   ThreadName tn("SRT:SndQ:worker");
+#if ENABLE_LOGGING
+    ++m_counter;
+    std::string thrname = "SRT:SndQ:w" + Sprint(m_counter);
+    ThreadName tn(thrname.c_str());
+#endif
    if (0 != pthread_create(&m_WorkerThread, NULL, CSndQueue::worker, this))
    {
 	   m_WorkerThread = pthread_t();
@@ -1032,6 +1040,11 @@ CRcvQueue::~CRcvQueue()
     }
 }
 
+#if ENABLE_LOGGING
+    int CRcvQueue::m_counter = 0;
+#endif
+
+
 void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel* cc, CTimer* t)
 {
     m_iPayloadSize = payload;
@@ -1047,7 +1060,12 @@ void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel* c
     m_pRcvUList = new CRcvUList;
     m_pRendezvousQueue = new CRendezvousQueue;
 
-    ThreadName tn("SRT:RcvQ:worker");
+#if ENABLE_LOGGING
+    ++m_counter;
+    std::string thrname = "SRT:RcvQ:w" + Sprint(m_counter);
+    ThreadName tn(thrname.c_str());
+#endif
+
     if (0 != pthread_create(&m_WorkerThread, NULL, CRcvQueue::worker, this))
     {
 		m_WorkerThread = pthread_t();
@@ -1068,6 +1086,7 @@ void* CRcvQueue::worker(void* param)
    while (!self->m_bClosing)
    {
        bool have_received = false;
+       HLOGC(mglog.Debug, log << "WILL READ UDP PACKET.");
        EReadStatus rst = self->worker_RetrieveUnit(Ref(id), Ref(unit), Ref(sa));
        if (rst == RST_OK)
        {
@@ -1075,7 +1094,7 @@ void* CRcvQueue::worker(void* param)
            {
                // User error on peer. May log something, but generally can only ignore it.
                // XXX Think maybe about sending some "connection rejection response".
-               HLOGC(mglog.Debug, log << self->CONID() << "RECEIVED negative socket id '" << id << "', rejecting (POSSIBLE ATTACK)");
+               HLOGC(mglog.Debug, log << "RECEIVED negative socket id '" << id << "', rejecting (POSSIBLE ATTACK)");
                continue;
            }
 
@@ -1098,10 +1117,10 @@ void* CRcvQueue::worker(void* param)
                // - a socket connected to a peer
                cst = self->worker_ProcessAddressedPacket(id, unit, sa);
            }
-           HLOGC(mglog.Debug, log << self->CONID() << "worker: result for the unit: " << ConnectStatusStr(cst));
+           HLOGC(mglog.Debug, log << "worker: result for the unit: " << ConnectStatusStr(cst));
            if (cst == CONN_AGAIN)
            {
-               HLOGC(mglog.Debug, log << self->CONID() << "worker: packet not dispatched, continuing reading.");
+               HLOGC(mglog.Debug, log << "worker: packet not dispatched, continuing reading.");
                continue;
            }
            have_received = true;
@@ -1115,11 +1134,11 @@ void* CRcvQueue::worker(void* param)
            // Check that just to report possible errors, but interrupt the loop anyway.
            if (self->m_bClosing)
            {
-               HLOGC(mglog.Debug, log << self->CONID() << "CChannel reported error, but Queue is closing - INTERRUPTING worker.");
+               HLOGC(mglog.Debug, log << "CChannel reported error, but Queue is closing - INTERRUPTING worker.");
            }
            else
            {
-               LOGC(mglog.Fatal, log << self->CONID() << "CChannel reported ERROR DURING TRANSMISSION - IPE. INTERRUPTING worker anyway.");
+               LOGC(mglog.Fatal, log << "CChannel reported ERROR DURING TRANSMISSION - IPE. INTERRUPTING worker anyway.");
            }
            cst = CONN_REJECT;
            break;

@@ -442,6 +442,10 @@ private:
    } m_WorkerStats;
 #endif /* SRT_DEBUG_SNDQ_HIGHRATE */
 
+#if ENABLE_LOGGING
+   static int m_counter;
+#endif
+
 private:
    CSndQueue(const CSndQueue&);
    CSndQueue& operator=(const CSndQueue&);
@@ -507,6 +511,9 @@ private:
 
    volatile bool m_bClosing;            // closing the worker
    pthread_cond_t m_ExitCond;
+#if ENABLE_LOGGING
+   static int m_counter;
+#endif
 
 private:
    int setListener(CUDT* u);
