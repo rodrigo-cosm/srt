@@ -109,7 +109,7 @@ public:
       /// @param [in] kflags Odd|Even crypto key flag
       /// @return Actual length of data read.
 
-   int extractDataToSend(ref_t<CPacket> r_packet, ref_t<uint64_t> origintime, int kflgs);
+   int readData(ref_t<CPacket> r_packet, ref_t<uint64_t> origintime, int kflgs);
 
 
       /// Find data position to pack a DATA packet for a retransmission.
@@ -120,7 +120,7 @@ public:
       /// @param [out] msglen length of the message
       /// @return Actual length of data read.
 
-   int extractDataToSend(const int offset, ref_t<CPacket> r_packet, ref_t<uint64_t> origintime, ref_t<int> msglen);
+   int readData(const int offset, ref_t<CPacket> r_packet, ref_t<uint64_t> origintime, ref_t<int> msglen);
 
       /// Update the ACK point and may release/unmap/return the user data according to the flag.
       /// @param [in] offset number of packets acknowledged.
@@ -330,7 +330,7 @@ public:
    bool isRcvDataReady();
    bool isRcvDataAvailable()
    {
-       return m_iReadTail != m_iReadHead;
+       return m_iLastAckPos != m_iStartPos;
    }
    CPacket* getRcvReadyPacket();
    bool isReadyToPlay(const CPacket* p, uint64_t& tsbpdtime);
@@ -375,8 +375,8 @@ public:
 
    int skipDataTo(int32_t upseq);
 
-   bool empty() { return m_iReadHead == m_iReadTail; }
-   bool full() { return m_iReadHead == (m_iReadTail+1)%m_iSize; }
+   bool empty() { return m_iStartPos == m_iLastAckPos; }
+   bool full() { return m_iStartPos == (m_iLastAckPos+1)%m_iSize; }
    int capacity() { return m_iSize; }
 
    int refcount() { return m_iRefCount; }
@@ -445,7 +445,7 @@ private:
 
    uint64_t getTsbPdTimeBase(uint32_t timestamp);
 
-   /// Internally acknowledge packets. That is, move the m_iReadTail pointer
+   /// Internally acknowledge packets. That is, move the m_iLastAckPos pointer
    /// to point to the last packet packet that is still contiguous.
    /// @return The number of newly acknowledged contiguous packets.
    void ackContiguous();
@@ -457,7 +457,7 @@ public:
 
    int32_t lastSkipAck()
    {
-       return m_ReadTailSequence;
+       return m_LastAckSequence;
    }
 
    SRTU_PROPERTY_RW(bool, immediateAck, m_bImmediateAck);
@@ -500,9 +500,9 @@ private:
    CUnit** m_aUnits;                 // Array of pointed units collected in the buffer
    int m_iSize;                      // Size of the internal array
 
-   int m_iReadHead;                  // HEAD: first packet available for reading
-   atomic::atomic<int> m_iReadTail;  // contiguous-TAIL: last packet available for reading
-   int m_iPastTailDelta;              // delta between contiguous-TAIL and reception-TAIL
+   int m_iStartPos;                  // HEAD: first packet available for reading
+   atomic::atomic<int> m_iLastAckPos;  // contiguous-TAIL: last packet available for reading
+   int m_iMaxPos;              // delta between contiguous-TAIL and reception-TAIL
    int m_iRefCount;                  // reference counter for shared buffer
 
    // This is atomic so that access doesn't require locking.
@@ -512,7 +512,7 @@ private:
    // and "already set (virtually forever)", that is, when once seen as set, this
    // will be true for a virtually infinite time (this can turn into "unset" from
    // this state in a predicted range of seqneuces).
-   atomic::atomic<int32_t> m_ReadTailSequence;       // sequence number assigned to a packet at m_iReadTail
+   atomic::atomic<int32_t> m_LastAckSequence;       // sequence number assigned to a packet at m_iLastAckPos
    bool m_bImmediateAck;             // If true, then the ACK pointer moves immediately upon reception
 
    int m_iNotch;			         // the starting read point of the first unit
