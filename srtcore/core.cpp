@@ -7959,7 +7959,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
 
       int msglen;
 
-      payload = m_pSndBuffer->extractDataToSend(offset, r_packet, Ref(origintime), Ref(msglen));
+      payload = m_pSndBuffer->readData(offset, r_packet, Ref(origintime), Ref(msglen));
 
       if (-1 == payload)
       {
@@ -8016,7 +8016,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
          // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
          // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
          kflg = m_pCryptoControl->getSndCryptoFlags();
-         if (0 != (payload = m_pSndBuffer->extractDataToSend(r_packet, Ref(origintime), kflg)))
+         if (0 != (payload = m_pSndBuffer->readData(r_packet, Ref(origintime), kflg)))
          {
              // A CHANGE. The sequence number is currently added to the packet
              // when scheduling, not when extracting. This is a inter-migration form,
