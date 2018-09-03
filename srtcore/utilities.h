@@ -65,6 +65,7 @@ written by
 
 #include <string>
 #include <algorithm>
+#include <iterator>
 #include <numeric> // std::accumulate
 #include <bitset>
 #include <map>
@@ -368,6 +369,17 @@ auto map_getp(Map& m, const Key& key) -> typename Map::mapped_type*
 
 #else
 
+template <class Container>
+std::string Printable(const Container& in)
+{
+    std::ostringstream os;
+    os << "[ ";
+    for (typename Container::const_iterator i = in.begin(); i != in.end(); ++i)
+        os << (*i) << " ";
+    os << "]";
+    return os.str();
+}
+
 template <class Type>
 ref_t<Type> Ref(Type& arg)
 {
@@ -601,17 +613,33 @@ class RingLossyStack
 
 public:
 
+    typedef TYPE value_type;
+
+    static const unsigned span = SPAN;
+
     struct iterator
     {
         TYPE* array;
         size_t index;
 
+        // IMPORTANT !!!
+        // The ++ operator goes backward in the internal array.
+        // The [0] position is the top, then towards SPAN value
+        // it goes back into the array.
         iterator& operator++()
         {
             if (index == 0)
                 index = SPAN-1;
             else
                 --index;
+            return *this;
+        }
+
+        iterator operator++(int)
+        {
+            iterator i = *this;
+            ++i;
+            return i;
         }
 
         TYPE& operator*()
@@ -623,11 +651,73 @@ public:
         {
             return index == y.index;
         }
+
+        bool operator!=(const iterator& y)
+        {
+            return index != y.index;
+        }
     };
+
+#if ENABLE_LOGGING
+
+    std::string dump()
+    {
+        std::ostringstream os;
+        os << "pos=" << m_zStackPos << " size=" << m_zStackSize << " SPAN=" << SPAN
+            << " DATA: ";
+
+        for (size_t i = 0; i < SPAN; ++i)
+            os << m_qValueStack[i] << " ";
+
+        return os.str();
+    }
+#endif
+
+    typedef typename RingLossyStack<const TYPE, SPAN>::iterator const_iterator;
+
+    size_t beginpos() const
+    {
+        if (m_zStackSize == 0)
+            return 0; // will be equal to end
+        if (m_zStackPos == 0)
+            return SPAN-1;
+        return m_zStackPos-1;
+    }
+
+    size_t endpos() const
+    {
+        // Until the full size is reached, it behaves
+        // as a normal array. Return the highest position.
+        if (m_zStackSize != SPAN)
+            return m_zStackSize;
+
+        // m_zStackPos is the position to be filled
+        return m_zStackPos;
+    }
+
 
     iterator begin()
     {
-        iterator i = {m_qValueStack, m_zStackPos};
+        iterator i = {m_qValueStack, beginpos()};
+        return i;
+    }
+
+    const_iterator begin() const
+    {
+        const_iterator i = {m_qValueStack, beginpos()};
+        return i;
+    }
+
+    // m_zStackPos points to the current position 
+    iterator end()
+    {
+        iterator i = {m_qValueStack, endpos()};
+        return i;
+    }
+
+    const_iterator end() const
+    {
+        const_iterator i = {m_qValueStack, endpos()};
         return i;
     }
 
@@ -635,12 +725,12 @@ public:
 
     void push(const TYPE& val)
     {
+        m_qValueStack[m_zStackPos] = val;
         ++m_zStackPos;
         if (m_zStackPos == SPAN)
             m_zStackPos = 0;
         if (m_zStackSize < SPAN)
             ++m_zStackSize;
-        m_qValueStack[m_zStackPos] = val;
     }
 
     /* This doesn't make sense in case of a ring buffer
@@ -665,6 +755,10 @@ public:
     {
         if (m_zStackSize == SPAN)
             return accumulate_array(m_qValueStack)/SPAN;
+
+        // Without this check this below may end up with div/0.
+        if (m_zStackSize == 0)
+            return TYPE();
 
         size_t firstsize = SPAN - m_zStackPos;
         if (firstsize > m_zStackSize) // all used data are in the second segment
@@ -720,21 +814,20 @@ public:
             if (m_zRingPos == N_SEGMENTS)
                 m_zRingPos = 0;
 
-            // Extend the size, if not reached yet already
             if (m_zRingSize < N_SEGMENTS)
+            {
+                // Extend the size, if not reached yet already
                 ++m_zRingSize;
-
-            // Otherwise the ring size stays with the maximum value,
-            // which means that it will use N segments backwards.
-
-            // As a new segment has been added, calculate now
-            // the jumping average value out of all segments
-            // and save it.
-            if (m_zRingSize == N_SEGMENTS)
-                m_qStableAverage = accumulate_array(m_qSegments)/N_SEGMENTS;
+                // As a new segment has been added, calculate now
+                // the jumping average value out of all segments
+                // and save it.
+                m_qStableAverage = std::accumulate(m_qSegments, m_qSegments+m_zRingSize, 0)/m_zRingSize;
+            }
             else
             {
-                m_qStableAverage = std::accumulate(m_qSegments, m_qSegments+m_zRingSize, 0)/m_zRingSize;
+                // Otherwise the ring size stays with the maximum value,
+                // which means that it will use N segments backwards.
+                m_qStableAverage = accumulate_array(m_qSegments)/N_SEGMENTS;
             }
         }
     }
@@ -742,6 +835,12 @@ public:
     TYPE stableAverage()
     {
         return m_qStableAverage;
+    }
+
+    size_t size()
+    {
+        // This value represents the number of all values collected so far.
+        return m_zRingPos*SEGMENT_SPAN + m_zStackPos;
     }
 
     // Needs external mutex in case of multithreading
@@ -1089,10 +1188,63 @@ inline size_t safe_advance(It& it, size_t num, It end)
 template <class V, size_t N> inline
 ATR_CONSTEXPR size_t Size(const V (&)[N]) ATR_NOEXCEPT { return N; }
 
-template <size_t DEPRLEN, typename ValueType>
+template <class Iterator>
+void Reverse(Iterator begin, Iterator end)
+{
+    size_t size = std::distance(begin, end);
+    if ( size % 1)
+    {
+        return ReverseOdd(begin, end);
+    }
+    if (!size)
+        return;
+
+    return ReverseEven(begin, end);
+}
+
+template <class Iterator>
+void ReverseOdd(Iterator begin, Iterator end)
+{
+    for (;;)
+    {
+        std::iter_swap(begin, end);
+        ++begin;
+        --end;
+        if (begin == end)
+        {
+            // hit the element in the middle. Break
+            return;
+        }
+    }
+}
+
+template <class Iterator>
+void ReverseEven(Iterator begin, Iterator end)
+{
+    for (;;)
+    {
+        std::iter_swap(begin, end);
+        ++begin;
+        --end;
+        if (begin + 1 == end)
+        {
+            // hit two consecutive elements
+            return;
+        }
+    }
+}
+
+template <size_t SPAN, typename ValueType>
 inline ValueType avg_iir(ValueType old_value, ValueType new_value)
 {
-    return (old_value*(DEPRLEN-1) + new_value)/DEPRLEN;
+    return (old_value*(SPAN-1) + new_value)/SPAN;
+}
+
+// Version where the span value can be given as variable, not compile-time constant.
+template<typename ValueType>
+inline ValueType avg_iir(size_t span, ValueType old_value, ValueType new_value)
+{
+    return (old_value*(span-1) + new_value)/span;
 }
 
 #endif

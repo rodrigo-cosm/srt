@@ -6819,6 +6819,8 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
                   m_iBandwidth = bandwidth;
                   m_iDeliveryRate = pktps;
                   m_iByteDeliveryRate = bytesps;
+                  HLOGC(mglog.Debug, log <<"ACK: getting initial stats: rcv-speed[p/s]=" << pktps
+                          << " rcv-rate[B/s]=" << bytesps << " BW=" << bandwidth);
               } else {
 
                   m_iBandwidth = avg_iir<8>(m_iBandwidth, bandwidth);

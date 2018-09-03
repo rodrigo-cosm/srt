@@ -100,6 +100,8 @@ class FlowSmoother: public SmootherBase
     int m_SenderSpeed_pps;
     int m_MaxSenderSpeed_pps;
     int64_t m_SenderSpeed_bps;
+    int m_MaxReceiverSpeed_pps; // Value for deliveryRate, but direct and noted as maximum.
+    int64_t m_LastGoodSndPeriod_us; // Last high speed that was used before slowdown by packet loss happened
 
     JumpingAverage<int, 3, 4> m_SenderSpeedMeasure;
     JumpingAverage<int, 3, 4> m_SenderRTTMeasure;
@@ -112,6 +114,12 @@ class FlowSmoother: public SmootherBase
     bool m_bLoss; // XXX temporarily kept for the time of experiments
 
     size_t m_zTimerCounter;
+
+    RingLossyStack<int, 4> m_LossRateHistory;
+
+    // XXX Congestion Window measurement is probably useless.
+    // Even though this means something, it undergoes quite long
+    // lasting transient state, so any decision based on it may be too late.
     double m_dLastCWNDSize;
     RingLossyStack<double, 16> m_CWNDMeasure;
     int m_iCWNDMeasureStage;
@@ -131,20 +139,21 @@ class FlowSmoother: public SmootherBase
         double snd_period;
         int64_t tx_velocity, rx_velocity, rx_speed;
         uint64_t sender_rtt;
+        int ack_size, uack_size;
         double lossrate;
         double congestion_rate;
 
-        void update(const Probe& nw)
+        void update(size_t index, const Probe& nw)
         {
             // By zero value of snd_period, you can recognize
             // that this probe wasn't filled yet.
-            if (snd_period == 0)
+            if (index == 0 || snd_period == 0)
             {
                 *this = nw;
                 return;
             }
 
-#define AV(field) field = avg_iir<4>(field, nw.field)
+#define AV(field) field = avg_iir(index+1, field, nw.field)
             AV(snd_period);
             AV(tx_velocity);
             AV(rx_velocity);
@@ -170,6 +179,23 @@ class FlowSmoother: public SmootherBase
         template <class ValueType>
         static Field<ValueType> field(ValueType Probe::*fptr)
         { return Field<ValueType>(fptr); }
+
+        template <class ValueType>
+        struct FieldLess
+        {
+            ValueType Probe::*fptr;
+
+            FieldLess(ValueType Probe::*v): fptr(v) {}
+
+            bool operator()(const Probe& earlier, const Probe& later)
+            {
+                return earlier.*fptr < later.*fptr;
+            }
+        };
+
+        template <class ValueType>
+        static FieldLess<ValueType> field_less(ValueType Probe::*fptr)
+        { return FieldLess<ValueType>(fptr); }
     };
 
     // 16 consecutive ACK events are used to make measurements, with
@@ -225,7 +251,7 @@ class FlowSmoother: public SmootherBase
     // to grid into this array.
     Probe m_adStats[FS_SAMPLE_WIDTH];
 
-    enum FlowState { FS_WARMUP, FS_SLIDE, FS_CLIMB, FS_KEEP, FS_BITE };
+    enum FlowState { FS_WARMUP, FS_COOLDOWN, FS_SLIDE, FS_CLIMB, FS_KEEP, FS_BITE, FlowState__size };
 
     struct State
     {
@@ -235,6 +261,8 @@ class FlowSmoother: public SmootherBase
 
         State(FlowState s): state(s), probe_index(), span_index() {}
     } m_State;
+
+    FlowState m_PrevState;
 
     struct ProbeHistoryEntry
     {
@@ -248,7 +276,7 @@ class FlowSmoother: public SmootherBase
 
     std::string DisplayState(const State& st)
     {
-        static std::string stnames[5] = {"WARMUP", "SLIDE", "CLIMB", "KEEP", "BITE"};
+        static std::string stnames[int(FlowState__size)] = {"WARMUP", "COOLDOWN", "SLIDE", "CLIMB", "KEEP", "BITE"};
         std::ostringstream os;
         os << stnames[st.state] << "[" << setfill('_') << setw(2) << st.probe_index << "." << st.span_index << "]";
         return os.str();
@@ -257,6 +285,7 @@ class FlowSmoother: public SmootherBase
     int64_t m_llMaxBW;
 
     double m_dPktSndPeriod_SLOWEST_us;
+    double m_dPktSndPeriod_OPTIMAL_us;
     double m_dPktSndPeriod_FASTEST_us;
 
     static constexpr double MAX_SPEED_SND_PERIOD = 1;      // 1ms bw packets
@@ -290,13 +319,15 @@ public:
         m_SenderSpeed_pps = 0;
         m_MaxSenderSpeed_pps = 0;
         m_SenderSpeed_bps = 0;
+        m_MaxReceiverSpeed_pps = 0;
         m_LastRcvVelocity = 0;
         m_LastRcvSpeed = 0;
+        m_LastGoodSndPeriod_us = 0;
         m_LastSenderRTT = 0;
         m_zTimerCounter = 0;
 
         m_LastAckTime = 0; // Don't measure anything at the first ever ACK
-        m_LastAckSeq = m_iLastRCTimeAck;
+        m_LastAckSeq = m_LastLossAckSeq = m_iLastRCTimeAck;
 
         memset(&m_adStats, 0, sizeof(m_adStats));
 
@@ -313,6 +344,7 @@ public:
         // Initial zero to declare them "not measured yet"
         m_dPktSndPeriod_FASTEST_us = 0;
         m_dPktSndPeriod_SLOWEST_us = 0;
+        m_dPktSndPeriod_OPTIMAL_us = 0;
 
         m_llMaxBW = 0;
 
@@ -324,6 +356,8 @@ public:
         CONNECT(TEV_LOSSREPORT, onLOSS_CollectLoss);
         CONNECT(TEV_CHECKTIMER, onTIMER);
 #undef CONNECT
+
+        m_PrevState = FS_WARMUP;
 
         HLOGC(mglog.Debug, log << "Creating FlowSmoother");
     }
@@ -370,7 +404,7 @@ private:
 
             if (m_dCongestionWindow > m_dMaxCWndSize)
             {
-                reachCWNDTop("UPD/ACK");
+                setCooldown(false, "UPD/ACK");
             }
             else
             {
@@ -385,32 +419,77 @@ private:
         }
     }
 
-    void reachCWNDTop(const char* hdr)
+    void setCooldown(bool spike, const char* hdr)
     {
         // If we have reached the top window, set the speed
         // to the receiver speed, then keep it for the next 16 probes.
         // Set the current speed to keep for the next 16 ACKs
         // then try to speed up.
 
-        if (m_parent->deliveryRate() > 0)
+        int exp_speed = m_parent->deliveryRate();
+        double snd_period;
+
+        if (spike)
         {
-            m_dPktSndPeriod_us = 1000000.0 / m_parent->deliveryRate();
-            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (slowstart:ENDED) CWND="
+            // We must slow down because the network is already choking, so the
+            // sender can't even continue with the optimum speed. The sending
+            // speed must be cut rapidly for the next 8 probes.
+            int best_speed = std::max(exp_speed, m_MaxReceiverSpeed_pps);
+            double snd_period = 1000000.0/best_speed;
+
+            // Make it run 10* slower than the maximum reached speed.
+            // The cooldown state can be interrupted at any time if the loss
+            // rate drops to 0.
+            m_dPktSndPeriod_us = snd_period*10;
+            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (exit WARMUP/spike) CWND="
                     << setprecision(6) << m_dCongestionWindow << "/" << m_dMaxCWndSize
-                    << " sndperiod=" << m_dPktSndPeriod_us << "us [EQUAL TO DELIVERY RATE: "
-                    << m_parent->deliveryRate() << "p/s]");
+                    << " sndperiod=" << m_dPktSndPeriod_us << "us [1/10 of HIGHEST SPEED OBSERVED: "
+                    << best_speed << "p/s]");
+
+            switchState(FS_COOLDOWN, 8, 1, m_dPktSndPeriod_us, best_speed);
+
         }
         else
         {
-            m_dPktSndPeriod_us = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
-            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (slowstart:ENDED) CWND="
-                    << setprecision(6) << m_dCongestionWindow << "/" << m_dMaxCWndSize
-                    << " sndperiod=" << m_dPktSndPeriod_us
-                    << "us [BASED ON RTT+RCI=" << ((m_parent->RTT() + m_iRCInterval)/1000.0)
-                    << "ms = " << (1000000.0/(m_parent->RTT() + m_iRCInterval)) << "Hz of CWND]");
+            if (m_State.state == FS_COOLDOWN)
+            {
+                // Cooldown was re-requested, it means that even though we slowed down,
+                // seems like it's not enough. Make the sender period twice more.
+                snd_period = m_dPktSndPeriod_us*2;
+            }
+            else if (exp_speed > 0)
+            {
+                snd_period = 1000000.0/exp_speed;
+                HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (reached TOP) CWND="
+                        << setprecision(6) << m_dCongestionWindow << "/" << m_dMaxCWndSize
+                        << " sndperiod=" << snd_period << "us [EQUAL TO DELIVERY RATE: "
+                        << m_parent->deliveryRate() << "p/s]");
+            }
+            else
+            {
+                snd_period = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
+                HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (reached TOP) CWND="
+                        << setprecision(6) << snd_period << "/" << m_dMaxCWndSize
+                        << " sndperiod=" << m_dPktSndPeriod_us
+                        << "us [BASED ON RTT+RCI=" << ((m_parent->RTT() + m_iRCInterval)/1000.0)
+                        << "ms = " << (1000000.0/(m_parent->RTT() + m_iRCInterval)) << "Hz of CWND]");
+            }
+
+            m_dPktSndPeriod_us = snd_period;
+            double best_speed = std::max(exp_speed, m_MaxReceiverSpeed_pps);
+            double speed_diff = m_MaxReceiverSpeed_pps - exp_speed;
+            if (speed_diff > 0)
+                best_speed += speed_diff/4;
+
+            double fastest_period = 1000000.0/best_speed;
+
+            switchState(FS_COOLDOWN, 8, 1, m_dPktSndPeriod_us, fastest_period);
         }
 
-        switchState(FS_BITE, 16, 1, m_dPktSndPeriod_us, 0);
+        // Set the current speed as slowest and clear up the top speed.
+        // It is tempting to use m_MaxReceiverSpeed_pps as a base for the maximum
+        // speed, but the problem is that with a spike it's no longer reliable.
+        // The exit of cooldown can use more measurement to make a better decision.
     }
 
     void switchState(FlowState state, size_t probesize, size_t probespan,
@@ -445,10 +524,8 @@ private:
 
         // Set the lowest speed as the current speed and highest as 0 (to be measured).
         //switchState(FS_KEEP, 16, 1, slower, 0);
-        switchState(FS_BITE, 16, 1, slower, 0);
+        switchState(FS_COOLDOWN, 8, 1, slower, 0);
         m_dPktSndPeriod_us = slower;
-
-        analyzeSpeed();
     }
 
     void measureSenderSpeed()
@@ -477,6 +554,12 @@ private:
     // SLOTS
     void onACK(ETransmissionEvent, TevAckData ad)
     {
+        // Normally the speed analysis and state switch decision
+        // should be made when the probe index has reached the probe size.
+        // But there can be also special conditions, when the state should
+        // be changed earlier, before the probe is full.
+        bool switch_time = false;
+
         m_zTimerCounter = 0; // Clear the timer that counts TIMERS between ACKs
 
         uint64_t currtime = CTimer::getTime();
@@ -495,12 +578,8 @@ private:
         int flight_span = CSeqNo::seqlen(ad.ack, farthest_ack) - 1;
 
         // THIS is the only thing done in the update
-        bool sp_updated = updateSndPeriod(currtime, ad.ack);
-        if ( !sp_updated )
-        {
-            decision = "[PASS]";
-        }
-        else if (m_State.state == FS_BITE)
+        bool sp_updated = updateSndPeriod(currtime, ad.ack, Ref(decision));
+        if (sp_updated && m_State.state == FS_BITE)
         {
             // Remember the lowest and highest speed while in BITE state
             // (in other states these values shall not be changed because they
@@ -555,6 +634,8 @@ private:
         int number_loss, number_ack;
         double loss_rate;
         calculateLossData(Ref(loss_rate), Ref(number_loss), Ref(number_ack), last_ack, m_LastLossAckSeq);
+
+        m_LossRateHistory.push(loss_rate);
 
         double timed_loss_rate = double(number_loss)/ack_period;
         m_dTimedLossRate = avg_iir<4>(m_dTimedLossRate, timed_loss_rate);
@@ -648,7 +729,28 @@ private:
         }
 
         m_LossRateMeasure.update(loss_rate);
-        m_dLossRate = m_LossRateMeasure.currentAverage();
+        bool loss_rate_reliable = m_LossRateMeasure.size() > 3;
+        if (loss_rate_reliable)
+        {
+            m_dLossRate = m_LossRateMeasure.currentAverage();
+        }
+
+        HLOGC(mglog.Debug, log << "FlowSmoother: LOSSDATA: avgrate=" << m_dLossRate
+                << "(" << (loss_rate_reliable ? "" : "UN") << "reliable) history "
+                << Printable(m_LossRateHistory) << " average=" << m_LossRateHistory.average());
+
+        // For COOLDOWN or KEEP state, exit the state if the no-loss situation
+        // was achieved. 
+        if (m_State.state == FS_COOLDOWN)
+        {
+            if (loss_rate_reliable && m_dLossRate == 0 && m_LossRateHistory.average() == 0)
+            {
+                // Exit COOLDOWN state as we no longer experience packet loss.
+                HLOGC(mglog.Debug, log << "FlowSmoother: REACHED loss rate " << m_dLossRate
+                        << " Average loss history: " << m_LossRateHistory.average() << " -> SPEED ANALYSIS");
+                switch_time = true;
+            }
+        }
 
         if (m_dTimedLossRate == 0)
             m_dTimedLossRate = timed_loss_rate;
@@ -663,7 +765,12 @@ private:
         if (rcv_velocity)
             m_LastRcvVelocity = rcv_velocity;
         if (rcv_speed)
+        {
             m_LastRcvSpeed = rcv_speed;
+            m_MaxReceiverSpeed_pps = std::max(m_MaxReceiverSpeed_pps, rcv_speed);
+            if (m_LastGoodSndPeriod_us == 0)
+                m_LastGoodSndPeriod_us = m_dPktSndPeriod_us;
+        }
 
         // Zero means "not measured".
         //
@@ -674,6 +781,10 @@ private:
             m_SenderRTT_us = m_SenderRTTMeasure.currentAverage();
             m_LastSenderRTT = acked_rcv_time;
         }
+
+        int32_t last_contig = CSeqNo::decseq(ad.ack);
+        int32_t uack_span = CSeqNo::seqcmp(last_rcv, last_contig);
+        int32_t ack_span = CSeqNo::seqlen(last_ack, last_contig);
 
         // Alright, we have the following data now:
         // - Sender Speed: m_SenderSpeed_pps (updated from the sender events)
@@ -686,6 +797,7 @@ private:
             rcv_velocity,
             rcv_speed,
             m_SenderRTT_us,
+            ack_span, uack_span,
             loss_rate,
             (m_dCongestionWindow - last_cwnd_size)/m_dCongestionWindow
         };
@@ -693,17 +805,13 @@ private:
         // The current measurements are being made the average, if
         // the measurement is being made multiple times for the same probe index.
         // In case when m_zProbeSpan == 1, this will be equivalent to a simple assignment.
-        m_adStats[m_State.probe_index].update(probe);
-
-        int32_t last_contig = CSeqNo::decseq(ad.ack);
+        m_adStats[m_State.probe_index].update(m_State.span_index, probe);
 
         HLOGC(mglog.Debug, log << "FlowSmoother: ACK STATS: {" << DisplayState(m_State) << "}"
                 << " Snd: Period:" << m_dPktSndPeriod_us << "us"
                 << " sRTT:" << rttform.str() << "(" << m_SenderRTT_us << ")"
                 << "us Speed=" << m_SenderSpeed_pps << "p/s"
-                << " ACKspan:[" << last_ack << "-"
-                    << last_contig << ">" << CSeqNo::seqcmp(last_rcv, last_contig)
-                    << "](" << CSeqNo::seqlen(last_ack, last_contig) << ")"
+                << " ACKspan:[" << last_ack << "-" << last_contig << ">" << uack_span << "](" << ack_span << ")"
                 << " Flight:" << flight_span << "p"
                 << " CWND:" << setprecision(6) << std::fixed << m_dCongestionWindow
                 << " RcvVelocity=" << rcv_velocity << "p/s RcvSpeed=" << rcv_speed << "(" << m_parent->deliveryRate() << ")"
@@ -725,9 +833,15 @@ private:
             if (m_State.probe_index == m_zProbeSize)
             {
                 // Reached end of probe size. Analyze results.
-                // This shall always RESET THE INDEX.
-                analyzeSpeed();
+                HLOGC(mglog.Debug, log << "FlowSmoother: REACHED PROBE SIZE -> SPEED ANALYSIS");
+                switch_time = true;
             }
+        }
+
+        if (switch_time)
+        {
+            // This shall always RESET THE INDEX.
+            analyzeSpeed();
         }
 
         if (m_State.state == FS_BITE)
@@ -746,7 +860,14 @@ private:
                     if (m_dPktSndPeriod_SLOWEST_us == 0)
                         m_dPktSndPeriod_SLOWEST_us = m_dPktSndPeriod_us;
                 }
+
+                return;
             }
+
+            /* Don't do any other measurements using congestion window.
+               The "growing back" is the only reliable measurement of some event
+               that still happened already in a far past and no reliable events
+               can be found out from this measurement.
 
             if (m_iCWNDMeasureStage == 1)
             {
@@ -774,10 +895,11 @@ private:
                                     << m_dPktSndPeriod_SLOWEST_us << " ... " << m_dPktSndPeriod_FASTEST_us
                                     << " -> Selecting " << m_dPktSndPeriod_us << " to KEEP");
                             switchState(FS_KEEP, 16, 1, m_dPktSndPeriod_SLOWEST_us, m_dPktSndPeriod_FASTEST_us);
-                            m_iCWNDMeasureStage = 0; // should be meaningless now that the state is changed.
+                            m_iCWNDMeasureStage = 2; // No more CWND measurement required
                         }
                     }
                 }
+                return;
             }
 
             // Decide switching to FS_KEEP state by getting the trigger of the
@@ -789,7 +911,17 @@ private:
             {
                 switchState(FS_KEEP, 32, 1, m_dPktSndPeriod_us, 0);
             }
+            */
         }
+    }
+
+    template <class ValueType>
+    std::string showStatsPoint(size_t index, ValueType Probe::*field)
+    {
+        std::ostringstream str;
+        str << "[" << m_adStats[index].snd_period << "]"
+            << m_adStats[index].*field;
+        return str.str();
     }
 
     void analyzeSpeed()
@@ -798,9 +930,10 @@ private:
         // Just keep the current conditions for stats - experimental
         unsigned last_index = m_State.probe_index;
         m_State.probe_index = 0;
+        m_State.span_index = 0;
 
 #ifdef ENABLE_HEAVY_LOGGING
-        if ( last_index)
+        if (last_index)
             HLOGC(mglog.Debug, log << "SPEED STATS: SP[us]| Tx Veloc | Rx Veloc | Rx Speed |Snd RTT[ms]| Lossrate | Congestion Rate");
         for (unsigned i = 0; i < last_index; ++i)
         {
@@ -814,7 +947,42 @@ private:
         if (m_State.state == FS_BITE || m_State.state == FS_WARMUP)
             return;
 
-        if (m_State.state == FS_KEEP)
+        int t = calculateCongestionTendency(last_index);
+
+        if (m_State.state == FS_COOLDOWN)
+        {
+            // COOLDOWN is like KEEP, just the difference is that we have switched
+            // to this state because of high loss rate or edge-spike after warmup.
+            // We believe then we have cooled down now and can restore the high speed.
+            if (t > 0)
+            {
+                // Very unlikely, but if we still experience increasing loss,
+                // this needs to slow down even more.
+                m_dPktSndPeriod_us = m_dPktSndPeriod_us*2;
+
+                HLOGC(mglog.Debug, log << "FlowSmoother: COOLDOWN failed - increasing cooling with half a speed (period="
+                        << m_dPktSndPeriod_us << "us)");
+                switchState(FS_COOLDOWN, 8, 1, m_dPktSndPeriod_us, 0);
+            }
+            else
+            {
+                // No panic. We are in a clear situation. Or the loss rate is steady. :)
+                //double best_speed = std::max(m_MaxReceiverSpeed_pps, m_parent->deliveryRate())*9/10;
+                double best_speed = m_parent->deliveryRate();
+
+                HLOGC(mglog.Debug, log << "FlowSmoother: COOLDOWN did the job. Setting to speed:"
+                        << best_speed << "p/s with average=" << m_parent->deliveryRate()
+                        << "p/s running=" << m_LastRcvSpeed << "p/s max=" << m_MaxReceiverSpeed_pps << "p/s");
+
+                // Keep this speed constant for the next period and see what happens.
+                // Keep the current speed as minimum.
+                m_dPktSndPeriod_SLOWEST_us = m_dPktSndPeriod_us;
+                m_dPktSndPeriod_us = 1000000.0/best_speed;
+                switchState(FS_KEEP, 16, 1, m_dPktSndPeriod_SLOWEST_us, 0);
+            }
+
+        }
+        else if (m_State.state == FS_KEEP)
         {
             // As an experiment, we'll calculate the measurements at this point, and then switch to FS_BITE state.
             // The FS_KEEP is always set with probe span == 1 (it wouldn't make sense otherwise),
@@ -827,48 +995,268 @@ private:
             // - whether the RTT increases
 
             // If so, it means that we are already sending too fast and we have to slowdown.
-            int t = calculateCongestionTendency();
             if (t > 0)
             {
+                /*
                 double slowdown_factor = 1.125;
                 m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * slowdown_factor);
                 HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion increases, slowing down to " << m_dPktSndPeriod_us);
 
                 // And measure again. Set the current sending speed as the fastest.
                 switchState(FS_KEEP, 16, 1, 0, m_dPktSndPeriod_us);
+                */
+
+                HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion increases, turn to FS_SLIDE with no lower limit");
+                switchState(FS_SLIDE, 16, 4, m_dPktSndPeriod_SLOWEST_us, 0);
             }
             else
             {
-                // If the results don't get worse, switch currently to FS_BITE
-                switchState(FS_BITE, 32, 1, m_dPktSndPeriod_SLOWEST_us, m_dPktSndPeriod_FASTEST_us);
+                if (m_dPktSndPeriod_FASTEST_us != 0 && m_PrevState == FS_COOLDOWN)
+                {
+                    // Check if the previous state was COOLDOWN, in this case you can
+                    // at the first time use the maximum ever noticed speed.
+                    m_dPktSndPeriod_FASTEST_us = 1000000.0/m_MaxReceiverSpeed_pps;
+                    HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, FASTEST period not set, setting slowest period by max speed: "
+                            << m_dPktSndPeriod_FASTEST_us);
+                }
+
+                if (m_dPktSndPeriod_FASTEST_us != 0)
+                {
+                    // We have a highest possible speed defined, so climb to it
+                    // If the results don't get worse, switch currently to FS_BITE
+                    HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion steady, FASTEST speed known, switching to FS_CLIMB");
+                    switchState(FS_CLIMB, 16, 4, m_dPktSndPeriod_SLOWEST_us, m_dPktSndPeriod_FASTEST_us);
+                }
+                else
+                {
+                    // We don't have the speed range recognized yet, so switch to climbing blindly.
+                    HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion steady, FASTEST speed UNKNOWN, switching to FS_BITE");
+
+                    // Before switching to BITE, remember the current speed
+                    m_LastGoodSndPeriod_us = m_dPktSndPeriod_us;
+                    switchState(FS_BITE, 32, 1, m_dPktSndPeriod_SLOWEST_us, 0);
+                }
+
             }
         }
-        // These below are just prepared for future.
-        // Currently there's no state switch to these
         else if (m_State.state == FS_CLIMB)
         {
+            // We have the loss tendency already analyzed, now let's analyze
+            // the following factors:
+            // - the receiver speed
+            // - the receiver velocity
+            // - the relationship between the ACK size and UACK size
 
+            analyzeStats(last_index);
         }
         else if (m_State.state == FS_SLIDE)
         {
-
+            Reverse(m_adStats, m_adStats + last_index);
+            analyzeStats(last_index);
         }
 
         // Clear the stats after use
         memset(&m_adStats, 0, sizeof(m_adStats));
     }
 
-    int calculateCongestionTendency()
+    void analyzeStats(size_t last_index)
     {
+        if (last_index < 4)
+        {
+            LOGC(mglog.Error, log << "FlowSmoother: IPE: analyzeStats() requires that at least 4 probes are made, "
+                    << last_index << " received");
+            return;
+        }
+        // This is in CLIMB or SLIDE state, should be in the order
+        // of increasing speed (that is, decreasing snd_period).
+
+        std::vector<int64_t> speedval;
+        std::transform(m_adStats, m_adStats + last_index,
+                std::back_inserter(speedval),
+                Probe::field(&Probe::rx_speed));
+
+        // Now create the value that unifies the number of
+        // acked packets with the number of uacked packets.
+        // This should report the value that represent the
+        // ack speed. We need also to get the best ack speed.
+
+        std::vector<int> ackval;
+        std::vector<int> ackavg;
+
+        for (size_t i = 0; i < last_index; ++i)
+        {
+            ackval.push_back(m_adStats[i].ack_size - m_adStats[i].uack_size);
+        }
+        int ackrate = accumulate(ackval.begin(), ackval.end(), 0)/ackval.size();
+
+        int ack1 = ackval[0];
+        ackrate += (ack1 - ackrate)/2;
+
+        for (size_t i = 0; i < last_index; ++i)
+        {
+            ackrate = avg_iir<8>(ackrate, ackval[i]);
+            ackavg.push_back(ackrate);
+        }
+
+        // Analyze the sender speed
+        pair<size_t, size_t> speed_extremum;
+        int64_t speed_median, speed_variance;
+        size_t speed_extrval;
+
+        HLOGC(mglog.Debug, log << "FlowSmoother: Analyzing receiver SPEED tendency");
+        int spd_tend = arrayTendency(speedval, &speed_extremum, &speed_extrval, &speed_median, &speed_variance);
+#if ENABLE_HEAVY_LOGGING
+
+        {
+            std::ostringstream exinfo;
+            if (speed_extremum.first == last_index)
+                exinfo << "NONE";
+            else if (speed_extremum.first == speed_extremum.second)
+            {
+                exinfo << "STRICT:" << showStatsPoint(speed_extremum.first, &Probe::rx_speed);
+            }
+            else
+            {
+                exinfo << "(" << showStatsPoint(speed_extremum.first, &Probe::rx_speed)
+                    << "|" << showStatsPoint(speed_extrval, &Probe::rx_speed)
+                    << "|" << showStatsPoint(speed_extremum.second, &Probe::rx_speed) << ")";
+            }
+
+            HLOGC(mglog.Debug, log << "... median=" << speed_median << " variance=" << speed_variance
+                    << "extremum: " << exinfo.str());
+        }
+#endif
+
+        if (spd_tend == 1)
+        {
+            // The speed is increasing, we are below the searched speed.
+            // Check the speed extremum
+
+            // Take the lower bound of the extremum as a minimum speed, and reset the
+            // maximum speed.
+            m_dPktSndPeriod_us = m_dPktSndPeriod_OPTIMAL_us = m_adStats[speed_extremum.first].snd_period;
+            double fastest = 0;
+            // Preserve the fastest speed if it still exceeds the highest found speed by more than
+            // variance. Otherwise reset it.
+            if (m_dPktSndPeriod_FASTEST_us < (m_dPktSndPeriod_us - (m_dPktSndPeriod_us - m_adStats[speed_extrval].snd_period)/2))
+                fastest = m_dPktSndPeriod_FASTEST_us;
+
+            HLOGC(mglog.Debug, log << "FlowSmoother: SPEED TENDENCY+ extremum around pos ["
+                    << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
+                    << m_adStats[speed_extremum.first].snd_period << "-"
+                    << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
+                    << fastest);
+
+            switchState(FS_CLIMB, 16, 4, m_dPktSndPeriod_us, fastest);
+            return;
+        }
+
+        if (spd_tend == -1)
+        {
+            // The speed is decreasing
+            // Set the initial speed as maximum and go downwards
+            double fastest = m_dPktSndPeriod_us;
+            m_dPktSndPeriod_us = m_adStats[0].snd_period;
+            m_dPktSndPeriod_OPTIMAL_us = 0; // we don't know the optimum speed yet
+
+            HLOGC(mglog.Debug, log << "FlowSmoother: SPEED TENDENCY- extremum around pos ["
+                    << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
+                    << m_adStats[speed_extremum.first].snd_period << "-"
+                    << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
+                    << fastest);
+            switchState(FS_SLIDE, 16, 4, 0, fastest);
+            return;
+        }
+
+        // Otherwise try to pick up the local maximum speed
+        size_t middle = speed_extremum.first + (speed_extremum.second - speed_extremum.first)/2;
+        if (speed_extremum.second - speed_extremum.first > 0 // nonempty range
+                //AND the value in the middle is greater than at the edge, meaning local maximum
+                && m_adStats[speed_extremum.second].rx_speed < m_adStats[middle].rx_speed)
+        {
+            m_dPktSndPeriod_us = m_adStats[speed_extremum.first].snd_period;
+
+            HLOGC(mglog.Debug, log << "FlowSmoother: SPEED TENDENCY- extremum around pos ["
+                    << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
+                    << m_adStats[speed_extremum.first].snd_period << "-"
+                    << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
+                    << 0);
+            // And keep it constant for a while.
+            switchState(FS_KEEP, 16, 1, m_dPktSndPeriod_us, 0);
+            return;
+        }
+
+        // Analyze the ack-uack rate
+        pair<size_t, size_t> ack_extremum;
+        int ack_median, ack_variance;
+        size_t ack_extrval;
+        HLOGC(mglog.Debug, log << "FlowSmoother: Analyzing ACK RATE tendency");
+        int ack_tend = arrayTendency(ackavg, &ack_extremum, &ack_extrval, &ack_median, &ack_variance);
+
+#if ENABLE_HEAVY_LOGGING
+
+        {
+            std::ostringstream exinfo;
+            if (speed_extremum.first == last_index)
+                exinfo << "NONE";
+            else if (speed_extremum.first == speed_extremum.second)
+            {
+                exinfo << "STRICT:" << showStatsPoint(speed_extremum.first, &Probe::ack_size);
+            }
+            else
+            {
+                exinfo << "(" << showStatsPoint(speed_extremum.first, &Probe::ack_size)
+                    << "|" << showStatsPoint(speed_extrval, &Probe::ack_size)
+                    << "|" << showStatsPoint(speed_extremum.second, &Probe::ack_size) << ")";
+            }
+
+            HLOGC(mglog.Debug, log << "... median=" << speed_median << " variance=" << speed_variance
+                    << " extremum: " << exinfo.str());
+        }
+#endif
+        // Check only if it doesn't get worse.
+        if (ack_tend != -1)
+        {
+            m_dPktSndPeriod_us = m_dPktSndPeriod_OPTIMAL_us = m_adStats[ack_extremum.first].snd_period;
+            double fastest = 0;
+            // Preserve the fastest speed if it still exceeds the highest found speed by more than
+            // variance. Otherwise reset it.
+            if (m_dPktSndPeriod_FASTEST_us < (m_dPktSndPeriod_us - (m_dPktSndPeriod_us - m_adStats[ack_extrval].snd_period)/2))
+                fastest = m_dPktSndPeriod_FASTEST_us;
+
+            HLOGC(mglog.Debug, log << "FlowSmoother: ACKRATE TENDENCY" << (ack_tend?"=":"+") << " extremum around pos ["
+                    << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
+                    << m_adStats[speed_extremum.first].snd_period << "-"
+                    << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
+                    << fastest);
+
+            switchState(FS_CLIMB, 16, 4, m_dPktSndPeriod_us, fastest);
+            return;
+        }
+
+        // It's getting worse. Jump to the lowest speed so far and keep it for a while,
+        // then decide what to do.
+        m_dPktSndPeriod_us = m_adStats[0].snd_period;
+        switchState(FS_KEEP, 16, 1, 0, m_dPktSndPeriod_us);
+    }
+
+    int calculateCongestionTendency(size_t last_index)
+    {
+        if (last_index < 4)
+        {
+            HLOGC(mglog.Debug, log << "FlowSmoother::calculateCongestionTendency: time series too short for measurement, no tendency reporting");
+            return 0;
+        }
         // This function should trace the values of loss rate and RTT
         // in the subsequent probes and get the tendency.
 
         // First we take the loss rate.
         // 1. Calculate the median and variance.
         std::vector<double> values;
-        std::transform(m_adStats, m_adStats + m_zProbeSize,
+        std::transform(m_adStats, m_adStats + last_index,
                 std::back_inserter(values), Probe::field(&Probe::lossrate));
 
+        HLOGC(mglog.Debug, log << "FlowSmoother:calculateCongestionTendency: checking loss rate tendency");
         int loss_tendency = arrayTendency(values);
 
         if (loss_tendency > 0) // increasing
@@ -878,21 +1266,83 @@ private:
         }
 
         values.clear();
-        std::transform(m_adStats, m_adStats + m_zProbeSize,
+        std::transform(m_adStats, m_adStats + last_index,
                 std::back_inserter(values), Probe::field(&Probe::sender_rtt));
+
+        HLOGC(mglog.Debug, log << "FlowSmoother:calculateCongestionTendency: checking RTT tendency");
         int rtt_tendency = arrayTendency(values);
 
         return rtt_tendency; // return as is
     }
 
+    template <class TYPE, class Predicate>
+    static pair<size_t, size_t> TraceExtremumRange(const vector<TYPE>& array, size_t size, size_t ext_pos, Predicate comp)
+    {
+        TYPE v = array[ext_pos];
+
+        // 1. Forwards
+        size_t ext_pos_fwd = ext_pos, i = ext_pos;
+        for (;;)
+        {
+            ++i;
+            //cout << "FWD POS: " << i << " value: " << array[i] << " prev: " << v <<  endl;
+            if (i == size || comp(array[i], v))
+            {
+                //cout << "FWD END\n";
+                break;
+            }
+            v = array[i];
+            ext_pos_fwd = i;
+        }
+        //cout << "FWD END: " << ext_pos_fwd << endl;
+
+        size_t ext_pos_bwd = i = ext_pos;
+        v = array[ext_pos];
+
+        // Check if loop
+        if (i > 0)
+        {
+            for (;;)
+            {
+                --i;
+                //cout << "BWD POS: " << i << " value: " << array[i] <<  " prev: " << v << endl;
+                if (comp(array[i], v))
+                {
+                    //cout << "BWD END\n";
+                    break;
+                }
+
+                ext_pos_bwd = i;
+                if (i == 0)
+                {
+                    //cout << "BWD 0\n";
+                    break;
+                }
+                v = array[i];
+            }
+            //cout << "BWD END: " << ext_pos_bwd << endl;
+        }
+        else
+        {
+            //cout << "BWD ALREADY 0\n";
+        }
+
+        return make_pair(ext_pos_bwd, ext_pos_fwd);
+    }
+
     template <class Type>
-    int arrayTendency(const std::vector<Type>& array)
+    int arrayTendency(const std::vector<Type>& array,
+            pair<size_t, size_t>* extremum_range = 0,
+            size_t* extremum = 0,
+            Type* ret_median = 0,
+            Type* ret_variance = 0)
     {
         // This function works only for at least 4 items.
-        if (array.size() < 5)
+        if (array.size() < 4)
             return 0; // No tendency observed.
 
         RingLossyStack<Type, 3> avgtracer;
+        std::vector<Type> averages;
 
         // First fill it with the first 4 values
         for (size_t i = 0; i < 3; ++i)
@@ -900,54 +1350,114 @@ private:
 
         // Calculate the first shot average out of it.
         double median = avgtracer.average();
-        double minimum = 0, maximum = 0;
+        averages.push_back(median); // Ix [0]
+        averages.push_back(median); // Ix [1]
+        for (size_t i = 3; i < array.size(); ++i)
+        {
+            // The index of avgtracer will be 1 more than
+            // the required index for the averages. This
+            // is 'i' index. Averages array will get one less.
+            avgtracer.push(array[i]);
+            averages.push_back(avgtracer.average());
+        }
+        // We have filled:
+        // [0] and [1] in the beginning
+        // then [2] ... [size-1] as per [3] ... [size].
+        // We have one element lacking, but let's skip it.
+
+        double minimum, maximum;
+        minimum = maximum = array[0];
+        size_t minimum_pos = 0, maximum_pos = 0;
         double earlier = median;
         double later = median;
 
         // Now start picking up the variance size for this first range
         double variance = 0;
-        for (size_t i = 0; i < 3; ++i)
-        {
-            double value = array[i];
-            variance = std::max(variance, fabs(median - value));
-            minimum = std::min(minimum, value);
-            maximum = std::max(maximum, value);
-        }
-
-        for (size_t i = 4; i < array.size(); ++i)
+        for (size_t i = 1; i < array.size()-1; ++i)
         {
             // Now since this point on, calculate the variance
             // together with running average.
             double value = array[i];
-            avgtracer.push(value);
-            double rm = avgtracer.average();
 
             // VARIANCE: distance between the current value and JUMPING average.
-            variance = std::max(variance, fabs(rm - value));
-            minimum = std::min(minimum, value);
-            maximum = std::max(maximum, value);
-            median = avg_iir<4>(median, value);
-            later = rm; // Note the last jumping average
+            variance = std::max(variance, fabs(averages[i] - value));
+            if (value > maximum)
+            {
+                maximum_pos = i;
+                maximum = value;
+            }
+            if (value < minimum)
+            {
+                minimum_pos = i;
+                minimum = value;
+            }
+            median = (median*i + value)/(i+1);
+            later = averages[i]; // Note the last jumping average
+            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency(trace): value=" << value
+                    << " min=" << minimum << " max=" << maximum << " var=" << variance);
         }
 
         double valuespan = maximum - minimum;
+        double avg_tend = later - earlier;
+
+        if (ret_variance)
+            *ret_variance = variance;
+
+        if (ret_median)
+            *ret_median = median;
+
+        HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: values <" << minimum
+                << " ... " << maximum << " = " << valuespan << "> median=" << median
+                << " variance=" << variance
+                << " average span <" << earlier << " ... " << later << " = " << avg_tend << ">");
+
+        if (extremum_range)
+        {
+            // Find the last local extremum range.
+            // Find first the last minimum and last maximum and pick up whichever is later.
+            if (maximum_pos > minimum_pos)
+            {
+                if (extremum)
+                    *extremum = maximum_pos;
+                *extremum_range = TraceExtremumRange(array, array.size(), maximum_pos, std::greater<Type>());
+            }
+            else
+            {
+                if (extremum)
+                    *extremum = minimum_pos;
+                *extremum_range = TraceExtremumRange(array, array.size(), minimum_pos, std::less<Type>());
+            }
+        }
 
         if (variance >= valuespan)
+        {
+            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: NONE - variance exceeds valuespan");
             return 0; // no clear tendency
+        }
 
         // Check how the early median relates to the later jumping average.
-        double avg_tend = later - earlier;
         // If so, we may have either:
         // - a clear increasing tendency
         // - an unclear tendency
         // The latter if the variance is higher than their difference
         if (fabs(avg_tend) < variance)
+        {
+            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: NONE - variance exceeds average tendency");
             return 0; // Variance is too high to have a reliable tendency
+        }
 
         // Also a clear tendency is shown when at least the later
         // average is higher to median by more than half of variance.
-        if (fabs(later - median) < (variance/2))
+        double over_earlier = fabs(median - earlier);
+        double over_later = fabs(later - median);
+        if (over_later < (variance/2) && over_earlier < (variance/2))
+        {
+            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: NONE - late ("
+                   << over_later << ") & early (" << over_earlier << ") median > half variance");
             return 0;
+        }
+
+        HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: result: " << avg_tend);
 
         return avg_tend > 0 ? 1 : avg_tend < 0 ? -1 : 0;
     }
@@ -1014,12 +1524,17 @@ private:
         m_dPktSndPeriod_us = new_period;
     }
 
-    bool updateSndPeriod(uint64_t currtime, int32_t ack)
+    bool updateSndPeriod(uint64_t currtime, int32_t ack, ref_t<std::string> decision)
     {
         if (currtime - m_LastRCTime < (uint64_t)m_iRCInterval)
+        {
+            *decision = "[PASS]";
             return false;
+        }
 
+        bool bite_slowdown = false;
         bool updated = false;
+        bool first_ack_ever = false;
 
         m_LastRCTime = currtime;
         updateCongestionWindowSize(ack);
@@ -1031,7 +1546,19 @@ private:
         // after exiting FS_WARMUP, that is, it's still done the old way.
         if (m_State.state == FS_WARMUP)
         {
+            *decision = "[WARMUP]";
             goto RATE_LIMIT;
+        }
+
+        first_ack_ever = m_LastAckTime == 0;
+        if (first_ack_ever && m_State.state == FS_COOLDOWN)
+        {
+            // It means that the speed has been already cut by experiencing
+            // the first loss before any ACK could be received. That was ok
+            // to slowdown, but this time set the speed again as with ACK you
+            // get a better measurement.
+            setCooldown(false, "FIRST-ACK");
+            *decision = "[REFIX]";
         }
 
         if (m_State.state == FS_BITE)
@@ -1039,23 +1566,8 @@ private:
             if (m_bLoss)
             {
                 m_bLoss = false;
-
-                bool first_ack_ever = m_LastAckTime == 0;
-                if (first_ack_ever)
-                {
-                    // This means that the rate was cut already by getting
-                    // the loss first before getting any ACK. This could have
-                    // set the sending period to ridiculously high value, which
-                    // might be useful for some short time to slow down sending
-                    // and give the loss a chance to recover, but it should not
-                    // stay longer because this will slow down the transfer without
-                    // any use of it.
-                    //
-                    // Set the sending period to the value of 1/DeliveryRate, as
-                    // usual. Don't make an edge-spike because now that we (should) know
-                    // the reception speed, we can make use of it.
-                    reachCWNDTop("FIRST-ACK");
-                }
+                *decision = "[WAIT]";
+                bite_slowdown = true;
 
                 goto RATE_LIMIT;
             }
@@ -1063,21 +1575,73 @@ private:
             slowIncrease();
             updated = true;
         }
-        else if (m_State.state == FS_CLIMB && m_State.span_index == 0)
+        else
         {
-            // Speed up (decrease the sender period) by 10% of the current value.
+            // Default is FS_KEEP
+            if (m_State.state == FS_COOLDOWN)
+                *decision == "[COOLDOWN]";
+            else
+                *decision = "[KEEP]";
+            std::string reason = "JUST KEEPING";
 
-        /*
-        if (m_dPktSndPeriod_FASTEST_us != 0 && m_dPktSndPeriod_us - m_dPktSndPeriod_FASTEST_us > 1)
-        {
-            // Divide the range between the highest speed and current speed into 10.
-            // Take the 9/10 of the distance between current and max and set to the
-            // middle point between these values.
+            // Do speed modifications only if span_index == 0 (that is,
+            // when last measurement has switched to the next cell, which
+            // has not been updated yet by any value).
+            if (m_State.span_index == 0)
+            {
+                if (m_State.state == FS_CLIMB)
+                {
+                    *decision = "[CLIMB]";
+                    // Check if the minimum and maximum speed has been defined.
+                    // If so, then the speed should be increased by 1/N of the
+                    // distance between slowest and fastest, where N is the probe size.
 
-            double distance = (m_dPktSndPeriod_us - m_dPktSndPeriod_FASTEST_us)/10*9;
-            HLOGC(mglog.Debug, log << "FlowSmoother: FAST SPEEDUP by " << (distance/2) << " -> " << (m_dPktSndPeriod_us - (distance/2)));
-            m_dPktSndPeriod_us -= distance/2;
-        } */
+                    // Speed up (decrease the sender period) by 10% of the current value.
+                    if (m_dPktSndPeriod_FASTEST_us != 0 && m_dPktSndPeriod_us - m_dPktSndPeriod_FASTEST_us > 1)
+                    {
+                        // Divide the range between the highest speed and current speed into 10.
+                        // Take the 9/10 of the distance between current and max and set to the
+                        // middle point between these values.
+
+                        double distance = (m_dPktSndPeriod_us - m_dPktSndPeriod_FASTEST_us)*9.0/10;
+                        HLOGC(mglog.Debug, log << "FlowSmoother: FAST SPEEDUP by " << (distance/2) << " -> " << (m_dPktSndPeriod_us - (distance/2)));
+                        m_dPktSndPeriod_us -= distance/2;
+                        reason = "climbing to fastest";
+                    }
+                    else
+                    {
+                        // Use the old-fashion speed up method from UDT.
+                        slowIncrease();
+                    }
+                }
+                else if (m_State.state == FS_SLIDE)
+                {
+                    *decision = "[SLIDE]";
+                    if (m_dPktSndPeriod_SLOWEST_us != 0 && m_dPktSndPeriod_SLOWEST_us - m_dPktSndPeriod_us > 1)
+                    {
+                        double begin_speed = 1000000.0/m_dPktSndPeriod_us;
+                        double end_speed = 1000000.0/m_dPktSndPeriod_SLOWEST_us;
+                        double selected_speed = begin_speed + 9.0/10*(end_speed - begin_speed);
+
+                        m_dPktSndPeriod_us = 1000000.0/selected_speed;
+                        HLOGC(mglog.Debug, log << "FlowSmoother: SLIDE SLOWDOWN from " << begin_speed << " to " << end_speed
+                                << " - setting " << selected_speed << "(" << m_dPktSndPeriod_us << "us)");
+                        reason = "sliding to slowest";
+                    }
+                    else
+                    {
+                        // Slow down standard way, similar to what happens at LOSS with BITE.
+                        double slowdown_factor = 1.125;
+                        if (m_dLossRate > 0.125)
+                            slowdown_factor = 1 + m_dLossRate;
+
+                        m_dPktSndPeriod_us = m_dPktSndPeriod_us * slowdown_factor;
+                        reason = "sliding by constant factor";
+                    }
+
+                }
+            }
+
         }
 
 RATE_LIMIT:
@@ -1097,6 +1661,12 @@ RATE_LIMIT:
                 HLOGC(mglog.Debug, log << "FlowSmoother: BW limited to " << m_llMaxBW
                     << " - SLOWDOWN sndperiod=" << m_dPktSndPeriod_us << "us");
             }
+        }
+
+        if (bite_slowdown)
+        {
+            HLOGC(mglog.Debug, log << "FlowSmoother: BITE SLOWDOWN AFTER LOSS detected. Switch to step-climbing");
+            switchState(FS_CLIMB, 16, 4, m_dPktSndPeriod_us, m_LastGoodSndPeriod_us);
         }
 
         return updated;
@@ -1165,12 +1735,14 @@ RATE_LIMIT:
             }
         }
 
-        if (CSeqNo::seqcmp(last_loss, m_LastLossAckSeq) > 0) // sanity check
+        // last_loss: last of the currently reported lost packets.
+        // last_loss+1: a really received packet that triggered the LOSSREPORT
+        // last_loss+2: the ACK value which is the last good received + 1.
+        int32_t loss_acked = CSeqNo::incseq(last_loss, 2);
+
+        if (CSeqNo::seqcmp(loss_acked, m_LastLossAckSeq) > 0) // sanity check
         {
-            // last_loss: last of the currently reported lost packets.
-            // last_loss+1: a really received packet that triggered the LOSSREPORT
-            // last_loss+2: the ACK value which is the last good received + 1.
-            m_LastLossAckSeq = CSeqNo::incseq(last_loss, 2);
+            m_LastLossAckSeq = loss_acked;
         }
 
         return nloss;
@@ -1199,7 +1771,8 @@ RATE_LIMIT:
         // If this happened to be a NAKREPORT sent after a lost LOSSREPORT,
         // ignore packets that are received, but happen to be between
         // various lost packets.
-        HLOGC(mglog.Debug, log << "FlowSmoother: collecting loss: ACK [" << m_LastLossAckSeq << " - "
+        HLOGC(mglog.Debug, log << "FlowSmoother: collecting loss: ACK ["
+                << CSeqNo::decseq(m_LastLossAckSeq) << " - "
                 << CSeqNo::decseq(first_loss) << "] (" << CSeqNo::seqoff(m_LastLossAckSeq, first_loss) << ") ...");
         return addLossRanges(ar);
     }
@@ -1243,7 +1816,8 @@ RATE_LIMIT:
         *number_loss = nloss;
         *number_acked = whole_range - nloss;
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: LOSS CALC (" << ack_begin << " ... " << ack_end << ") Total: ACK=" << (*number_acked)
+        HLOGC(mglog.Debug, log << "FlowSmoother: LOSS CALC (" << ack_begin << " ... " << ack_end
+                << " = " << whole_range << ") Total: ACK=" << (*number_acked)
                 << " LOSS=" << nloss << " LOSS RATE: " << (*loss_rate));
     }
 
@@ -1268,17 +1842,15 @@ RATE_LIMIT:
         int number_loss, number_acked;
         calculateLossData(Ref(loss_rate), Ref(number_loss), Ref(number_acked), m_LastAckSeq, m_LastLossAckSeq);
 
-        FlowState prevstate = m_State.state;
+        m_PrevState = m_State.state;
         double avg_loss_rate = avg_iir<4>(m_dLossRate, loss_rate);
 
         if (m_State.state == FS_WARMUP)
         {
-            // Enter the keep state with probe size == 4.
-            // Stop when probe size reached or when loss rate exceeds 50%.
-
-            // XXX Temporary experimental: turn on the "old measurement method from UDT"
-            analyzeSpeed();
-            reachCWNDTop("LOSS");
+            // Enter the keep state with probe size as for cooldown (min. 4)
+            // Stop when probe size reached or when loss rate gets to stable 0.
+            // Cool down even more if the loss rate is clearly increasing.
+            setCooldown(true, "LOSS");
         }
 
         if (m_State.state != FS_SLIDE)
@@ -1372,6 +1944,7 @@ RATE_LIMIT:
             if (m_dPktSndPeriod_us > m_dPktSndPeriod_SLOWEST_us)
                 m_dPktSndPeriod_SLOWEST_us = m_dPktSndPeriod_us;
             // */
+
         }
         else
         {
@@ -1457,7 +2030,7 @@ RATE_LIMIT:
                 // the maximum possible anyway.
                 m_MaxSenderSpeed_pps = m_SenderSpeed_pps;
             }
-            reachCWNDTop("TIMER");
+            setCooldown(false, "TIMER");
             return;
         }
 

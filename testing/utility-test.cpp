@@ -39,5 +39,39 @@ int main()
     cout << "Creating array of bytes: 10, 11, 20, 25 - FormatBinaryString: ";
     uint8_t array[4] = { 10, 11, 20, 25 };
     cout << FormatBinaryString(array, 4) << endl;
+
+    cout << "Testing RingLossyStack\n";
+
+    typedef RingLossyStack<double, 5> rls_t;
+    rls_t rls;
+
+    cout << "Empty stack: " << Printable(rls) << endl;
+
+    rls.push(10);
+    rls.push(15);
+    rls.push(20);
+    rls.push(25);
+
+    cout << "Partially filled: " << Printable(rls) << " average:" << rls.average() << endl;
+    cout << rls.dump() << endl;
+
+    cout << "Manual iteration: BEGIN=" << rls.begin().index << " END=" << rls.end().index << "\n";
+    for (rls_t::iterator i = rls.begin(); i != rls.end(); ++i)
+    {
+        cout << "[" << i.index << "] = " << (*i) << " END: " << (rls.end().index) << endl;
+    }
+
+    rls.push(30);
+    rls.push(35);
+
+    cout << "Overflown: " << Printable(rls) << " average: " << rls.average() << endl;
+    cout << rls.dump() << endl;
+    cout << "Manual iteration: BEGIN=" << rls.begin().index << " END=" << rls.end().index << "\n";
+    for (rls_t::iterator i = rls.begin(); i != rls.end(); ++i)
+    {
+        cout << "[" << i.index << "] = " << (*i) << " END: " << (rls.end().index) << endl;
+    }
+
+
     return 0;
 }
