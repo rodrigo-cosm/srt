@@ -393,7 +393,8 @@ public:
         return m_Group.empty();
     }
 
-    void resetStateOn(CUDTSocket* sock);
+    SRTSOCKET addSocket(CUDTSocket* s, ref_t<bool> r_fresh);
+    void resetStateOn(CUDTSocket* sock, ref_t<bool> r_need_update);
 
     static gli_t gli_NULL() { return s_NoGroup.end(); }
 
@@ -442,6 +443,7 @@ public:
     /// @param ack The past-the-last-received ACK sequence number
     void readyPackets(CUDT* core, int32_t ack);
 
+    SRT_ATR_NODISCARD bool synchronizeGroupTime(CUDTSocket* s);
     void syncWithSocket(const CUDT& core);
     int getGroupData(SRT_SOCKGROUPDATA *pdata, size_t *psize);
 
@@ -843,7 +845,6 @@ private:
     // "possibly group type" that might be out of the existing values.
     SRT_ATR_NODISCARD bool interpretGroup(const int32_t grpdata[], int hsreq_type_cmd);
     SRT_ATR_NODISCARD SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
-    void synchronizeGroupTime(CUDTGroup* grp);
 
     void updateAfterSrtHandshake(int hsv);
 

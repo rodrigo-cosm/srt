@@ -961,6 +961,8 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
     // - INIT: configure binding parameters here
     // - any other (meaning, already connected): report error
 
+    bool group_connected = false;
+
     if (s->m_Status == SRTS_INIT)
     {
         if (s->m_pUDT->m_bRendezvous)
@@ -985,7 +987,7 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
             // This overrides the value of m_StartTime
             // and m_ullRcvPeerStartTime before this socket sends
             // or receives anything.
-            s->m_pUDT->synchronizeGroupTime(pg);
+            group_connected = pg->synchronizeGroupTime(s);
         }
     }
     else if (s->m_Status != SRTS_OPENED)
@@ -1002,6 +1004,16 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
      * rendez-vous mode. Holding the s->m_ControlLock prevent close
      * from cancelling the connect
      */
+    bool was_write_synch = s->core().m_bSynRecving;
+
+    // If the group is already connected through at least one link,
+    // DO NOT wait for a completed connection and do not set back the flag
+    // for asynchronous connect. Establishing the second link should
+    // happen completely in background, while the other link might be
+    // used for transmission.
+    if (group_connected)
+        s->core().m_bSynRecving = false;
+
     try
     {
         // InvertedGuard unlocks in the constructor, then locks in the
@@ -1012,14 +1024,15 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
     catch (CUDTException& e) // Interceptor, just to change the state.
     {
         s->m_Status = SRTS_OPENED;
+        s->core().m_bSynRecving = was_write_synch;
         throw e;
     }
 
+    s->core().m_bSynRecving = was_write_synch;
     // record peer address
     s->m_PeerAddr = target_addr;
 
     // CGuard destructor will delete cg and unlock s->m_ControlLock
-
     return 0;
 }
 
@@ -2221,19 +2234,8 @@ int CUDT::addSocketToGroup(SRTSOCKET socket, SRTSOCKET group)
     }
 
     CGuard cg(s->m_ControlLock);
-
-    // Check if the socket already is in the group
-    CUDTGroup::gli_t f = g->find(socket);
-    if (f != CUDTGroup::gli_NULL())
-    {
-        // XXX This is internal error. Report it, but continue
-        LOGC(mglog.Error, log << "IPE (non-fatal): the socket is in the group, but has no clue about it!");
-        s->m_IncludedGroup = g;
-        s->m_IncludedIter = f;
-        return 0;
-    }
-    s->m_IncludedGroup = g;
-    s->m_IncludedIter = g->add(g->prepareData(s));
+    bool fresh;
+    g->addSocket(s, Ref(fresh));
 
     return 0;
 }

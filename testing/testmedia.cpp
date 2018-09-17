@@ -1028,7 +1028,7 @@ bytevector SrtSource::GroupRead(size_t chunk)
         // Check if any packet from aheads was found with the monotonic
         // sequence, if so, return it now.
         if (!ahead_packet.empty())
-            return move(ahead_packet);
+            return ahead_packet;
     }
 
     // Setup epoll every time anew, the socket set
@@ -1048,9 +1048,9 @@ bytevector SrtSource::GroupRead(size_t chunk)
     for (;;)
     {
         // This loop should be normally passed once.
-        bool again = false;
+        //bool again = false;
 
-        bool any = false;
+        //bool any = false;
 
         // The group data contains information about the socket we want to use
         // for reading. Perform the e-polling.
@@ -1113,7 +1113,7 @@ bytevector SrtSource::GroupRead(size_t chunk)
             // Ok, we have the buffer, now check the sequence number.
             // If this is the first time we read it, take it as a good deal.
 
-            any = true;
+            //any = true;
             if (m_group_seqno == -1)
             {
                 m_group_seqno = mctrl.pktseq;
@@ -1130,13 +1130,13 @@ bytevector SrtSource::GroupRead(size_t chunk)
                     // was done before and reading was therefore prevented from.
                     m_group_ahead[id] = Ahead { move(data), mctrl.pktseq };
                     Verb() << "Socket @" << id << " jumps ahead to %" << mctrl.pktseq << " - AHEAD.";
-                    again = true;
+                    //again = true;
                 }
                 else if (seqdiff < 1)
                 {
                     // Behind packet. Discard
                     Verb() << "Socket @" << id << " %" << mctrl.pktseq << " already delivered - discarding";
-                    again = true;
+                    //again = true;
                 }
                 else
                 {

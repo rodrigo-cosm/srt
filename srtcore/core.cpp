@@ -2938,10 +2938,7 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
 
         // THIS socket is not yet member of the group. Simply take the first found
         // member.
-        synchronizeGroupTime(gp);
-
-        if (!gp->empty())
-            was_empty = false;
+        was_empty = !gp->synchronizeGroupTime(m_parent);
     }
     else
     {
@@ -2950,7 +2947,6 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
 
         HLOGC(mglog.Debug, log << "makeMePeerOf: no group has peer=%" << peergroup << " - creating new mirror group %" << gp->id());
     }
-
 
     if (was_empty)
     {
@@ -2961,35 +2957,54 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
     // Setting non-blocking reading for group socket.
     s->core().m_bSynRecving = false;
 
-    // Copy of addSocketToGroup. No idea how many parts could be common, not much.
+    return gp->addSocket(s, Ref(was_empty));
+}
 
-    // Check if the socket already is in the group
-    CUDTGroup::gli_t f = gp->find(m_SocketID);
+SRTSOCKET CUDTGroup::addSocket(CUDTSocket* s, ref_t<bool> r_fresh)
+{
+    int32_t sid = s->m_SocketID;
+
+    CGuard gl(m_GroupLock);
+
+    *r_fresh = m_Group.empty();
+
+    s->m_IncludedGroup = this;
+    CUDTGroup::gli_t f = find(sid);
     if (f != CUDTGroup::gli_NULL())
     {
         // XXX This is internal error. Report it, but continue
         // (A newly created socket from acceptAndRespond should not have any group membership yet)
         LOGC(mglog.Error, log << "IPE (non-fatal): the socket is in the group, but has no clue about it!");
-        s->m_IncludedGroup = gp;
         s->m_IncludedIter = f;
         return 0;
     }
 
-    s->m_IncludedGroup = gp;
-    s->m_IncludedIter = gp->add(gp->prepareData(s));
+    s->m_IncludedIter = add(prepareData(s));
 
-    return gp->id();
+    return id();
 }
 
-void CUDT::synchronizeGroupTime(CUDTGroup* gp)
+bool CUDTGroup::synchronizeGroupTime(CUDTSocket* ps)
 {
-    CGuard gl(*gp->exp_groupLock());
-    CUDTGroup::gli_t first = gp->begin();
-    if (first != gp->end())
+    CGuard gl(m_GroupLock);
+
+    // Find at least one socket that isn't you and is
+    // in the connected state. If none found, don't modify anything.
+    for (gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
     {
-        m_StartTime = first->ps->core().m_StartTime;
-        m_ullRcvPeerStartTime = first->ps->core().m_ullRcvPeerStartTime;
+        if (i == ps->m_IncludedIter)
+            continue;
+
+        if (i->laststatus != SRTS_CONNECTED)
+            continue;
+
+        ps->core().m_StartTime = i->ps->core().m_StartTime;
+        ps->core().m_ullRcvPeerStartTime = i->ps->core().m_ullRcvPeerStartTime;
+
+        return true;
     }
+
+    return false;
 }
 
 bool CUDTGroup::getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> r_mpeer, ref_t<uint64_t> r_st)
@@ -4161,23 +4176,27 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
     // acknowledge the management module.
     s_UDTUnited.connect_complete(m_SocketID);
 
-    // acknowledde any waiting epolls to write
-    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, true);
-
+    bool need_update_poll = true;
     CUDTGroup* g = m_parent->m_IncludedGroup;
     if (g)
     {
         // XXX this might require another check of group type.
         // For redundancy group, at least, update the status in the group.
-        g->resetStateOn(m_parent);
+        g->resetStateOn(m_parent, Ref(need_update_poll));
+        // need_update_poll might be set to false if there is
+        // at least one connected link in the group already.
     }
+
+    // acknowledde any waiting epolls to write
+    if (need_update_poll)
+        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, true);
 
     LOGC(mglog.Note, log << "Connection established to: " << SockaddrToString(m_PeerAddr));
 
     return CONN_ACCEPT;
 }
 
-void CUDTGroup::resetStateOn(CUDTSocket* sock)
+void CUDTGroup::resetStateOn(CUDTSocket* sock, ref_t<bool> r_need_update)
 {
     CGuard glock(m_GroupLock);
     if (!sock->m_IncludedGroup)
@@ -4185,13 +4204,25 @@ void CUDTGroup::resetStateOn(CUDTSocket* sock)
         // Was removed in the meantime, simply exit.
         // This should rather never happen (the group can't be closed
         // until the last socket is deleted).
+        *r_need_update = true;
         return;
     }
+
+    // Check if there is a connected socket here
+    bool already = false;
+    for (gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
+        if (i->laststatus == SRTS_CONNECTED)
+        {
+            already = true;
+            break;
+        }
 
     gli_t gi = sock->m_IncludedIter;
     gi->sndstate = CUDTGroup::GST_IDLE;
     gi->rcvstate = CUDTGroup::GST_IDLE;
     gi->laststatus = SRTS_CONNECTED;
+
+    *r_need_update = !already;
 }
 
 void CUDT::checkUpdateCryptoKeyLen(const char* loghdr, int32_t typefield)
@@ -9839,9 +9870,8 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
     // Add socket to the group.
     // Do it after setting all stored options, as some of them may
     // influence some group data.
-    CUDTGroup::gli_t f = g.add(g.prepareData(ns));
-    ns->m_IncludedIter = f;
-    ns->m_IncludedGroup = &g;
+    bool fresh;
+    g.addSocket(ns, Ref(fresh));
 
 #ifndef SRT_ENABLE_APP_READER
     ns->m_pUDT->m_cbPacketArrival.set(ns->m_pUDT, &CUDT::groupPacketArrival);
@@ -9890,6 +9920,7 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
         {
             g.syncWithSocket(ns->core());
         }
+        CUDTGroup::gli_t f = ns->m_IncludedIter;
 
         g.m_bOpened = true;
 
