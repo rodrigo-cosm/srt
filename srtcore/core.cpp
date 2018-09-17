@@ -2950,7 +2950,6 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
 
     if (was_empty)
     {
-        CGuard glock(*gp->exp_groupLock());
         gp->syncWithSocket(s->core());
     }
 
@@ -9813,7 +9812,7 @@ SRT_SOCKSTATUS CUDTGroup::getStatus()
 
 void CUDTGroup::syncWithSocket(const CUDT& core)
 {
-    // [[using locked(m_GroupLock)]];
+    CGuard locked(m_GroupLock);
 
     currentSchedSequence(core.ISN());
     setInitialRxSequence(core.m_iPeerISN);
@@ -9914,12 +9913,11 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
 
 
     {
-        CGuard grd(g.m_GroupLock);
-
         if (isn == 0)
         {
             g.syncWithSocket(ns->core());
         }
+        CGuard grd(g.m_GroupLock);
         CUDTGroup::gli_t f = ns->m_IncludedIter;
 
         g.m_bOpened = true;

@@ -329,6 +329,7 @@ public:
     CUDTGroup();
     ~CUDTGroup();
 
+private:
     static SocketData prepareData(CUDTSocket* s);
 
     gli_t add(SocketData data);
@@ -342,7 +343,6 @@ public:
 
     gli_t find(SRTSOCKET id)
     {
-        CGuard g(m_GroupLock);
         gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f == m_Group.end())
         {
@@ -351,10 +351,7 @@ public:
         return f;
     }
 
-    // NEED LOCKING
-    gli_t begin() { return m_Group.begin(); }
-    gli_t end() { return m_Group.end(); }
-
+public:
     // REMEMBER: the group spec should be taken from the socket
     // (set m_IncludedGroup to NULL and m_IncludedIter to grp->gli_NULL())
     // PRIOR TO calling this function.
@@ -419,7 +416,6 @@ public:
         return m_type == SRT_GTYPE_REDUNDANT;
     }
 
-    pthread_mutex_t* exp_groupLock() { return &m_GroupLock; }
     void addEPoll(int eid);
     void removeEPoll(int eid);
 
