@@ -8117,13 +8117,6 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
                      // UMSG_DROPREQ message when the agent realizes that the requested
                      // packet are not present in the buffer (preadte the send buffer).
                  }
-                 //
-                 // The peer will have to do the same, as a reaction on perceived
-                 // packet loss. When it recognizes that this initial screwing up
-                 // has happened, it should simply ignore the loss and go on.
-                 // ISN isn't being changed here - it doesn't make much sense now.
-                 setInitialSndSeq(CSeqNo::incseq(packet.m_iSeqNo), false);
-
              }
              else
              {
@@ -8326,9 +8319,19 @@ bool CUDT::overrideSndSeqNo(int32_t seq)
     // towards what is currently in m_iSndCurrSeqNo.
     int diff = CSeqNo::seqcmp(seq, m_iSndNextSeqNo);
     if (diff < 0 || diff > CSeqNo::m_iSeqNoTH)
+    {
+        LOGC(mglog.Error, log << "IPE: Overridding seq %" << seq << " DISCREPANCY against current next sched %" << m_iSndNextSeqNo);
         return false;
+    }
 
-    m_iSndNextSeqNo = seq;
+    //
+    // The peer will have to do the same, as a reaction on perceived
+    // packet loss. When it recognizes that this initial screwing up
+    // has happened, it should simply ignore the loss and go on.
+    // ISN isn't being changed here - it doesn't make much sense now.
+
+    setInitialSndSeq(seq);
+
     // m_iSndCurrSeqNo will be most likely lower than m_iSndNextSeqNo because
     // the latter is ahead with the number of packets already scheduled, but
     // not yet sent.
@@ -9453,7 +9456,7 @@ void CUDT::checkTimers()
     //}
 
     // VERY HEAVY LOGGING
-#if 1
+#if ENABLE_HEAVY_LOGGING & 1
     if (decision == "")
         decision = "NOTHING";
     HLOGC(mglog.Debug, log << CONID() << "checkTimer: ACTIVITIES PERFORMED: " << decision);
@@ -10160,7 +10163,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             CUDTSocket* ps = d->ps;
 
             // Lift the group lock for a while, to avoid possible deadlocks.
-            InvertedGuard ug(&m_GroupLock);
+            InvertedGuard ug(&m_GroupLock, "Group");
             stat = ps->core().sendmsg2(buf, len, r_mc);
         }
         catch (CUDTException& e)
@@ -10225,16 +10228,16 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (curseq != -1 && curseq != lastseq)
         {
             HLOGC(mglog.Debug, log << "CUDTGroup::send: socket @" << d->id
-                << ": override snd sequence " << lastseq
-                << " with " << curseq << " (diff by "
-                << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD");
+                << ": override snd sequence %" << lastseq
+                << " with %" << curseq << " (diff by "
+                << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD: " << BufferStamp(buf, len));
             d->ps->core().overrideSndSeqNo(curseq);
         }
         else
         {
             HLOGC(mglog.Debug, log << "CUDTGroup::send: socket @" << d->id
-                << ": sequence remains with original value: " << lastseq
-                << "; SENDING PAYLOAD");
+                << ": sequence remains with original value: %" << lastseq
+                << "; SENDING PAYLOAD " << BufferStamp(buf, len));
         }
 
         // Now send and check the status
@@ -10242,6 +10245,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         try
         {
+            InvertedGuard ug(&m_GroupLock, "Group");
             stat = d->ps->core().sendmsg2(buf, len, r_mc);
         }
         catch (CUDTException& e)
@@ -10258,7 +10262,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             // Note: this will override the sequence number
             // for all next iterations in this loop.
             curseq = mc.pktseq;
-            HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL, seq=" << curseq
+            HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL %" << curseq
                     << " MEMBER STATUS: RUNNING");
         }
 
@@ -10270,7 +10274,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     if (curseq != -1)
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: updating current scheduling sequence=" << curseq);
+        HLOGC(dlog.Debug, log << "CUDTGroup::send: updating current scheduling sequence %" << curseq);
         m_iLastSchedSeqNo = curseq;
     }
 
@@ -10278,11 +10282,11 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     for (vector<gli_t>::iterator i = wipeme.begin(); i != wipeme.end(); ++i)
     {
         gli_t d = *i;
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: BROKEN SOCKET " << d->id << " - CLOSING AND REMOVING.");
+        HLOGC(dlog.Debug, log << "CUDTGroup::send: BROKEN SOCKET @" << d->id << " - CLOSING AND REMOVING.");
         {
             CUDTSocket* ps = d->ps;
             // Lift the group lock for a while, to avoid possible deadlocks.
-            InvertedGuard ug(&m_GroupLock);
+            InvertedGuard ug(&m_GroupLock, "Group");
 
             // NOTE: This does inside: ps->removeFromGroup().
             // After this call, 'd' is no longer valid and *i is singular.
@@ -10383,7 +10387,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
-            InvertedGuard ug(&m_GroupLock);
+            InvertedGuard ug(&m_GroupLock, "Group");
 
             blst = srt_epoll_wait(eid,
                     NULL, NULL,  // IN/ACCEPT
@@ -11423,7 +11427,7 @@ void CUDTGroup::readInterceptorThread()
                     {
                         // Unlock the group lock for the time of locking RcvDataLock
                         // to avoid prospective deadlock.
-                        InvertedGuard un_glock(&m_GroupLock);
+                        InvertedGuard un_glock(&m_GroupLock, "Group");
 
                         HLOGC(tslog.Debug, log << "SYNC MODE: signaling data rx cv");
                         CGuard recv_gl(m_RcvDataLock, "rcvdata");
