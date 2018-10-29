@@ -27,6 +27,7 @@
 #include "netinet_any.h"
 #include "common.h"
 #include "api.h"
+#include "udt.h"
 
 #include "apputil.hpp"
 #include "socketoptions.hpp"
@@ -1091,6 +1092,16 @@ bool SrtSource::GroupCheckPacketAhead(bytevector& output)
     return status;
 }
 
+static void DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::string prefix)
+{
+    typedef set<SRTSOCKET> fset_t;
+    Verb() << prefix << " " << VerbNoEOL;
+    for (fset_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
+    {
+        Verb() << "@" << *i << " " << VerbNoEOL;
+    }
+}
+
 bytevector SrtSource::GroupRead(size_t chunk)
 {
     // Read the current group status. m_sock is here the group id.
@@ -1221,6 +1232,8 @@ RETRY_READING:
         if (d.status != SRTS_CONNECTED)
         {
             Verb() << "@" << d.id << "<pending> " << VerbNoEOL;
+            int modes = SRT_EPOLL_OUT | SRT_EPOLL_ERR;
+            srt_epoll_add_usock(srt_epoll, d.id, &modes);
             continue; // don't read over a failed or pending socket
         }
 
@@ -1274,20 +1287,33 @@ RETRY_READING:
     // with only immediate report, and read-readiness would have to
     // be done in background.
 
-    vector<SRTSOCKET> sready(size);
-    int ready_len = size;
+    SrtPollState sready;
 
+    // Poll on this descriptor until reading is available, indefinitely.
+    if (UDT::epoll_swait(srt_epoll, sready, -1))
     {
-        // Poll on this descriptor until reading is available, indefinitely.
-        if (srt_epoll_wait(srt_epoll, sready.data(), &ready_len, 0, 0, -1, 0, 0, 0, 0) == SRT_ERROR)
-        {
-            Error(UDT::getlasterror(), "srt_epoll_wait(srt_epoll, group)");
-        }
-        Verb() << "RDY: " << VerbNoEOL;
-        for (int i = 0; i < ready_len; ++i)
-            Verb() << "@" << sready[i] << " " << VerbNoEOL;
-        Verb() << "(total " << ready_len << ")";
+        Error(UDT::getlasterror(), "srt_epoll_wait(srt_epoll, group)");
     }
+    if (Verbose::on)
+    {
+        Verb() << "RDY: " << VerbNoEOL;
+        DisplayEpollResults(sready.rd(), "[R]");
+        DisplayEpollResults(sready.wr(), "[W]");
+        DisplayEpollResults(sready.ex(), "[E]");
+    }
+
+    typedef set<SRTSOCKET> fset_t;
+
+    // Handle sockets of pending connection and with errors.
+    broken = sready.ex();
+
+    // We don't do anything about sockets that have been configured to
+    // poll on writing (that is, pending for connection). What we need
+    // is that the epoll_swait call exit on that fact. Probably if this
+    // was the only socket reported, no broken and no read-ready, this
+    // will later check on output if still empty, if so, repeat the whole
+    // function. This write-ready socket will be there already in the
+    // connected state and will be added to read-polling.
 
     // Ok, now we need to have some extra qualifications:
     // 1. If a socket has no registry yet, we read anyway, just
@@ -1302,12 +1328,15 @@ RETRY_READING:
 
     int32_t next_seq = m_group_seqno;
 
-    for (size_t i = 0; i < size_t(ready_len); ++i)
+    // If this set is empty, it won't roll even once, therefore output
+    // will be surely empty. This will be checked then same way as when
+    // reading from every socket resulted in error.
+    for (fset_t::const_iterator i = sready.rd().begin(); i != sready.rd().end(); ++i)
     {
         // Check if this socket is in aheads
         // If so, don't read from it, wait until the ahead is flushed.
 
-        SRTSOCKET id = sready[i];
+        SRTSOCKET id = *i;
         ReadPos* p = nullptr;
         auto pe = m_group_positions.find(id);
         if (pe != m_group_positions.end())

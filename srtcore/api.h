@@ -219,7 +219,6 @@ public:
    int epoll_remove_ssock(const int eid, const SYSSOCKET s);
    int epoll_update_usock(const int eid, const SRTSOCKET u, const int* events = NULL);
    int epoll_update_ssock(const int eid, const SYSSOCKET s, const int* events = NULL);
-   int epoll_wait(const int eid, std::set<SRTSOCKET>* readfds, std::set<SRTSOCKET>* writefds, int64_t msTimeOut, std::set<SYSSOCKET>* lrfds = NULL, std::set<SYSSOCKET>* lwfds = NULL);
    int epoll_release(const int eid);
 
       /// record the UDT exception.
@@ -282,7 +281,7 @@ public:
        return NULL;
    }
 
-   CEPoll& epolmg() { return m_EPoll; }
+   CEPoll& epollmg() { return m_EPoll; }
 
 private:
 //   void init();

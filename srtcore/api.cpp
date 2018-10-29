@@ -62,6 +62,7 @@ modified by
 #include "netinet_any.h"
 #include "api.h"
 #include "core.h"
+#include "epoll.h"
 #include "logging.h"
 #include "threadname.h"
 #include "srt.h"
@@ -1871,17 +1872,6 @@ int CUDTUnited::epoll_remove_ssock(const int eid, const SYSSOCKET s)
    return m_EPoll.remove_ssock(eid, s);
 }
 
-int CUDTUnited::epoll_wait(
-   const int eid,
-   set<SRTSOCKET>* readfds,
-   set<SRTSOCKET>* writefds,
-   int64_t msTimeOut,
-   set<SYSSOCKET>* lrfds,
-   set<SYSSOCKET>* lwfds)
-{
-   return m_EPoll.wait(eid, readfds, writefds, msTimeOut, lrfds, lwfds);
-}
-
 int CUDTUnited::epoll_release(const int eid)
 {
    return m_EPoll.release(eid);
@@ -3322,8 +3312,8 @@ int CUDT::epoll_wait(
 {
    try
    {
-      return s_UDTUnited.epoll_wait(
-         eid, readfds, writefds, msTimeOut, lrfds, lwfds);
+      return s_UDTUnited.epollmg().wait(
+              eid, readfds, writefds, msTimeOut, lrfds, lwfds);
    }
    catch (CUDTException e)
    {
@@ -3337,6 +3327,28 @@ int CUDT::epoll_wait(
       s_UDTUnited.setError(new CUDTException(MJ_UNKNOWN, MN_NONE, 0));
       return ERROR;
    }
+}
+
+int CUDT::epoll_swait(const int eid, SrtPollState& socks, int64_t msTimeOut)
+{
+   try
+   {
+       const CEPollDesc& d = s_UDTUnited.epollmg().access(eid);
+       return s_UDTUnited.epollmg().swait(d, socks, msTimeOut);
+   }
+   catch (CUDTException e)
+   {
+      s_UDTUnited.setError(new CUDTException(e));
+      return ERROR;
+   }
+   catch (std::exception& ee)
+   {
+      LOGC(mglog.Fatal, log << "epoll_wait: UNEXPECTED EXCEPTION: "
+         << typeid(ee).name() << ": " << ee.what());
+      s_UDTUnited.setError(new CUDTException(MJ_UNKNOWN, MN_NONE, 0));
+      return ERROR;
+   }
+
 }
 
 int CUDT::epoll_release(const int eid)
@@ -3690,6 +3702,11 @@ int epoll_wait(
    set<SYSSOCKET>* lwfds)
 {
    return CUDT::epoll_wait(eid, readfds, writefds, msTimeOut, lrfds, lwfds);
+}
+
+int epoll_swait(int eid, SrtPollState& st, int64_t msTimeOut)
+{
+    return CUDT::epoll_swait(eid, st, msTimeOut);
 }
 
 /*

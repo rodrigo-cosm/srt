@@ -58,21 +58,17 @@ modified by
 #include <set>
 #include "udt.h"
 
-
-struct CEPollDesc
+struct CEPollDesc: public SrtPollState
 {
-   int m_iID;                                // epoll ID
-   std::set<SRTSOCKET> m_sUDTSocksOut;       // set of UDT sockets waiting for write events
-   std::set<SRTSOCKET> m_sUDTSocksIn;        // set of UDT sockets waiting for read events
-   std::set<SRTSOCKET> m_sUDTSocksEx;        // set of UDT sockets waiting for exceptions
+    int m_iID;                                // epoll ID
+    std::set<SRTSOCKET> m_sUDTSocksOut;       // set of UDT sockets waiting for write events
+    std::set<SRTSOCKET> m_sUDTSocksIn;        // set of UDT sockets waiting for read events
+    std::set<SRTSOCKET> m_sUDTSocksEx;        // set of UDT sockets waiting for exceptions
 
-   int m_iLocalID;                           // local system epoll ID
-   std::set<SYSSOCKET> m_sLocals;            // set of local (non-UDT) descriptors
-
-   std::set<SRTSOCKET> m_sUDTWrites;         // UDT sockets ready for write
-   std::set<SRTSOCKET> m_sUDTReads;          // UDT sockets ready for read
-   std::set<SRTSOCKET> m_sUDTExcepts;        // UDT sockets with exceptions (connection broken, etc.)
+    int m_iLocalID;                           // local system epoll ID
+    std::set<SYSSOCKET> m_sLocals;            // set of local (non-UDT) descriptors
 };
+
 
 class CEPoll
 {
@@ -153,6 +149,8 @@ public: // for CUDTUnited API
 
    int wait(const int eid, std::set<SRTSOCKET>* readfds, std::set<SRTSOCKET>* writefds, int64_t msTimeOut, std::set<SYSSOCKET>* lrfds, std::set<SYSSOCKET>* lwfds);
 
+   int swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut);
+
       /// close and release an EPoll.
       /// @param [in] eid EPoll ID.
       /// @return 0 if success, otherwise an error number.
@@ -169,6 +167,8 @@ public: // for CUDT to acknowledge IO status
       /// @return 0 if success, otherwise an error number
 
    int update_events(const SRTSOCKET& uid, std::set<int>& eids, int events, bool enable);
+
+   const CEPollDesc& access(int eid);
 
 private:
    int m_iIDSeed;                            // seed to generate a new ID

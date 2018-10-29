@@ -573,6 +573,70 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
    return 0;
 }
 
+const CEPollDesc& CEPoll::access(int eid)
+{
+    CGuard lg(m_EPollLock, "EPoll");
+
+    map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
+    if (p == m_mPolls.end())
+    {
+        LOGC(mglog.Error, log << "EID:" << eid << " INVALID.");
+        throw CUDTException(MJ_NOTSUP, MN_EIDINVAL, 0);
+    }
+
+    return p->second;
+}
+
+int CEPoll::swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut)
+{
+    {
+        CGuard lg(m_EPollLock, "EPoll");
+        if (d.m_sUDTSocksIn.empty() && d.m_sUDTSocksOut.empty() && msTimeOut < 0)
+        {
+            // no socket is being monitored, this may be a deadlock
+            LOGC(mglog.Error, log << "EID:" << d.m_iID << " no sockets to check, this would deadlock");
+            throw CUDTException(MJ_NOTSUP, MN_EEMPTY, 0);
+        }
+    }
+
+    st.clear();
+
+    int total = 0;
+
+    int64_t entertime = CTimer::getTime();
+    while (true)
+    {
+        {
+            // Not extracting separately because this function is
+            // for internal use only and we state that the eid could
+            // not be deleted or changed the target CEPollDesc in the
+            // meantime.
+
+            // Here we only prevent the pollset be updated simultaneously
+            // with unstable reading. 
+            CGuard lg(m_EPollLock, "EPoll");
+            st = d;
+        }
+
+        total = st.rd().size() + st.wr().size() + st.ex().size();
+        if (total > 0)
+            return total;
+
+        if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
+        {
+            HLOGC(mglog.Debug, log << "EID:" << d.m_iID << ": TIMEOUT.");
+            throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
+        }
+
+#if (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
+#else
+        CTimer::waitForEvent();
+#endif
+    }
+
+    return 0;
+}
+
 int CEPoll::release(const int eid)
 {
    CGuard pg(m_EPollLock, "EPoll");
