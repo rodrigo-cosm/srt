@@ -141,6 +141,8 @@ int CEPoll::clear_usocks(int eid)
    d.m_sUDTSocksOut.clear();
    d.m_sUDTSocksEx.clear();
 
+   d.clear_state();
+
    return 0;
 }
 
@@ -599,7 +601,7 @@ int CEPoll::swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut)
         }
     }
 
-    st.clear();
+    st.clear_state();
 
     int total = 0;
 
@@ -615,12 +617,13 @@ int CEPoll::swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut)
             // Here we only prevent the pollset be updated simultaneously
             // with unstable reading. 
             CGuard lg(m_EPollLock, "EPoll");
-            st = d;
+            total = d.rd().size() + d.wr().size() + d.ex().size();
+            if (total > 0)
+            {
+                st = d;
+                return total;
+            }
         }
-
-        total = st.rd().size() + st.wr().size() + st.ex().size();
-        if (total > 0)
-            return total;
 
         if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
         {

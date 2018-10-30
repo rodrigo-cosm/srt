@@ -2957,14 +2957,6 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
 
         HLOGC(mglog.Debug, log << "makeMePeerOf: group for peer=$" << peergroup << " found: $" << gp->id());
 
-        // Time synchronization. If there already is a group, there's
-        // at least one socket here. Copy its m_StartTime (time base for sending)
-        // and m_ullRcvPeerStartTime (time base for receiving).
-
-        // THIS socket is not yet member of the group. Simply take the first found
-        // member.
-        synchronizeGroupTime(gp);
-
         if (!gp->empty())
             was_empty = false;
     }
@@ -3010,11 +3002,33 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
 void CUDT::synchronizeGroupTime(CUDTGroup* gp)
 {
     CGuard gl(*gp->exp_groupLock(), "group");
-    CUDTGroup::gli_t first = gp->begin();
-    if (first != gp->end())
+
+    // We have blocked here the process of connecting a new
+    // socket and adding anything new to the group, so no such
+    // thing may happen in the meantime.
+    uint64_t start_time, peer_start_time;
+
+    start_time = m_StartTime;
+    peer_start_time = m_ullRcvPeerStartTime;
+
+    if (!gp->applyGroupTime(Ref(start_time), Ref(peer_start_time)))
     {
-        m_StartTime = first->ps->core().m_StartTime;
-        m_ullRcvPeerStartTime = first->ps->core().m_ullRcvPeerStartTime;
+        HLOGC(mglog.Debug, log << "synchronizeGroupTime: @" << m_SocketID
+                << " DERIVED: ST="
+                << logging::FormatTime(m_StartTime) << " -> "
+                << logging::FormatTime(start_time) << " PST="
+                << logging::FormatTime(m_ullRcvPeerStartTime) << " -> "
+                << logging::FormatTime(peer_start_time));
+        m_StartTime = start_time;
+        m_ullRcvPeerStartTime = peer_start_time;
+    }
+    else
+    {
+        // This was the first connected socket and it defined start time.
+        HLOGC(mglog.Debug, log << "synchronizeGroupTime: @" << m_SocketID
+                << " DEFINED: ST="
+                << logging::FormatTime(m_StartTime)
+                << " PST=" << logging::FormatTime(m_ullRcvPeerStartTime));
     }
 }
 
@@ -4157,6 +4171,19 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
             return CONN_REJECT;
     }
 
+    {
+        CGuard cl(s_UDTUnited.m_GlobControlLock, "GlobControl");
+        CUDTGroup* g = m_parent->m_IncludedGroup;
+        if (g)
+        {
+            // This is the last moment when this can be done.
+            // The updateAfterSrtHandshake call will copy the receiver
+            // start time to the receiver buffer data, so the correct
+            // value must be set before this happens.
+            synchronizeGroupTime(g);
+        }
+    }
+
     updateAfterSrtHandshake(m_ConnRes.m_iVersion);
     CInfoBlock ib;
     ib.m_iFamily = m_PeerAddr.family();
@@ -4935,6 +4962,21 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
        // socket should be deleted.
        hs->m_iReqType = URQ_ERROR_REJECT;
        throw CUDTException(MJ_SETUP, MN_REJECTED, 0);
+   }
+
+   // Synchronize the time NOW because the following function is about
+   // to use the start time to pass it to the receiver buffer data.
+   {
+       CGuard cl(s_UDTUnited.m_GlobControlLock, "GlobControl");
+       CUDTGroup* g = m_parent->m_IncludedGroup;
+       if (g)
+       {
+           // This is the last moment when this can be done.
+           // The updateAfterSrtHandshake call will copy the receiver
+           // start time to the receiver buffer data, so the correct
+           // value must be set before this happens.
+           synchronizeGroupTime(g);
+       }
    }
 
    updateAfterSrtHandshake(m_ConnRes.m_iVersion);
@@ -7840,6 +7882,8 @@ void CUDT::updateSrtRcvSettings()
     // the packet can be retrieved from the buffer before its time to play comes
     // (unlike in normal situation when reading directly from socket), however
     // its time to play shall be properly defined.
+
+    // XXX m_bGroupTsbPd is ignored with SRT_ENABLE_APP_READER
     if (m_bTsbPd || m_bGroupTsbPd)
     {
         /* We are TsbPd receiver */
@@ -7847,10 +7891,11 @@ void CUDT::updateSrtRcvSettings()
         m_pRcvBuffer->setRcvTsbPdMode(m_ullRcvPeerStartTime, m_iTsbPdDelay_ms * 1000);
         CGuard::leaveCS(m_RecvLock, "recv");
 
-        HLOGF(mglog.Debug,  "AFTER HS: Set Rcv TsbPd mode%s: delay=%u.%03u secs",
+        HLOGF(mglog.Debug,  "AFTER HS: Set Rcv TsbPd mode%s: delay=%u.%03us RCV START: %s",
                 (m_bGroupTsbPd ? " (AS GROUP MEMBER)" : ""),
                 m_iTsbPdDelay_ms/1000,
-                m_iTsbPdDelay_ms%1000);
+                m_iTsbPdDelay_ms%1000,
+                logging::FormatTime(m_ullRcvPeerStartTime).c_str());
     }
     else
     {
@@ -7869,9 +7914,10 @@ void CUDT::updateSrtSndSettings()
          * For sender to apply Too-Late Packet Drop
          * option (m_bTLPktDrop) must be enabled and receiving peer shall support it
          */
-        HLOGF(mglog.Debug,  "AFTER HS: Set Snd TsbPd mode %s: delay=%d.%03d secs",
-                m_bPeerTLPktDrop ? "with TLPktDrop" : "without TLPktDrop",
-                m_iPeerTsbPdDelay_ms/1000, m_iPeerTsbPdDelay_ms%1000);
+        HLOGF(mglog.Debug,  "AFTER HS: Set Snd TsbPd mode %s TLPktDrop: delay=%d.%03ds START TIME: %s",
+                m_bPeerTLPktDrop ? "with" : "without",
+                m_iPeerTsbPdDelay_ms/1000, m_iPeerTsbPdDelay_ms%1000,
+                logging::FormatTime(m_StartTime).c_str());
     }
     else
     {
@@ -9843,6 +9889,8 @@ CUDTGroup::CUDTGroup():
         m_bTLPktDrop(true),
         m_iTsbPdDelay_us(0),
         m_iRcvTimeOut(-1),
+        m_StartTime(0),
+        m_RcvPeerStartTime(0),
 #ifndef SRT_ENABLE_APP_READER
         m_RcvInterceptorThread(),
         m_Providers(0), // Will be set later in CUDTGroup::add

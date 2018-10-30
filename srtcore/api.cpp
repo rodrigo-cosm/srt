@@ -597,7 +597,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
         {
             if (gi->laststatus == SRTS_CONNECTED)
             {
-                HLOGC(mglog.Debug, log << "Found another connected socket in the group: @"
+                HLOGC(mglog.Debug, log << "Found another connected socket in the group: $"
                         << gi->id << " - socket will be NOT given up for accepting");
                 should_submit_to_accept = false;
                 break;
@@ -1299,14 +1299,6 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
         // -> C(Snd|Rcv)Queue::init
         // -> pthread_create(...C(Snd|Rcv)Queue::worker...)
         s->m_Status = SRTS_OPENED;
-
-        if (pg)
-        {
-            // This overrides the value of m_StartTime
-            // and m_ullRcvPeerStartTime before this socket sends
-            // or receives anything.
-            s->m_pUDT->synchronizeGroupTime(pg);
-        }
     }
     else if (s->m_Status != SRTS_OPENED)
         throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
@@ -3334,6 +3326,7 @@ int CUDT::epoll_swait(const int eid, SrtPollState& socks, int64_t msTimeOut)
    try
    {
        const CEPollDesc& d = s_UDTUnited.epollmg().access(eid);
+       HLOGC(mglog.Debug, log << "epoll_swait polls on " << eid);
        return s_UDTUnited.epollmg().swait(d, socks, msTimeOut);
    }
    catch (CUDTException e)
@@ -3348,7 +3341,6 @@ int CUDT::epoll_swait(const int eid, SrtPollState& socks, int64_t msTimeOut)
       s_UDTUnited.setError(new CUDTException(MJ_UNKNOWN, MN_NONE, 0));
       return ERROR;
    }
-
 }
 
 int CUDT::epoll_release(const int eid)

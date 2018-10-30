@@ -502,6 +502,13 @@ private:
     int m_iRcvTimeOut;                           // receiving timeout in milliseconds
     int m_epoll;
 
+    // Start times for TsbPd. These times shall be synchronized
+    // between all sockets in the group. The first connected one
+    // defines it, others shall derive it. The value 0 decides if
+    // this has been already set.
+    uint64_t m_StartTime;
+    uint64_t m_RcvPeerStartTime;
+
 #ifndef SRT_ENABLE_APP_READER
     pthread_t m_RcvInterceptorThread;
 
@@ -562,6 +569,31 @@ public:
     void setInitialRxSequence(int32_t seq)
     {
         m_RcvBaseSeqNo = m_RcvReadySeqNo = m_RcvLatestSeqNo = CSeqNo::decseq(seq);
+    }
+
+    bool applyGroupTime(ref_t<uint64_t> r_start_time, ref_t<uint64_t> r_peer_start_time)
+    {
+        if (m_StartTime == 0)
+        {
+            // The first socket, defines the group time for the whole group.
+            m_StartTime = *r_start_time;
+            m_RcvPeerStartTime = *r_peer_start_time;
+            return true;
+        }
+
+        // Sanity check. This should never happen, fix the bug if found!
+        if (m_RcvPeerStartTime == 0)
+        {
+            LOGC(mglog.Error, log << "IPE: only StartTime is set, RcvPeerStartTime still 0!");
+            // Kinda fallback, but that's not too safe.
+            m_RcvPeerStartTime = *r_peer_start_time;
+        }
+
+        // The redundant connection, derive the times
+        *r_start_time = m_StartTime;
+        *r_peer_start_time = m_RcvPeerStartTime;
+
+        return false;
     }
 
 

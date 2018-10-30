@@ -134,11 +134,11 @@ private:
 
 public:
 
-    const std::set<SRTSOCKET>& rd() { return m_sUDTReads; }
-    const std::set<SRTSOCKET>& wr() { return m_sUDTWrites; }
-    const std::set<SRTSOCKET>& ex() { return m_sUDTExcepts; }
+    const std::set<SRTSOCKET>& rd() const { return m_sUDTReads; }
+    const std::set<SRTSOCKET>& wr() const { return m_sUDTWrites; }
+    const std::set<SRTSOCKET>& ex() const { return m_sUDTExcepts; }
 
-    void clear()
+    void clear_state()
     {
         m_sUDTReads.clear();
         m_sUDTWrites.clear();

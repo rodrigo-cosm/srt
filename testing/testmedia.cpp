@@ -1290,16 +1290,17 @@ RETRY_READING:
     SrtPollState sready;
 
     // Poll on this descriptor until reading is available, indefinitely.
-    if (UDT::epoll_swait(srt_epoll, sready, -1))
+    if (UDT::epoll_swait(srt_epoll, sready, -1) == SRT_ERROR)
     {
-        Error(UDT::getlasterror(), "srt_epoll_wait(srt_epoll, group)");
+        Error(UDT::getlasterror(), "UDT::epoll_swait(srt_epoll, group)");
     }
     if (Verbose::on)
     {
-        Verb() << "RDY: " << VerbNoEOL;
+        Verb() << "RDY: {" << VerbNoEOL;
         DisplayEpollResults(sready.rd(), "[R]");
         DisplayEpollResults(sready.wr(), "[W]");
         DisplayEpollResults(sready.ex(), "[E]");
+        Verb() << "} " << VerbNoEOL;
     }
 
     typedef set<SRTSOCKET> fset_t;
@@ -1376,7 +1377,7 @@ RETRY_READING:
                         {
                             int32_t pktseq = p->sequence;
                             int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_seqno);
-                            Verb() << ". %" << pktseq << " " << seqdiff << ")";
+                            Verb() << "! %" << pktseq << " " << seqdiff << ")";
                         }
                         else
                         {
