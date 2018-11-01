@@ -947,7 +947,7 @@ int CUDTUnited::connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const 
     // For a single socket, just do bind, then connect
 
     bind(s, source_addr);
-    return connectIn(s, target_addr, 0, 0);
+    return connectIn(s, target_addr, 0);
 }
 
 int CUDTUnited::connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn)
@@ -976,7 +976,7 @@ int CUDTUnited::connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t 
     if (!s)
         throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-    return connectIn(s, target_addr, forced_isn, 0);
+    return connectIn(s, target_addr, forced_isn);
 }
 
 int CUDTUnited::groupConnect(CUDTGroup* pg, const sockaddr_any& source_addr, SRT_SOCKGROUPDATA* targets, int arraysize)
@@ -1000,7 +1000,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, const sockaddr_any& source_addr, SRT
     SRTSOCKET retval = -1;
 
     int eid = -1;
-    int modes = SRT_EPOLL_CONNECT;
+    int modes = SRT_EPOLL_CONNECT | SRT_EPOLL_ERR;
     if (block_new_opened)
     {
         // Create this eid only to block-wait for the first
@@ -1098,7 +1098,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, const sockaddr_any& source_addr, SRT
         try
         {
             HLOGC(mglog.Debug, log << "groupConnect: connecting a new socket with ISN=" << isn);
-            connectIn(ns, target_addr, isn, &g);
+            connectIn(ns, target_addr, isn);
         }
         catch (CUDTException& e)
         {
@@ -1259,7 +1259,10 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, const sockaddr_any& source_addr, SRT
     }
     // Finished, delete epoll.
     if (eid != -1)
+    {
+        HLOGC(mglog.Debug, log << "connect FIRST IN THE GROUP finished, removing EID " << eid);
         srt_epoll_release(eid);
+    }
 
     // XXX This is wrong code probably, get that better.
     if (retval == -1)
@@ -1272,7 +1275,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, const sockaddr_any& source_addr, SRT
 }
 
 
-int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_t forced_isn, CUDTGroup* pg)
+int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_t forced_isn)
 {
     CGuard cg(s->m_ControlLock, "control");
 

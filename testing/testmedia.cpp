@@ -28,6 +28,7 @@
 #include "common.h"
 #include "api.h"
 #include "udt.h"
+#include "logging.h"
 
 #include "apputil.hpp"
 #include "socketoptions.hpp"
@@ -44,6 +45,7 @@ int transmit_bw_report = 0;
 unsigned transmit_stats_report = 0;
 size_t transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
 
+logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-test");
 
 string DirectionName(SRT_EPOLL_OPT direction)
 {
@@ -1092,14 +1094,17 @@ bool SrtSource::GroupCheckPacketAhead(bytevector& output)
     return status;
 }
 
-static void DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::string prefix)
+static string DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::string prefix)
 {
     typedef set<SRTSOCKET> fset_t;
-    Verb() << prefix << " " << VerbNoEOL;
+    ostringstream os;
+    os << prefix << " ";
     for (fset_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
     {
-        Verb() << "@" << *i << " " << VerbNoEOL;
+        os << "@" << *i << " ";
     }
+
+    return os.str();
 }
 
 bytevector SrtSource::GroupRead(size_t chunk)
@@ -1222,14 +1227,12 @@ RETRY_READING:
     // during the next time ahead check, after which they will become
     // horses.
 
-    // Setup epoll every time anew, the socket set might be updated.
-    srt_epoll_clear_usocks(srt_epoll);
     Verb() << "E(" << srt_epoll << ") " << VerbNoEOL;
 
     for (size_t i = 0; i < size; ++i)
     {
         SRT_SOCKGROUPDATA& d = m_group_data[i];
-        if (d.status != SRTS_CONNECTED)
+        if (d.status == SRTS_CONNECTING)
         {
             Verb() << "@" << d.id << "<pending> " << VerbNoEOL;
             int modes = SRT_EPOLL_OUT | SRT_EPOLL_ERR;
@@ -1237,9 +1240,22 @@ RETRY_READING:
             continue; // don't read over a failed or pending socket
         }
 
+        if (d.status >= SRTS_BROKEN)
+        {
+            broken.insert(d.id);
+        }
+
         if (broken.count(d.id))
         {
             Verb() << "@" << d.id << "<broken> " << VerbNoEOL;
+            continue;
+        }
+
+        if (d.status != SRTS_CONNECTED)
+        {
+            Verb() << "@" << d.id << "<idle:" << SockStatusStr(d.status) << "> " << VerbNoEOL;
+            // Sockets in this state are ignored. We are waiting until it
+            // achieves CONNECTING state, then it's added to write.
             continue;
         }
 
@@ -1260,6 +1276,10 @@ RETRY_READING:
 
         // Note also that about the fact that some links turn out to be
         // elephants we'll learn only after we try to poll and read them.
+
+        // Note that d.id might be a socket that was previously being polled
+        // on write, when it's attempting to connect, but now it's connected.
+        // This will update the socket with the new event set.
 
         int modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
         srt_epoll_add_usock(srt_epoll, d.id, &modes);
@@ -1296,12 +1316,18 @@ RETRY_READING:
     }
     if (Verbose::on)
     {
-        Verb() << "RDY: {" << VerbNoEOL;
-        DisplayEpollResults(sready.rd(), "[R]");
-        DisplayEpollResults(sready.wr(), "[W]");
-        DisplayEpollResults(sready.ex(), "[E]");
-        Verb() << "} " << VerbNoEOL;
+        Verb() << "RDY: {"
+            << DisplayEpollResults(sready.rd(), "[R]")
+            << DisplayEpollResults(sready.wr(), "[W]")
+            << DisplayEpollResults(sready.ex(), "[E]")
+            << "} " << VerbNoEOL;
+
     }
+
+    LOGC(applog.Debug, log << "epoll_swait: "
+            << DisplayEpollResults(sready.rd(), "[R]")
+            << DisplayEpollResults(sready.wr(), "[W]")
+            << DisplayEpollResults(sready.ex(), "[E]"));
 
     typedef set<SRTSOCKET> fset_t;
 
@@ -1507,6 +1533,11 @@ RETRY_READING:
         Error("All sockets broken");
     }
 
+    if (Verbose::on && !broken.empty())
+    {
+        Verb() << "BROKEN: " << Printable(broken) << " - removing";
+    }
+
     // Now remove all broken sockets from aheads, if any.
     // Even if they have already delivered a packet.
     for (SRTSOCKET d: broken)
@@ -1617,7 +1648,7 @@ RETRY_READING:
             }
             else
             {
-                Verb() << "ONLY BROKEN WERE REPORTED. Re-polling.";
+                Verb() << "NO LINKS reported any fresher packet. Re-polling.";
             }
         }
         goto RETRY_READING;
@@ -1649,6 +1680,13 @@ RETRY_READING:
         {
             have_ready = true;
         }
+    }
+
+    if (have_ready || have_connectors)
+    {
+        Verb() << "(still have: " << (have_ready ? "+" : "-") << "ready, "
+            << (have_connectors ? "+" : "-") << "conenctors).";
+        goto RETRY_READING;
     }
 
     if (have_ready)

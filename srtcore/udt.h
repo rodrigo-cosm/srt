@@ -125,7 +125,11 @@ typedef std::set<SRTSOCKET> ud_set;
 // This is for the new poll method, also C++ only.
 struct SrtPollState
 {
-private:
+    // Must block private because these fields will be used
+    // by CEPollET<> template and the only way to friend it
+    // would be to announce all instantiations here. This would
+    // be both too noisy and exposing private definitions here.
+//private:
     std::set<SRTSOCKET> m_sUDTWrites;         // UDT sockets ready for write
     std::set<SRTSOCKET> m_sUDTReads;          // UDT sockets ready for read
     std::set<SRTSOCKET> m_sUDTExcepts;        // UDT sockets with exceptions (connection broken, etc.)

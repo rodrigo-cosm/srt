@@ -69,6 +69,25 @@ struct CEPollDesc: public SrtPollState
     std::set<SYSSOCKET> m_sLocals;            // set of local (non-UDT) descriptors
 };
 
+// Type-to-constant binder
+template <int event_type>
+class CEPollET;
+
+#define CEPOLL_BIND(event_type, subscriber, eventsink) \
+template<> \
+class CEPollET<event_type> \
+{ \
+public: \
+    static std::set<SRTSOCKET> CEPollDesc::*subscribers() { return &CEPollDesc:: subscriber; } \
+    static std::set<SRTSOCKET> CEPollDesc::*eventsinks() { return &CEPollDesc:: eventsink; } \
+}
+
+CEPOLL_BIND(SRT_EPOLL_IN, m_sUDTSocksIn, m_sUDTReads);
+CEPOLL_BIND(SRT_EPOLL_OUT, m_sUDTSocksOut, m_sUDTWrites);
+CEPOLL_BIND(SRT_EPOLL_ERR, m_sUDTSocksEx, m_sUDTExcepts);
+
+#undef CEPOLL_BIND
+
 
 class CEPoll
 {
