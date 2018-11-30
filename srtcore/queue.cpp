@@ -1015,7 +1015,11 @@ void* CRcvQueue::worker(void* param)
    CUnit* unit = 0;
    while (!self->m_bClosing)
    {
-       if ( self->worker_RetrieveUnit(id, unit, &sa) )
+       LOGP(perflog.Debug, "worker_RetrieveUnit - START");
+       bool isread = self->worker_RetrieveUnit(id, unit, &sa);
+       LOGC(perflog.Debug) << "worker_RetrieveUnit - FINISHED. return=" << isread << ", " << (isread ? "RETRIEVED" : "AGAIN");
+
+       if ( isread )
        {
            if ( id < 0 )
            {
@@ -1028,6 +1032,7 @@ void* CRcvQueue::worker(void* param)
            // Note to rendezvous connection. This can accept:
            // - ID == 0 - take the first waiting rendezvous socket
            // - ID > 0  - find the rendezvous socket that has this ID.
+           LOGC(perflog.Debug) << "PROCESSING PACKET: START";
            if (id == 0)
            {
                // ID 0 is for connection request, which should be passed to the listening socket or rendezvous sockets
@@ -1040,9 +1045,11 @@ void* CRcvQueue::worker(void* param)
                // - a socket connected to a peer
                self->worker_ProcessAddressedPacket(id, unit, &sa);
            }
+           LOGC(perflog.Debug) << "PROCESSING PACKET: END";
        }
 
 //TIMER_CHECK:
+       LOGC(perflog.Debug) << "TIMER CHECK: START";
        // take care of the timing event for all UDT sockets
 
        uint64_t currtime;
@@ -1069,9 +1076,12 @@ void* CRcvQueue::worker(void* param)
 
            ul = self->m_pRcvUList->m_pUList;
        }
+       LOGC(perflog.Debug) << "TIMER CHECK: END. DOING updateConnStatus";
 
        // Check connection requests status for all sockets in the RendezvousQueue.
        self->m_pRendezvousQueue->updateConnStatus();
+       LOGC(perflog.Debug) << "TIMER CHECK: END. updateConnStatus FINISHED. LOOP ROLLING.";
+
    }
 
    /*

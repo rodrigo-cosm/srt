@@ -104,6 +104,7 @@ logging::Logger mglog(SRT_LOGFA_CONTROL, &logger_config, "SRT.c");
 logging::Logger dlog(SRT_LOGFA_DATA, &logger_config, "SRT.d");
 logging::Logger tslog(SRT_LOGFA_TSBPD, &logger_config, "SRT.t");
 logging::Logger rxlog(SRT_LOGFA_REXMIT, &logger_config, "SRT.r");
+logging::Logger perflog(SRT_LOGFA_PERF, &logger_config, "SRT.p");
 
 CUDTUnited CUDT::s_UDTUnited;
 

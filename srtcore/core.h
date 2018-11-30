@@ -80,7 +80,8 @@ extern logging::Logger
     mglog,
     dlog,
     tslog,
-    rxlog;
+    rxlog,
+    perflog;
 
 
 
