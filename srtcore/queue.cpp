@@ -1085,7 +1085,9 @@ void* CRcvQueue::worker(void* param)
    while (!self->m_bClosing)
    {
        bool have_received = false;
+       HLOGP(perflog.Debug, "worker_RetrieveUnit - START");
        EReadStatus rst = self->worker_RetrieveUnit(Ref(id), Ref(unit), &sa);
+       HLOGC(perflog.Debug, log << "worker_RetrieveUnit - FINISHED. return=" << rst << ", " << (rst ? (rst == -1 ? "ERROR" : "AGAIN") : "RETRIEVED"));
        if (rst == RST_OK)
        {
            if ( id < 0 )
@@ -1103,6 +1105,7 @@ void* CRcvQueue::worker(void* param)
            // Note to rendezvous connection. This can accept:
            // - ID == 0 - take the first waiting rendezvous socket
            // - ID > 0  - find the rendezvous socket that has this ID.
+           HLOGC(perflog.Debug, log << "PROCESSING PACKET: START");
            if (id == 0)
            {
                // ID 0 is for connection request, which should be passed to the listening socket or rendezvous sockets
@@ -1115,6 +1118,7 @@ void* CRcvQueue::worker(void* param)
                // - a socket connected to a peer
                cst = self->worker_ProcessAddressedPacket(id, unit, &sa);
            }
+           HLOGC(perflog.Debug, log << "PROCESSING PACKET: END");
            HLOGC(mglog.Debug, log << self->CONID() << "worker: result for the unit: " << ConnectStatusStr(cst));
            if (cst == CONN_AGAIN)
            {
@@ -1143,6 +1147,7 @@ void* CRcvQueue::worker(void* param)
        }
        // OTHERWISE: this is an "AGAIN" situation. No data was read, but the process should continue.
 
+       HLOGC(perflog.Debug, log << "TIMER CHECK: START");
 
        // take care of the timing event for all UDT sockets
        uint64_t currtime_tk;
@@ -1177,6 +1182,8 @@ void* CRcvQueue::worker(void* param)
                    << " id=" << id << " pkt-payload-size=" << unit->m_Packet.getLength());
        }
 
+       HLOGC(perflog.Debug, log << "TIMER CHECK: END. DOING updateConnStatus");
+
        // Check connection requests status for all sockets in the RendezvousQueue.
        // Pass the connection status from the last call of:
        // worker_ProcessAddressedPacket --->
@@ -1184,6 +1191,7 @@ void* CRcvQueue::worker(void* param)
        // CUDT::processAsyncConnectResponse --->
        // CUDT::processConnectResponse 
        self->m_pRendezvousQueue->updateConnStatus(rst, cst, unit->m_Packet);
+       HLOGC(perflog.Debug, log << "TIMER CHECK: END. updateConnStatus FINISHED. LOOP ROLLING.");
 
        // XXX updateConnStatus may have removed the connector from the list,
        // however there's still m_mBuffer in CRcvQueue for that socket to care about.
