@@ -174,7 +174,7 @@ set<logging::LogFA> ParseLogFA(string fa)
     if ( fa == "" )
         return fas;
 
-    static string names [] = { "general", "bstats", "control", "data", "tsbpd", "rexmit" };
+    static string names [] = { "general", "bstats", "control", "data", "tsbpd", "rexmit", "", "perf" };
     size_t names_s = sizeof (names)/sizeof (names[0]);
 
     if ( fa == "all" )
