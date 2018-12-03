@@ -427,7 +427,7 @@ int main( int argc, char** argv )
     bidirectional = Option("no", "2", "rw", "bidirectional") != "no";
 
     string loglevel = Option("error", "loglevel");
-    string logfa = Option("general", "logfa");
+    string logfa = Option("", "logfa");
     string logfile = Option("", "logfile");
     srt_maxlossttl = stoi(Option("0", "ttl", "max-loss-delay"));
     stats_report_freq = stoi(Option("0", "s", "stats", "stats-report-frequency"), 0, 0);
@@ -437,9 +437,12 @@ int main( int argc, char** argv )
     std::ofstream logfile_stream; // leave unused if not set
 
     srt_setloglevel(ParseLogLevel(loglevel));
-    set<logging::LogFA> fas = ParseLogFA(logfa);
-    for (set<logging::LogFA>::iterator i = fas.begin(); i != fas.end(); ++i)
-        srt_addlogfa(*i);
+    if (logfa != "")
+    {
+        set<logging::LogFA> fas = ParseLogFA(logfa);
+        vector<int> falist(fas.begin(), fas.end());
+        srt_resetlogfa(falist.data(), falist.size());
+    }
 
     char NAME[] = "SRTLIB";
     if ( internal_log )
