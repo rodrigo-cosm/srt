@@ -448,6 +448,7 @@ MafReadDir(srtcore filelist.maf
 	SOURCES SOURCES_srt
 	PUBLIC_HEADERS HEADERS_srt
 	PROTECTED_HEADERS HEADERS_srt
+    PRIVATE_HEADERS HEADERS_srt
 )
 
 # Auto generated version file and add it to the HEADERS_srt list.
@@ -770,6 +771,9 @@ if ( ENABLE_CXX11 )
 		srt_add_testprogram(srt-test-file)
 		srt_make_application(srt-test-file)
 
+        srt_add_testprogram(srt-test-folder)
+		srt_make_application(srt-test-folder)
+
 		srt_add_testprogram(srt-test-relay)
 		srt_make_application(srt-test-relay)
 		target_compile_definitions(srt-test-relay PUBLIC -DSRT_ENABLE_VERBOSE_LOCK)
@@ -805,7 +809,7 @@ if (ENABLE_UNITTESTS)
 		${PROJECT_BINARY_DIR}/googletest
 	)
 
-	srt_add_program(test_srt test/test_buffer.cpp test/test_connection_timeout.cpp)
+	srt_add_program(test_srt test/test_buffer.cpp test/test_connection_timeout.cpp test/test_serial_transmission.cpp)
 	srt_make_application(test_srt)
 
 	target_link_libraries(
