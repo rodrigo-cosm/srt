@@ -80,16 +80,16 @@ int main( int argc, char** argv )
     */
 
     vector<string> args = params[""];
-    if ( args.size() < 2 )
+    if (args.size() < 2)
     {
         cerr << "Usage: " << argv[0] << " <source> <target>\n";
-        cerr << "Example (receiver):\n   " << argv[0] << " srt://:4200 file://.\n";
-        cerr << "   will receive the streaming on port 4200 of the localhost and wtire to the current forder.\n";
-        cerr << "Example (sender):\n   " << argv[0] << "file://folder_to_send srt://192.168.0.102:4200\n";
-        cerr << "   will send the contents of the folder_to_send on port 4200 of the 192.168.0.102.\n";
-        cerr << "Example (sender with bandwidth limit):\n   " << argv[0] << "file://folder_to_send srt://192.168.0.102:4200?maxbw=625000\n";
-        cerr << "   will send the contents of the folder_to_send on port 4200 of the 192.168.0.102\n";
-        cerr << "   with a bitrate limit of 5 Mbps (625000 bytes/s).\n";
+        cerr << "Example (receiver):\n   srt_test_folder srt://:4200 file://.\n";
+        cerr << "      will receive the streaming on port 4200 of the localhost and wtire to the current forder.\n";
+        cerr << "Example (sender):\n   srt_test_folder file://folder_to_send srt://192.168.0.102:4200\n";
+        cerr << "      will send the contents of the folder_to_send on port 4200 of the 192.168.0.102.\n";
+        cerr << "Example (sender with bandwidth limit):\n   srt_test_folder file://folder_to_send srt://192.168.0.102:4200?maxbw=625000\n";
+        cerr << "      will send the contents of the folder_to_send on port 4200 of the 192.168.0.102\n";
+        cerr << "      with a bitrate limit of 5 Mbps (625000 bytes/s).\n";
 
         return 1;
     }
@@ -212,19 +212,24 @@ bool TransmitFile(const char* filename, const SRTSOCKET ss, vector<char> &buf)
         return true;
     }
 
+    const chrono::steady_clock::time_point time_start = chrono::steady_clock::now();
+    size_t file_size = 0;
+
     Verb() << "Transmitting '" << filename;
 
-    /* 1 byte     string    1 byte
+    /*   1 byte      string    1 byte
      * ------------------------------------------------
-     * | is_eof | Filename | 0 | Payload
+     * | ......EF | Filename | 0     | Payload
      * ------------------------------------------------
+     * E - enf of file flag
+     * F - frist sefment of a file (flag)
      * We add +2 to include the first byte and the \0-character
      */
     int hdr_size = snprintf(buf.data() + 1, buf.size(), "%s", filename) + 2;
 
     for (;;)
     {
-        int n = ifile.read(buf.data() + hdr_size, buf.size() - hdr_size).gcount();
+        const int n = ifile.read(buf.data() + hdr_size, buf.size() - hdr_size).gcount();
         const bool is_eof = ifile.eof();
         const bool is_start = hdr_size > 1;
         buf[0] = (is_eof ? 2 : 0) | (is_start ? 1 : 0);
@@ -232,21 +237,21 @@ bool TransmitFile(const char* filename, const SRTSOCKET ss, vector<char> &buf)
         size_t shift = 0;
         if (n > 0)
         {
-            int st = srt_send(ss, buf.data() + shift, n + hdr_size);
-            //Verb() << "Upload: " << n << " + " << hdr_size << " (" << (n + hdr_size) << ")  --> " << st << (!shift ? string() : "+" + Sprint(shift));
+            const int st = srt_send(ss, buf.data() + shift, n + hdr_size);
+            file_size += n;
+
             if (st == SRT_ERROR)
             {
                 cerr << "Upload: SRT error: " << srt_getlasterror_str() << endl;
                 return false;
             }
-
-            n -= st - hdr_size;
-            shift += st - hdr_size;
-            hdr_size = 1;
-            if (n != 0) {
+            if (st != n + hdr_size) {
                 cerr << "Upload error: not full delivery" << endl;
                 return false;
             }
+
+            shift += st - hdr_size;
+            hdr_size = 1;
         }
 
         if (is_eof)
@@ -259,7 +264,12 @@ bool TransmitFile(const char* filename, const SRTSOCKET ss, vector<char> &buf)
         }
     }
 
-    Verb() << "---> done!";
+    const chrono::steady_clock::time_point time_end = chrono::steady_clock::now();
+    const auto delta_ms = chrono::duration_cast<chrono::milliseconds>(time_end - time_start).count();
+
+    const size_t rate_kbps = file_size / (delta_ms) * 8;
+    Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
+           << chrono::duration_cast<chrono::minutes>(time_end - time_start).count() << " minute(s)";
 
     return true;
 }
@@ -355,6 +365,9 @@ bool DoDownload(UriParser& us, string directory)
 
     vector<char> buf(::g_buffer_size);
 
+    chrono::steady_clock::time_point time_start;
+    size_t file_size = 0;
+
     ofstream ofile;
     for (;;)
     {
@@ -367,7 +380,7 @@ bool DoDownload(UriParser& us, string directory)
 
         if (n == 0)
         {
-            Verb() << "Nothig was received. Closing.";
+            Verb() << "Nothing was received. Closing.";
             break;
         }
 
@@ -388,15 +401,28 @@ bool DoDownload(UriParser& us, string directory)
             }
 
             Verb() << "Downloading: --> " << filename;
+            time_start = chrono::steady_clock::now();
+            file_size = 0;
         }
 
-        //Verb() << "Received " << n << " bytes";
+        if (!ofile)
+        {
+            cerr << "Download: file is closed while data is received: first packet missed?\n";
+            continue;
+        }
+
         ofile.write(buf.data() + hdr_size, n - hdr_size);
+        file_size += n - hdr_size;
 
         if (is_eof)
         {
             ofile.close();
-            Verb() << "--> done\n";
+            const chrono::steady_clock::time_point time_end = chrono::steady_clock::now();
+            const auto delta_ms = chrono::duration_cast<chrono::milliseconds>(time_end - time_start).count();
+
+            const size_t rate_kbps = file_size / (delta_ms) * 8;
+            Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
+                   << chrono::duration_cast<chrono::minutes>(time_end - time_start).count() << " minute(s))";
         }
     }
 
