@@ -7587,25 +7587,24 @@ int CUDT::processData(CUnit* unit)
       */
       CGuard recvbuf_acklock(m_AckLock);
 
-      int32_t offset = CSeqNo::seqoff(m_iRcvLastSkipAck, packet.m_iSeqNo);
+      const int32_t offset = CSeqNo::seqoff(m_iRcvLastSkipAck, packet.m_iSeqNo);
 
       bool excessive = false;
-      string exc_type = "EXPECTED";
+      const char* exc_type = "EXPECTED";
       if ((offset < 0))
       {
           exc_type = "BELATED";
           excessive = true;
           m_iTraceRcvBelated++;
-          uint64_t tsbpdtime = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
-          uint64_t bltime = CountIIR(
+          const uint64_t tsbpdtime = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
+          const uint64_t bltime = CountIIR(
                   uint64_t(m_fTraceBelatedTime)*1000,
                   CTimer::getTime() - tsbpdtime, 0.2);
           m_fTraceBelatedTime = double(bltime)/1000.0;
       }
       else
       {
-
-          int avail_bufsize = m_pRcvBuffer->getAvailBufSize();
+          const int avail_bufsize = m_pRcvBuffer->getAvailBufSize();
           if (offset >= avail_bufsize)
           {
               // This is already a sequence discrepancy. Probably there could be found

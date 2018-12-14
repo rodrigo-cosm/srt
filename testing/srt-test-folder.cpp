@@ -308,7 +308,7 @@ bool DoDownload(UriParser& us, string directory, string filename)
 {
     us["transtype"] = string("file");
     us["messageapi"] = string("true");
-    us["rcvbuf"] = to_string(1061313/*g_buffer_size*/ /* 1456*/);
+    us["rcvbuf"] = to_string(2 * 1061312 + 1472/*g_buffer_size*/ /* 1456*/);
     SrtModel m(us.host(), us.portno(), us.parameters());
 
     string id = filename;
@@ -380,9 +380,10 @@ bool DoDownload(UriParser& us, string directory, string filename)
             if (!ofile)
                 cerr << "Download: error opening file" << filename << endl;
 
-            Verb() << "Download: --> " << filename;
+            Verb() << "Downloading: --> " << filename;
         }
 
+        Verb() << "Received " << n << " bytes";
         ofile.write(buf.data() + hdr_size, n - hdr_size);
 
         const bool is_eof = buf[0] == 3 ? true : false;
@@ -390,7 +391,7 @@ bool DoDownload(UriParser& us, string directory, string filename)
         {
             filename.clear();
             ofile.close();
-            Verb() << " done\n";
+            Verb() << "--> done\n";
         }
         // Write to file any amount of data received
 
