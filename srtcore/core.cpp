@@ -7590,10 +7590,20 @@ int CUDT::processData(CUnit* unit)
       const int32_t offset = CSeqNo::seqoff(m_iRcvLastSkipAck, packet.m_iSeqNo);
 
       bool excessive = false;
-      const char* exc_type = "EXPECTED";
+#ifdef ENABLE_HEAVY_LOGGING
+#define DECLARE_EXCTYPE(VAL) const char* exc_type = VAL;
+#define RESET_EXCTYPE(VAL)   exc_type = VAL;
+#define GET_EXCTYPE          exc_type
+#else
+#define DECLARE_EXCTYPE(VAL)
+#define RESET_EXCTYPE(VAL)
+#define GET_EXCTYPE ""
+#endif
+
+      DECLARE_EXCTYPE("EXPECTED");
       if ((offset < 0))
       {
-          exc_type = "BELATED";
+          RESET_EXCTYPE("BELATED");
           excessive = true;
           m_iTraceRcvBelated++;
           const uint64_t tsbpdtime = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
@@ -7647,14 +7657,14 @@ int CUDT::processData(CUnit* unit)
           {
               // addData returns -1 if at the m_iLastAckPos+offset position there already is a packet.
               // So this packet is "redundant".
-              exc_type = "UNACKED";
+              RESET_EXCTYPE("UNACKED");
               excessive = true;
           }
       }
 
       HLOGC(mglog.Debug, log << CONID() << "RECEIVED: seq=" << packet.m_iSeqNo << " offset=" << offset
           << (excessive ? " EXCESSIVE" : " ACCEPTED")
-          << " (" << exc_type << "/" << rexmitstat[pktrexmitflag] << rexmit_reason << ") FLAGS: "
+          << " (" << GET_EXCTYPE << "/" << rexmitstat[pktrexmitflag] << rexmit_reason << ") FLAGS: "
           << packet.MessageFlagStr());
 
       if ( excessive )

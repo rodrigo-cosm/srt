@@ -15,7 +15,11 @@ written by
 
 #ifdef _WIN32
 #include <direct.h>
+#include "dirent.h"
+#else
+#include <dirent.h>
 #endif
+
 #include <iostream>
 #include <iterator>
 #include <vector>
@@ -34,8 +38,6 @@ written by
 #include "socketoptions.hpp"
 #include "verbose.hpp"
 #include "testmedia.hpp"
-
-#include "dirent.h"
 
 #ifndef S_ISDIR
 #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
@@ -56,9 +58,9 @@ int main( int argc, char** argv )
 {
     set<string>
         o_loglevel = { "ll", "loglevel" },
-        o_buffer = {"b", "buffer" },
-        o_verbose = {"v", "verbose" },
-        o_noflush = {"s", "skipflush" };
+        o_buffer   = {"b", "buffer" },
+        o_verbose  = {"v", "verbose" },
+        o_noflush  = {"s", "skipflush" };
 
     // Options that expect no arguments (ARG_NONE) need not be mentioned.
     vector<OptionScheme> optargs = {
@@ -81,6 +83,14 @@ int main( int argc, char** argv )
     if ( args.size() < 2 )
     {
         cerr << "Usage: " << argv[0] << " <source> <target>\n";
+        cerr << "Example (receiver):\n   " << argv[0] << " srt://:4200 file://.\n";
+        cerr << "   will receive the streaming on port 4200 of the localhost and wtire to the current forder.\n";
+        cerr << "Example (sender):\n   " << argv[0] << "file://folder_to_send srt://192.168.0.102:4200\n";
+        cerr << "   will send the contents of the folder_to_send on port 4200 of the 192.168.0.102.\n";
+        cerr << "Example (sender with bandwidth limit):\n   " << argv[0] << "file://folder_to_send srt://192.168.0.102:4200?maxbw=625000\n";
+        cerr << "   will send the contents of the folder_to_send on port 4200 of the 192.168.0.102\n";
+        cerr << "   with a bitrate limit of 5 Mbps (625000 bytes/s).\n";
+
         return 1;
     }
 
@@ -148,9 +158,6 @@ int main( int argc, char** argv )
 
 void ExtractPath(string path, ref_t<string> dir, ref_t<string> fname)
 {
-    //string& dir = r_dir;
-    //string& fname = r_fname;
-
     string directory = path;
     string filename = "";
 
@@ -194,26 +201,79 @@ void ExtractPath(string path, ref_t<string> dir, ref_t<string> fname)
     *fname = filename;
 }
 
-bool DoUpload(UriParser& ut, string path, string filename)
+
+
+bool TransmitFile(const char* filename, const SRTSOCKET ss, vector<char> &buf)
+{
+    ifstream ifile(filename, ios::binary);
+    if (!ifile)
+    {
+        cerr << "Error opening file: '" << filename << "'";
+        return true;
+    }
+
+    Verb() << "Transmitting '" << filename;
+
+    /* 1 byte     string    1 byte
+     * ------------------------------------------------
+     * | is_eof | Filename | 0 | Payload
+     * ------------------------------------------------
+     * We add +2 to include the first byte and the \0-character
+     */
+    int hdr_size = snprintf(buf.data() + 1, buf.size(), "%s", filename) + 2;
+
+    for (;;)
+    {
+        int n = ifile.read(buf.data() + hdr_size, buf.size() - hdr_size).gcount();
+        const bool is_eof = ifile.eof();
+        const bool is_start = hdr_size > 1;
+        buf[0] = (is_eof ? 2 : 0) | (is_start ? 1 : 0);
+
+        size_t shift = 0;
+        if (n > 0)
+        {
+            int st = srt_send(ss, buf.data() + shift, n + hdr_size);
+            //Verb() << "Upload: " << n << " + " << hdr_size << " (" << (n + hdr_size) << ")  --> " << st << (!shift ? string() : "+" + Sprint(shift));
+            if (st == SRT_ERROR)
+            {
+                cerr << "Upload: SRT error: " << srt_getlasterror_str() << endl;
+                return false;
+            }
+
+            n -= st - hdr_size;
+            shift += st - hdr_size;
+            hdr_size = 1;
+            if (n != 0) {
+                cerr << "Upload error: not full delivery" << endl;
+                return false;
+            }
+        }
+
+        if (is_eof)
+            break;
+
+        if (!ifile.good())
+        {
+            cerr << "ERROR while reading file\n";
+            return false;
+        }
+    }
+
+    Verb() << "---> done!";
+
+    return true;
+}
+
+
+bool DoUpload(UriParser& ut, string path)
 {
     ut["transtype"] = string("file");
     ut["messageapi"] = string("true");
     ut["sndbuf"] = to_string(1061313/*g_buffer_size*/ /* 1456*/);
     SrtModel m(ut.host(), ut.portno(), ut.parameters());
 
-    string id = filename;
-    Verb() << "Passing '" << id << "' as stream ID\n";
-
-    m.Establish(Ref(id));
-
-    // Check if the filename was changed
-    if (id != filename)
-    {
-        cerr << "SRT caller has changed the filename '" << filename << "' to '" << id << "' - rejecting\n";
-        return false;
-    }
-
-    Verb() << "USING ID: " << id;
+    string dummy;
+    m.Establish(Ref(dummy));
 
     SRTSOCKET ss = m.Socket();
 
@@ -226,10 +286,9 @@ bool DoUpload(UriParser& ut, string path, string filename)
         return false;
     }
 
-
-
     // Use a manual loop for reading from SRT
     vector<char> buf(::g_buffer_size);
+    bool send_next = true;
 
     for (int i = 0; i < n; ++i)
     {
@@ -240,60 +299,9 @@ bool DoUpload(UriParser& ut, string path, string filename)
             continue;
         }
 
-        ifstream ifile(ent->d_name, ios::binary);
-        if (!ifile)
-        {
-            cerr << "Error opening file: '" << path << "'";
-            free(files[i]);
-            continue;
-        }
-
-
-        /* 2 bytes     string    1 byte     string   1 byte
-         * ------------------------------------------------
-         * | Opcode | Filename | 0 | First | Last | 0 |
-         * ------------------------------------------------
-         */
-        //string file_header(string(ent->d_name) + "\0");
-
-        //int st = srt_send(ss, ent->d_name, strlen(ent->d_name));
-        //int st = srt_send(ss, file_header.c_str(), file_header.size() + 1);
-
-        int hdr_size = sprintf_s(buf.data() + 1, buf.size(), "%s\0", ent->d_name) + 2;
-
-        for (;;)
-        {
-            int n = ifile.read(buf.data() + hdr_size, ::g_buffer_size - hdr_size).gcount();
-            const bool is_eof = ifile.eof();
-            buf[0] = is_eof ? 3 : 1;
-
-            size_t shift = 0;
-            if (n > 0)
-            {
-                int st = srt_send(ss, buf.data() + shift, n + hdr_size);
-                Verb() << "Upload: " << n << " + " << hdr_size << " (" << (n + hdr_size) << ")  --> " << st << (!shift ? string() : "+" + Sprint(shift));
-                if (st == SRT_ERROR)
-                {
-                    cerr << "Upload: SRT error: " << srt_getlasterror_str() << endl;
-                    return false;
-                }
-
-                n -= st - hdr_size;
-                shift += st - hdr_size;
-                hdr_size = 1;
-                if (n != 0)
-                    cerr << "Upload error: not full delivery" << endl;
-            }
-
-            if (is_eof)
-                break;
-
-            if (!ifile.good())
-            {
-                cerr << "ERROR while reading file\n";
-                return false;
-            }
-        }
+        // On error we will skip transfering and free all the handles.
+        if (send_next)
+            send_next = TransmitFile(ent->d_name, ss, buf);
 
         free(files[i]);
     }
@@ -304,19 +312,19 @@ bool DoUpload(UriParser& ut, string path, string filename)
 }
 
 
-bool DoDownload(UriParser& us, string directory, string filename)
+bool DoDownload(UriParser& us, string directory)
 {
     us["transtype"] = string("file");
     us["messageapi"] = string("true");
     us["rcvbuf"] = to_string(2 * 1061312 + 1472/*g_buffer_size*/ /* 1456*/);
     SrtModel m(us.host(), us.portno(), us.parameters());
 
-    string id = filename;
-    m.Establish(Ref(id));
+    string dummy;
+    m.Establish(Ref(dummy));
 
     // Disregard the filename, unless the destination file exists.
 
-    string path = directory + "/" + id;
+    string path = directory + "/";
     struct stat state;
     if (stat(path.c_str(), &state) == -1)
     {
@@ -335,26 +343,18 @@ bool DoDownload(UriParser& us, string directory, string filename)
     {
         // Check if destination is a regular file, if so, allow to overwrite.
         // Otherwise reject.
-        if (!S_ISREG(state.st_mode))
+        if (!S_ISDIR(state.st_mode))
         {
-            cerr << "Download: target location '" << path << "' does not designate a regular file.\n";
+            cerr << "Download: target location '" << path << "' does not designate a folder.\n";
             return false;
         }
     }
 
-    //ofstream ofile(path, ios::out | ios::trunc | ios::binary);
-    /*if ( !ofile.good() )
-    {
-        cerr << "Download: can't create output file: " << path;
-        return false;
-    }*/
     SRTSOCKET ss = m.Socket();
-
     Verb() << "Downloading from '" << us.uri() << "' to '" << path;
 
     vector<char> buf(::g_buffer_size);
 
-    filename.clear();
     ofstream ofile;
     for (;;)
     {
@@ -367,35 +367,37 @@ bool DoDownload(UriParser& us, string directory, string filename)
 
         if (n == 0)
         {
-            Verb() << "Download COMPLETE.";
+            Verb() << "Nothig was received. Closing.";
             break;
         }
 
         int hdr_size = 1;
-        if (filename.empty())
+        const bool is_first = (buf[0] & 0x01) != 0;
+        const bool is_eof   = (buf[0] & 0x02) != 0;
+
+        if (is_first)
         {
-            filename = string(buf.data() + 1);
+            ofile.close();
+            // extranct the filename from the received buffer
+            string filename = string(buf.data() + 1);
             hdr_size += filename.size() + 1;    // 1 for null character
             ofile.open(filename.c_str(), ios::out | ios::trunc | ios::binary);
-            if (!ofile)
+            if (!ofile) {
                 cerr << "Download: error opening file" << filename << endl;
+                break;
+            }
 
             Verb() << "Downloading: --> " << filename;
         }
 
-        Verb() << "Received " << n << " bytes";
+        //Verb() << "Received " << n << " bytes";
         ofile.write(buf.data() + hdr_size, n - hdr_size);
 
-        const bool is_eof = buf[0] == 3 ? true : false;
         if (is_eof)
         {
-            filename.clear();
             ofile.close();
             Verb() << "--> done\n";
         }
-        // Write to file any amount of data received
-
-        //ofile.write(buf.data(), n);
     }
 
     return true;
@@ -403,25 +405,29 @@ bool DoDownload(UriParser& us, string directory, string filename)
 
 bool Upload(UriParser& srt_target_uri, UriParser& fileuri)
 {
-    if ( fileuri.scheme() != "file" )
+    if (fileuri.scheme() != "file")
     {
         cerr << "Upload: source accepted only as a folder\n";
         return false;
     }
-    // fileuri is source-reading file
-    // srt_target_uri is SRT target
 
     string path = fileuri.path();
     string directory, filename;
     ExtractPath(path, ref(directory), ref(filename));
-    Verb() << "Extract path '" << path << "': directory=" << directory << " filename=" << filename;
-    // Set ID to the filename.
-    // Directory will be preserved.
 
+    if (!filename.empty())
+    {
+        cerr << "Upload: source accepted only as a folder (file "
+             << filename << " is specified)\n";
+        return false;
+    }
+
+    Verb() << "Extract path '" << path << "': directory=" << directory;
+    
     // Add some extra parameters.
     srt_target_uri["transtype"] = "file";
 
-    return DoUpload(srt_target_uri, path, filename);
+    return DoUpload(srt_target_uri, path);
 }
 
 bool Download(UriParser& srt_source_uri, UriParser& fileuri)
@@ -437,6 +443,6 @@ bool Download(UriParser& srt_source_uri, UriParser& fileuri)
 
     srt_source_uri["transtype"] = "file";
 
-    return DoDownload(srt_source_uri, directory, filename);
+    return DoDownload(srt_source_uri, directory);
 }
 
