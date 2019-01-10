@@ -4307,6 +4307,42 @@ void* CUDT::tsbpd(void* param)
           THREAD_RESUMED();
           HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: WAKEUP REASON: " << (reason == 0? "SIGNAL"
                       : (reason == ETIMEDOUT ? "TIMEOUT" : "ERROR")));
+#ifdef _WIN32
+
+          // The problem on Windows is that it relies on a pthread wrapper,
+          // which uses double conversion, here from relative (timediff) time
+          // to absolute, using time based initially on _ftime and then
+          // continued using QueryPerformanceCounter, then the wrapper converts
+          // it back to a relative time, also using _ftime. Probably all these things
+          // completely scrap any accuracy of time measurements, anyway, what has
+          // been observed during tests is that the call to pthread_cond_wait in 90%
+          // of cases when it has to sleep up to 9ms, it doesn't sleep at all (returns
+          // immediately) and from e.g. 12ms it sleeps only 10ms. This then results in
+          // spin-rolling of this loop since this moment up to the moment when the
+          // packet is ready to play.
+          //
+          // What we need in case when we do have a next packet to play, is to sleep
+          // until its time to play comes, NO MATTER WHAT. This should only be interrupted
+          // when the next available packet skips a loss, so there's still a chance to
+          // interrupt it with an incoming lacking packet and deliver it. We then do this:
+          //
+          // 1. Get remaining time + 0.5us so that it gets rounded up to 1ms.
+          // Should this be below 0, do nothing.
+          // 2. Check how many packets are next. For one, simply wait this time. If more,
+          // determine the best waiting time by dividing the waiting time by this number.
+
+          if (reason == ETIMEDOUT)
+          {
+              int rem_wait = tsbpdtime - CTimer::getTime();
+              if (rem_wait > 1)
+              {
+				  int plyer = CSeqNo::seqoff(self->m_iRcvLastSkipAck, current_pkt_seq);
+                  int extrawait_ms = (((plyer > 0) ? (rem_wait/(plyer+1)) : rem_wait) + 501)/1000;
+                  HLOGC(tslog.Debug, log << "tsbpd(win32): EAGER WAKEUP: " << rem_wait << "us, EXTRA SLEEP: " << extrawait_ms << "ms");
+                  Sleep(extrawait_ms);
+              }
+          }
+#endif
       }
       else
       {

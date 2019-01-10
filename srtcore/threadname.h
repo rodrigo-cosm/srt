@@ -57,6 +57,42 @@ public:
     }
 };
 
+#elif defined _WIN32
+
+class ThreadName
+{
+public:
+
+    static bool get(char* obuf)
+    {
+        // The concept of ThreadName matches well the Linux implementation,
+        // where you simply change the name of the current thread before creation,
+        // to make the name derived by the newly spawned thread. On Windows,
+        // unfortunately, there's no such thing, as well as the only general
+        // API that can be implemented on more platforms is to make a wrapper
+        // around the thread creation function, such as an intermediate wrapper
+        // over the main thread function, which will setup the thread first
+        // (including setting the thread name), then run the handler, then do
+        // cleanup. Until then, we need an impaired version that simply stuffs
+        // in the thread id by number.
+
+        _snprintf(obuf, 512, "T%X", GetCurrentThreadId());
+        return true; // What could possibly go wrong?
+    }
+
+    static bool set(const char*) { return false; }
+
+    ThreadName(const char*)
+    {
+    }
+
+    ~ThreadName() // just to make it "non-trivially-destructible" for compatibility with normal version
+    {
+    }
+
+};
+
+
 #else
 
 // Fake class, which does nothing. You can also take a look how
