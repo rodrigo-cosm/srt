@@ -23,6 +23,7 @@ written by
 #include <iostream>
 #include <iterator>
 #include <vector>
+#include <list>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -280,43 +281,76 @@ bool DoUpload(UriParser& ut, string path)
     ut["transtype"] = string("file");
     ut["messageapi"] = string("true");
     ut["sndbuf"] = to_string(1061313/*g_buffer_size*/ /* 1456*/);
-    SrtModel m(ut.host(), ut.portno(), ut.parameters());
+    //SrtModel m(ut.host(), ut.portno(), ut.parameters());
 
-    string dummy;
-    m.Establish(Ref(dummy));
+    //string dummy;
+    //m.Establish(Ref(dummy));
 
-    SRTSOCKET ss = m.Socket();
+    std::list <dirent*> processing_list;
 
-    /* Scan files in directory */
-    struct dirent **files;
-    const int n = scandir(path.c_str(), &files, NULL, alphasort);
-    if (n < 0)
+    auto get_files = [&processing_list](const std::string &path)
     {
-        cerr << "No files found in the directory: '" << path << "'";
-        return false;
-    }
+        struct dirent **files;
+        const int n = scandir(path.c_str(), &files, NULL, alphasort);
+        if (n < 0)
+        {
+            cerr << "No files found in the directory: '" << path << "'";
+            return false;
+        }
+
+        for (int i = 0; i < n; ++i)
+        {
+            if (0 == strcmp(files[i]->d_name, ".") || 0 == strcmp(files[i]->d_name, ".."))
+            {
+                free(files[i]);
+                continue;
+            }
+
+            processing_list.push_back(files[i]);
+        }
+
+        free(files);
+        return true;
+    };
+
+    /* Initial scan for files in the directory */
+    get_files(path);
 
     // Use a manual loop for reading from SRT
     vector<char> buf(::g_buffer_size);
-    bool send_next = true;
 
-    for (int i = 0; i < n; ++i)
+    while (!processing_list.empty())
     {
-        struct dirent *ent = files[i];
-        if (ent->d_type != DT_REG)
+        dirent* ent = processing_list.front();
+        processing_list.pop_front();
+
+        if (ent->d_type == DT_DIR)
         {
-            free(files[i]);
+            get_files(ent->d_name);
+            free(ent);
             continue;
         }
 
-        // On error we will skip transfering and free all the handles.
-        if (send_next)
-            send_next = TransmitFile(ent->d_name, ss, buf);
+        if (ent->d_type != DT_REG)
+        {
+            free(ent);
+            continue;
+        }
 
-        free(files[i]);
-    }
+        cerr << "File: '" << ent->d_name << "'\n";
+        //const bool transmit_res = TransmitFile(ent->d_name, m.Socket(), buf);
+        free(ent);
 
-    free(files);
+        //if (!transmit_res)
+        //    break;
+    };
+
+    while (!processing_list.empty())
+    {
+        dirent* ent = processing_list.front();
+        processing_list.pop_front();
+        free(ent);
+    };
 
     return true;
 }
