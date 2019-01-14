@@ -18,6 +18,7 @@ written by
 #include "dirent.h"
 #else
 #include <dirent.h>
+#include <errno.h>
 #endif
 
 #include <iostream>
@@ -203,13 +204,71 @@ void ExtractPath(string path, ref_t<string> dir, ref_t<string> fname)
 }
 
 
+// Returns true on success, false on error
+bool CreateFolder(const string &path)
+{
+#if defined(_WIN32)
+    const int status = _mkdir(path.c_str());
+#else
+    // read/write/search permissions for owner and group,
+    // and read/search permissions for others.
+    const int status = mkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+#endif
+    if (0 == status)
+    {
+        Verb() << "Directory '" << path << "' was successfully created\n";
+        return true;
+    }
 
-bool TransmitFile(const char* filename, const SRTSOCKET ss, vector<char> &buf)
+    if (EEXIST == errno)
+    {
+        Verb() << "Directory '" << path << "' exists\n";
+        return true;
+    }
+
+    Verb() << "Directory '" << path << "' failed to be created\n";
+    return false;
+}
+
+
+// Returns true on success, false on error
+// TODO: avoid multiple serial delimiters
+bool CreateSubfolders(const string &path)
+{
+    size_t found = path.find("./");
+    if (found != std::string::npos)
+    {
+        Verb() << "first './' found at: " << found << '\n';
+    }
+    else
+    {
+        found = path.find(".\\");
+        if (found != std::string::npos)
+            Verb() << "first '.\\' found at: " << found << '\n';
+    }
+
+    const size_t last_delim = path.find_last_of("/\\");
+    size_t pos = found != std::string::npos ? (found + 2) : 0;
+
+    while (pos != std::string::npos && pos != last_delim)
+    {
+        pos = path.find_first_of("\\/", pos + 1);
+        Verb() << "Creating folder " << path.substr(0, pos) << "\n";
+        if (!CreateFolder(path.substr(0,e pos).c_str()))
+            return false;
+    };
+
+    return true;
+}
+
+
+
+bool TransmitFile(const string &filename, const SRTSOCKET ss, vector<char> &buf)
 {
     ifstream ifile(filename, ios::binary);
     if (!ifile)
     {
-        cerr << "Error opening file: '" << filename << "'";
+        cerr << "Error opening file: '" << filename << "'\n";
         return true;
     }
 
@@ -226,7 +285,7 @@ bool TransmitFile(const char* filename, const SRTSOCKET ss, vector<char> &buf)
      * F - frist sefment of a file (flag)
      * We add +2 to include the first byte and the \0-character
      */
-    int hdr_size = snprintf(buf.data() + 1, buf.size(), "%s", filename) + 2;
+    int hdr_size = snprintf(buf.data() + 1, buf.size(), "%s", filename.c_str()) + 2;
 
     for (;;)
     {
@@ -281,12 +340,12 @@ bool DoUpload(UriParser& ut, string path)
     ut["transtype"] = string("file");
     ut["messageapi"] = string("true");
     ut["sndbuf"] = to_string(1061313/*g_buffer_size*/ /* 1456*/);
-    //SrtModel m(ut.host(), ut.portno(), ut.parameters());
+    SrtModel m(ut.host(), ut.portno(), ut.parameters());
 
-    //string dummy;
-    //m.Establish(Ref(dummy));
+    string dummy;
+    m.Establish(Ref(dummy));
 
-    std::list <dirent*> processing_list;
+    std::list<pair<dirent*, string>> processing_list;
 
     auto get_files = [&processing_list](const std::string &path)
     {
@@ -306,7 +365,7 @@ bool DoUpload(UriParser& ut, string path)
                 continue;
             }
 
-            processing_list.push_back(files[i]);
+            processing_list.push_back(pair<dirent*, string>(files[i], path + "/"));
         }
 
         free(files);
@@ -321,12 +380,13 @@ bool DoUpload(UriParser& ut, string path)
 
     while (!processing_list.empty())
     {
-        dirent* ent = processing_list.front();
+        dirent* ent = processing_list.front().first;
+        string dir  = processing_list.front().second;
         processing_list.pop_front();
 
         if (ent->d_type == DT_DIR)
         {
-            get_files(ent->d_name);
+            get_files(dir + ent->d_name);
             free(ent);
             continue;
         }
@@ -337,17 +397,17 @@ bool DoUpload(UriParser& ut, string path)
             continue;
         }
 
-        cerr << "File: '" << ent->d_name << "'\n";
-        //const bool transmit_res = TransmitFile(ent->d_name, m.Socket(), buf);
+        cerr << "File: '" << dir << ent->d_name << "'\n";
+        const bool transmit_res = TransmitFile(dir + ent->d_name, m.Socket(), buf);
         free(ent);
 
-        //if (!transmit_res)
-        //    break;
+        if (!transmit_res)
+            break;
     };
 
     while (!processing_list.empty())
     {
-        dirent* ent = processing_list.front();
+        dirent* ent = processing_list.front().first;
         processing_list.pop_front();
         free(ent);
     };
@@ -428,9 +488,12 @@ bool DoDownload(UriParser& us, string directory)
             // extranct the filename from the received buffer
             string filename = string(buf.data() + 1);
             hdr_size += filename.size() + 1;    // 1 for null character
+            
+            CreateSubfolders(filename);
+
             ofile.open(filename.c_str(), ios::out | ios::trunc | ios::binary);
             if (!ofile) {
-                cerr << "Download: error opening file" << filename << endl;
+                cerr << "Download: error opening file " << filename << endl;
                 break;
             }
 
