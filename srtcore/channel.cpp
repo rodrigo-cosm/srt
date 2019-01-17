@@ -93,7 +93,7 @@ modified by
 using namespace std;
 
 
-extern logging::Logger mglog;
+extern logging::Logger mglog, perflog;
 
 CChannel::CChannel():
 m_iIPversion(AF_INET),
@@ -596,6 +596,7 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
         goto Return_error;
     }
 
+
     // Fix for an issue with Linux Kernel found during tests at Tencent.
     //
     // There was a bug in older Linux Kernel which caused that when the internal
@@ -641,6 +642,9 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
         for (size_t j = 0, n = packet.getLength() / sizeof (uint32_t); j < n; ++ j)
             *((uint32_t *)packet.m_pcData + j) = ntohl(*((uint32_t *)packet.m_pcData + j));
     }
+
+    LOGC(perflog.Note, log << "CChannel: INCOMING PACKET size=" << recv_size << " seq="
+            << (IsSet(packet.m_iSeqNo, SEQNO_CONTROL::mask) ? -1 : packet.m_iSeqNo));
 
     return RST_OK;
 

@@ -349,6 +349,15 @@ public:
 
 
    bool getRcvFirstMsg(ref_t<uint64_t> tsbpdtime, ref_t<bool> passack, ref_t<int32_t> skipseqno, ref_t<int32_t> curpktseq);
+   // Performance version
+   bool getRcvFirstMsg(ref_t<uint64_t> tsbpdtime, ref_t<uint64_t> oldesttsbpdtime,
+           ref_t<bool> passack, ref_t<int32_t> skipseqno, ref_t<int32_t> curpktseq, ref_t<int32_t> oldestpktseq);
+
+   // Splitting function
+   bool getRcvFirstPassackMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<int32_t> r_curpktseq);
+   // Performance version
+   bool getRcvFirstPassackMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<uint64_t> oldesttsbpdtime,
+           ref_t<int32_t> r_curpktseq, ref_t<int32_t> r_oldpktseq);
 
       /// Update the ACK point of the buffer.
       /// @param [in] len size of data to be skip & acknowledged.
@@ -365,6 +374,9 @@ private:
 
 
    bool getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
+
+   // Perflog version
+   bool getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<uint64_t> oldesttsbpdtime, ref_t<int32_t> curpktseq, ref_t<int32_t> oldestpktseq);
 
       /// Get packet delivery local time base (adjusted for wrap around)
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
