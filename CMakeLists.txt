@@ -734,7 +734,7 @@ if ( ENABLE_CXX11 )
 		# FIXME: with MINGW, it fails to build apps that require C++11
 		# https://github.com/Haivision/srt/issues/177
 		message(WARNING "On MinGW, some C++11 apps are blocked due to lacking proper C++11 headers for <thread>. FIX IF POSSIBLE.")
-   else()
+	else()
 		srt_add_application(srt-multiplex ${VIRTUAL_srtsupport})
 	endif()
 
@@ -770,7 +770,8 @@ if ( ENABLE_CXX11 )
 		srt_add_testprogram(srt-test-file)
 		srt_make_application(srt-test-file)
 
-        srt_add_testprogram(srt-test-folder)
+		srt_add_testprogram(srt-test-folder)
+		target_include_directories(srt-test-folder PRIVATE "${CMAKE_SOURCE_DIR}/submodules/json/single_include/")
 		srt_make_application(srt-test-folder)
 
 		srt_add_testprogram(srt-test-relay)

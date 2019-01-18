@@ -41,6 +41,8 @@ written by
 #include "verbose.hpp"
 #include "testmedia.hpp"
 
+#include "nlohmann/json.hpp"
+
 #ifndef S_ISDIR
 #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 #define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
@@ -254,7 +256,7 @@ bool CreateSubfolders(const string &path)
     {
         pos = path.find_first_of("\\/", pos + 1);
         Verb() << "Creating folder " << path.substr(0, pos) << "\n";
-        if (!CreateFolder(path.substr(0,e pos).c_str()))
+        if (!CreateFolder(path.substr(0, pos).c_str()))
             return false;
     };
 
