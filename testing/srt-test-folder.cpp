@@ -43,6 +43,11 @@ written by
 
 #include "nlohmann/json.hpp"
 
+#include "date/date.h"
+
+using json = nlohmann::json;
+using namespace std;
+
 #ifndef S_ISDIR
 #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 #define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
@@ -265,7 +270,7 @@ bool CreateSubfolders(const string &path)
 
 
 
-bool TransmitFile(const string &filename, const SRTSOCKET ss, vector<char> &buf)
+bool TransmitFile(const string &filename, const string &upload_name, const SRTSOCKET ss, vector<char> &buf)
 {
     ifstream ifile(filename, ios::binary);
     if (!ifile)
@@ -277,7 +282,7 @@ bool TransmitFile(const string &filename, const SRTSOCKET ss, vector<char> &buf)
     const chrono::steady_clock::time_point time_start = chrono::steady_clock::now();
     size_t file_size = 0;
 
-    Verb() << "Transmitting '" << filename;
+    Verb() << "Transmitting '" << filename << " to " << upload_name;
 
     /*   1 byte      string    1 byte
      * ------------------------------------------------
@@ -287,7 +292,7 @@ bool TransmitFile(const string &filename, const SRTSOCKET ss, vector<char> &buf)
      * F - frist sefment of a file (flag)
      * We add +2 to include the first byte and the \0-character
      */
-    int hdr_size = snprintf(buf.data() + 1, buf.size(), "%s", filename.c_str()) + 2;
+    int hdr_size = snprintf(buf.data() + 1, buf.size(), "%s", upload_name.c_str()) + 2;
 
     for (;;)
     {
@@ -337,7 +342,7 @@ bool TransmitFile(const string &filename, const SRTSOCKET ss, vector<char> &buf)
 }
 
 
-bool DoUpload(UriParser& ut, string path)
+bool DoUploadFolderContents(UriParser& ut, string path)
 {
     ut["transtype"] = string("file");
     ut["messageapi"] = string("true");
@@ -400,7 +405,8 @@ bool DoUpload(UriParser& ut, string path)
         }
 
         cerr << "File: '" << dir << ent->d_name << "'\n";
-        const bool transmit_res = TransmitFile(dir + ent->d_name, m.Socket(), buf);
+        const bool transmit_res = TransmitFile(dir + ent->d_name, dir + ent->d_name,
+                                               m.Socket(), buf);
         free(ent);
 
         if (!transmit_res)
@@ -413,6 +419,97 @@ bool DoUpload(UriParser& ut, string path)
         processing_list.pop_front();
         free(ent);
     };
+
+    return true;
+}
+
+
+//#define SRT_EMUL
+bool DoUploadJSONSeq(UriParser& ut, string path, const string &dir)
+{
+#ifndef SRT_EMUL
+    ut["transtype"] = string("file");
+    ut["messageapi"] = string("true");
+    ut["sndbuf"] = to_string(1061313/*g_buffer_size*/ /* 1456*/);
+    SrtModel m(ut.host(), ut.portno(), ut.parameters());
+#endif
+
+
+    auto to_system_clock =
+        [](const std::string &string_time)
+    {
+        std::istringstream ss(string_time);
+        std::chrono::system_clock::time_point tp;
+        ss >> date::parse("%Y-%m-%dT%T", tp);
+        return tp;
+    };
+
+    std::ifstream frequests("." + path);
+
+    if (!frequests)
+    {
+        std::cerr << "Error opening file " << path << "\n";
+        return false;
+    }
+
+    json j;
+    frequests >> j;
+
+    const std::chrono::system_clock::time_point start_time
+        = to_system_clock(j["recording_started"].get<std::string>());
+    chrono::system_clock::time_point time_prev = start_time;
+
+    std::cout << j << endl;
+
+#ifndef SRT_EMUL
+    string dummy;
+    m.Establish(Ref(dummy));
+#endif
+
+    vector<char> buf(::g_buffer_size);
+    const chrono::steady_clock::time_point time_start = chrono::steady_clock::now();
+
+    while (frequests)
+    {
+        try
+        {
+            frequests >> j;
+        }
+        catch (json::parse_error &ex)
+        {
+            // 101 in case of an unexpected token
+            // 102 if to_unicode fails or surrogate error
+            // 103 if to_unicode fails
+            std::cerr << "ERROR " << ex.what() << std::endl;
+            break;
+        }
+
+        const std::chrono::system_clock::time_point rcv_time
+            = to_system_clock(j["metadata"]["receive_completed"].get<std::string>());
+
+        const auto delta_ms = chrono::duration_cast<chrono::milliseconds>(rcv_time - time_prev);
+        const auto delta_ms_from_start = chrono::duration_cast<chrono::milliseconds>(rcv_time - start_time);
+
+        const chrono::steady_clock::time_point time_now = chrono::steady_clock::now();
+        const auto wait_ms = delta_ms_from_start - chrono::duration_cast<chrono::milliseconds>(time_now - time_start);
+        cout << "Waiting for " << wait_ms.count() << " ms" << endl;
+        this_thread::sleep_for(wait_ms);
+
+        time_prev = rcv_time;
+        const auto t = j["metadata"]["headers"].type();
+        const auto hdr = j["metadata"]["headers"];
+        Verb() << "Delta = " << delta_ms.count() << " ms (" << delta_ms_from_start.count() << " ms from start, ";
+        std::cout << "Content-Length = " << j["metadata"]["headers"][4][1] << ", URI " << j["metadata"]["uri_path"] << ")\n";
+
+        const string src_uri = j["content_filename"];
+        const string dst_uri = j["metadata"]["uri_path"];
+#ifndef SRT_EMUL
+        const bool transmit_res = TransmitFile("." + dir + "/" + src_uri, dst_uri, m.Socket(), buf);
+
+        if (!transmit_res)
+            break;
+#endif
+    }
 
     return true;
 }
@@ -540,19 +637,20 @@ bool Upload(UriParser& srt_target_uri, UriParser& fileuri)
     string directory, filename;
     ExtractPath(path, ref(directory), ref(filename));
 
-    if (!filename.empty())
-    {
-        cerr << "Upload: source accepted only as a folder (file "
-             << filename << " is specified)\n";
-        return false;
-    }
+    //if (!filename.empty())
+    //{
+    //    cerr << "Upload: source accepted only as a folder (file "
+    //         << filename << " is specified)\n";
+    //    return false;
+    //}
 
     Verb() << "Extract path '" << path << "': directory=" << directory;
     
     // Add some extra parameters.
     srt_target_uri["transtype"] = "file";
 
-    return DoUpload(srt_target_uri, path);
+    //return DoUploadFolderContents(srt_target_uri, path);
+    return DoUploadJSONSeq(srt_target_uri, path, directory);
 }
 
 bool Download(UriParser& srt_source_uri, UriParser& fileuri)
