@@ -255,6 +255,12 @@ bool CreateSubfolders(const string &path)
     }
 
     const size_t last_delim = path.find_last_of("/\\");
+    if (last_delim == string::npos)
+    {
+        Verb() << "No folders to create\n";
+        return true;
+    }
+
     size_t pos = found != std::string::npos ? (found + 2) : 0;
 
     while (pos != std::string::npos && pos != last_delim)
@@ -332,11 +338,11 @@ bool TransmitFile(const string &filename, const string &upload_name, const SRTSO
     }
 
     const chrono::steady_clock::time_point time_end = chrono::steady_clock::now();
-    const auto delta_ms = chrono::duration_cast<chrono::milliseconds>(time_end - time_start).count();
+    const auto delta_us = chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
-    const size_t rate_kbps = file_size / (delta_ms) * 8;
+    const size_t rate_kbps = (file_size * 1000) / (delta_us) * 8;
     Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
-           << chrono::duration_cast<chrono::minutes>(time_end - time_start).count() << " minute(s)";
+           << chrono::duration_cast<chrono::seconds>(time_end - time_start).count() << " s";
 
     return true;
 }
@@ -615,10 +621,13 @@ bool DoDownload(UriParser& us, string directory)
             ofile.close();
             const chrono::steady_clock::time_point time_end = chrono::steady_clock::now();
             const auto delta_ms = chrono::duration_cast<chrono::milliseconds>(time_end - time_start).count();
+            const auto delta_us = chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
-            const size_t rate_kbps = file_size / (delta_ms) * 8;
+            const size_t rate_kbps = (file_size * 1000) / (delta_us ? delta_us : 1) * 8;
+            //Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
+            //       << chrono::duration_cast<chrono::minutes>(time_end - time_start).count() << " minute(s))";
             Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
-                   << chrono::duration_cast<chrono::minutes>(time_end - time_start).count() << " minute(s))";
+                   << delta_ms / 1000.0 << " sec)";
         }
     }
 
