@@ -1,17 +1,17 @@
 /*
  * SRT - Secure, Reliable, Transport
  * Copyright (c) 2018 Haivision Systems Inc.
- * 
+ *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- * 
+ *
  */
 
-/*****************************************************************************
-written by
-   Haivision Systems Inc.
- *****************************************************************************/
+ /*****************************************************************************
+ written by
+    Haivision Systems Inc.
+  *****************************************************************************/
 
 #ifdef _WIN32
 #include <direct.h>
@@ -19,6 +19,12 @@ written by
 #else
 #include <dirent.h>
 #include <errno.h>
+#if defined(__GNUC__) && (__GNUC___ < 5)
+#define ONLY_C_LOCALE 1
+  // In date.h replace fields() = default;
+  // with fields() : ymd{year{0}/0/0}, wd{7u} {}
+#endif
+
 #endif
 
 #include <iostream>
@@ -63,13 +69,13 @@ static bool g_skip_flushing = false;
 
 using namespace std;
 
-int main( int argc, char** argv )
+int main(int argc, char** argv)
 {
     set<string>
         o_loglevel = { "ll", "loglevel" },
-        o_buffer   = {"b", "buffer" },
-        o_verbose  = {"v", "verbose" },
-        o_noflush  = {"s", "skipflush" };
+        o_buffer   = { "b", "buffer" },
+        o_verbose  = { "v", "verbose" },
+        o_noflush  = { "s", "skipflush" };
 
     // Options that expect no arguments (ARG_NONE) need not be mentioned.
     vector<OptionScheme> optargs = {
@@ -108,12 +114,12 @@ int main( int argc, char** argv )
     UDT::setloglevel(lev);
     UDT::addlogfa(SRT_LOGFA_APP);
 
-   string verbo = Option<OutString>(params, "no", o_verbose);
-   if ( verbo == "" || !false_names.count(verbo) )
-       Verbose::on = true;
+    string verbo = Option<OutString>(params, "no", o_verbose);
+    if (verbo == "" || !false_names.count(verbo))
+        Verbose::on = true;
 
     string bs = Option<OutString>(params, "", o_buffer);
-    if ( bs != "" )
+    if (bs != "")
     {
         ::g_buffer_size = stoi(bs);
     }
@@ -176,7 +182,7 @@ void ExtractPath(string path, ref_t<string> dir, ref_t<string> fname)
     {
         // Extract directory as a butlast part of path
         size_t pos = path.find_last_of("/");
-        if ( pos == string::npos )
+        if (pos == string::npos)
         {
             filename = path;
             directory = ".";
@@ -184,7 +190,7 @@ void ExtractPath(string path, ref_t<string> dir, ref_t<string> fname)
         else
         {
             directory = path.substr(0, pos);
-            filename = path.substr(pos+1);
+            filename = path.substr(pos + 1);
         }
     }
 
@@ -196,7 +202,7 @@ void ExtractPath(string path, ref_t<string> dir, ref_t<string> fname)
         static const size_t s_max_path = 4096; // don't care how proper this is
         char tmppath[s_max_path];
         char* gwd = getcwd(tmppath, s_max_path);
-        if ( !gwd )
+        if (!gwd)
         {
             // Don't bother with that now. We need something better for that anyway.
             throw std::invalid_argument("Path too long");
@@ -342,7 +348,7 @@ bool TransmitFile(const string &filename, const string &upload_name, const SRTSO
 
     const size_t rate_kbps = (file_size * 1000) / (delta_us) * 8;
     Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
-           << chrono::duration_cast<chrono::seconds>(time_end - time_start).count() << " s";
+        << chrono::duration_cast<chrono::seconds>(time_end - time_start).count() << " s";
 
     return true;
 }
@@ -412,7 +418,7 @@ bool DoUploadFolderContents(UriParser& ut, string path)
 
         cerr << "File: '" << dir << ent->d_name << "'\n";
         const bool transmit_res = TransmitFile(dir + ent->d_name, dir + ent->d_name,
-                                               m.Socket(), buf);
+            m.Socket(), buf);
         free(ent);
 
         if (!transmit_res)
@@ -502,7 +508,6 @@ bool DoUploadJSONSeq(UriParser& ut, string path, const string &dir)
         this_thread::sleep_for(wait_ms);
 
         time_prev = rcv_time;
-        const auto t = j["metadata"]["headers"].type();
         const auto hdr = j["metadata"]["headers"];
         Verb() << "Delta = " << delta_ms.count() << " ms (" << delta_ms_from_start.count() << " ms from start, ";
         std::cout << "Content-Length = " << j["metadata"]["headers"][4][1] << ", URI " << j["metadata"]["uri_path"] << ")\n";
@@ -537,7 +542,7 @@ bool DoDownload(UriParser& us, string directory)
     struct stat state;
     if (stat(path.c_str(), &state) == -1)
     {
-        switch ( errno )
+        switch (errno)
         {
         case ENOENT:
             // This is expected, go on.
@@ -593,7 +598,7 @@ bool DoDownload(UriParser& us, string directory)
             // extranct the filename from the received buffer
             string filename = string(buf.data() + 1);
             hdr_size += filename.size() + 1;    // 1 for null character
-            
+
             CreateSubfolders(filename);
 
             ofile.open(filename.c_str(), ios::out | ios::trunc | ios::binary);
@@ -627,7 +632,7 @@ bool DoDownload(UriParser& us, string directory)
             //Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
             //       << chrono::duration_cast<chrono::minutes>(time_end - time_start).count() << " minute(s))";
             Verb() << "--> done (" << file_size / 1024 << " kbytes transfered at " << rate_kbps << " kbps, took "
-                   << delta_ms / 1000.0 << " sec)";
+                << delta_ms / 1000.0 << " sec)";
         }
     }
 
@@ -654,7 +659,7 @@ bool Upload(UriParser& srt_target_uri, UriParser& fileuri)
     //}
 
     Verb() << "Extract path '" << path << "': directory=" << directory;
-    
+
     // Add some extra parameters.
     srt_target_uri["transtype"] = "file";
 
@@ -664,7 +669,7 @@ bool Upload(UriParser& srt_target_uri, UriParser& fileuri)
 
 bool Download(UriParser& srt_source_uri, UriParser& fileuri)
 {
-    if (fileuri.scheme() != "file" )
+    if (fileuri.scheme() != "file")
     {
         cerr << "Download: target accepted only as a folder\n";
         return false;
