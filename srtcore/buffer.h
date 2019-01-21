@@ -369,7 +369,7 @@ public:
       /// @return true if ready to play, false otherwise (tsbpdtime may be !0 in
       /// both cases).
 
-   bool isRcvDataReady(uint64_t& tsbpdtime, CPacket** pppkt = 0);
+   bool isRcvDataReady(uint64_t& tsbpdtime, int32_t& curseqno);
    bool isRcvDataReady();
    bool isRcvDataAvailable()
    {
@@ -407,7 +407,16 @@ public:
       ///                   IF skipseqno == -1, no missing packet but 1st not ready to play.
 
 
-   bool getRcvFirstMsg(uint64_t& tsbpdtime, bool& passack, int32_t& skipseqno, CPacket** pppkt=0);
+   bool getRcvFirstMsg(uint64_t& tsbpdtime, bool& passack, int32_t& skipseqno, int32_t& curseqno);
+   // Performance version
+   bool getRcvFirstMsg(uint64_t& tsbpdtime, uint64_t& oldesttsbpdtime,
+           bool& passack, int32_t& skipseqno, int32_t& curpktseq, int32_t& oldestpktseq);
+
+   // Splitting function
+   bool getRcvFirstPassackMsg(uint64_t& r_tsbpdtime, int32_t& skipseqno, int32_t& r_curpktseq);
+   // Performance version
+   bool getRcvFirstPassackMsg(uint64_t& r_tsbpdtime, uint64_t& oldesttsbpdtime,
+           int32_t& r_curpktseq, int32_t& r_oldpktseq);
 
       /// Update the ACK point of the buffer.
       /// @param len [in] size of data to be skip & acknowledged.
@@ -424,7 +433,10 @@ private:
       /// @retval false tsbpdtime = 0: no packet ready to play
 
 
-   bool getRcvReadyMsg(uint64_t& tsbpdtime, CPacket** pppkt = 0);
+   bool getRcvReadyMsg(uint64_t& tsbpdtime, int32_t& curpktseq);
+   // Perflog version
+   bool getRcvReadyMsg(uint64_t& tsbpdtime, uint64_t& oldesttsbpdtime, int32_t& curpktseq, int32_t& oldestpktseq);
+
 
       /// Get packet delivery local time base (adjusted for wrap around)
       /// @param timestamp [in] packet timestamp (relative to peer StartTime), wrapping around every ~72 min

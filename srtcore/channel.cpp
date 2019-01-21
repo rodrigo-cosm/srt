@@ -89,7 +89,7 @@ modified by
 using namespace std;
 
 
-extern logging::Logger mglog;
+extern logging::Logger mglog, perflog;
 
 CChannel::CChannel():
 m_iIPversion(AF_INET),
@@ -346,6 +346,9 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
       for (int l = 0, n = packet.getLength() / 4; l < n; ++ l)
          *((uint32_t *)packet.m_pcData + l) = ntohl(*((uint32_t *)packet.m_pcData + l));
    }
+
+    LOGC(perflog.Note) << "CChannel: INCOMING PACKET size=" << res << " seq="
+            << (IsSet(packet.m_iSeqNo, SEQNO_CONTROL::mask) ? -1 : packet.m_iSeqNo);
 
    return res;
 }

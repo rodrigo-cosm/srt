@@ -440,7 +440,7 @@ inline std::string FormatTime(uint64_t time)
 
     char tmp_buf[512];
 #ifdef WIN32
-    strftime(tmp_buf, 512, "%Y-%m-%d.", &tm);
+    strftime(tmp_buf, 512, "%X.", &tm);
 #else
     strftime(tmp_buf, 512, "%T.", &tm);
 #endif
@@ -461,7 +461,7 @@ inline void LogDispatcher::CreateLogLinePrefix(std::ostringstream& serr)
         gettimeofday(&tv, 0);
         time_t t = tv.tv_sec;
         struct tm tm = LocalTime(t);
-        strftime(tmp_buf, 512, "%T.", &tm);
+        strftime(tmp_buf, 512, "%X.", &tm);
 
         serr << tmp_buf << setw(6) << setfill('0') << tv.tv_usec;
     }

@@ -19,6 +19,11 @@ include(haiUtil)
 include(FindPkgConfig)
 include(FindThreads)
 
+# FLAVOR
+
+add_definitions(-DENFORCE_PERF_STATS=1)
+
+
 set (SRT_VERSION 1.2.3)
 set_version_variables(SRT_VERSION ${SRT_VERSION})
 

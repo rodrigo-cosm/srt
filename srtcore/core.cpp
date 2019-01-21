@@ -1435,9 +1435,13 @@ void* CUDT::tsbpd(void* param)
    self->m_bTsbPdAckWakeup = true;
    while (!self->m_bClosing)
    {
-      CPacket* rdpkt = 0;
       uint64_t tsbpdtime = 0;
       bool rxready = false;
+      int32_t curpktseq = -1;
+#if ENFORCE_PERF_STATS
+      uint64_t old_tsbpdtime = 0;
+      int32_t old_pktseq = 0;
+#endif
 
       CGuard::enterCS(self->m_AckLock);
 
@@ -1450,8 +1454,12 @@ void* CUDT::tsbpd(void* param)
       {
           int32_t skiptoseqno = -1;
           bool passack = true; //Get next packet to wait for even if not acked
-
-          rxready = self->m_pRcvBuffer->getRcvFirstMsg(tsbpdtime, passack, skiptoseqno, &rdpkt);
+#if ENFORCE_PERF_STATS
+          rxready = self->m_pRcvBuffer->getRcvFirstMsg(tsbpdtime, old_tsbpdtime, passack,
+                  skiptoseqno, curpktseq, old_pktseq);
+#else
+          rxready = self->m_pRcvBuffer->getRcvFirstMsg(tsbpdtime, passack, skiptoseqno, curpktseq);
+#endif
           /*
           * rxready:     packet at head of queue ready to play if true
           * tsbpdtime:   timestamp of packet at head of queue, ready or not. 0 if none.
@@ -1507,16 +1515,29 @@ void* CUDT::tsbpd(void* param)
       } else
 #endif /* SRT_ENABLE_TLPKTDROP */
       {
-          rxready = self->m_pRcvBuffer->isRcvDataReady(tsbpdtime, &rdpkt);
+          rxready = self->m_pRcvBuffer->isRcvDataReady(tsbpdtime, curpktseq);
       }
       CGuard::leaveCS(self->m_AckLock);
 
       if (rxready)
       {
-          int seq=0;
-          if ( rdpkt )
-              seq = rdpkt->getSeqNo();
-          LOGC(tslog.Debug) << self->CONID() << "PLAYING PACKET seq=" << seq << " (belated " << ((CTimer::getTime() - tsbpdtime)/1000.0) << "ms)";
+          LOGC(tslog.Debug) << self->CONID() << "PLAYING PACKET seq=" << curpktseq << " (belated " << ((CTimer::getTime() - tsbpdtime)/1000.0) << "ms)";
+
+#if ENFORCE_PERF_STATS
+          int span = 0;
+          if (old_tsbpdtime && tsbpdtime)
+              span = old_tsbpdtime - tsbpdtime;
+
+          int seqspan = 0;
+          if (curpktseq && old_pktseq)
+              seqspan = CSeqNo::seqcmp(old_pktseq, curpktseq);
+
+          LOGC(perflog.Note) << self->CONID() << "tsbpd: PLAYING %" << curpktseq
+                  << " T=" << logging::FormatTime(tsbpdtime) << " OLDEST: %" << old_pktseq
+                  << " T=" << logging::FormatTime(old_tsbpdtime) << " BUFSPAN="
+                  << (span/1000.0) << "ms " << seqspan << " packets waiting";
+#endif
+
          /*
          * There are packets ready to be delivered
          * signal a waiting "recv" call if there is any data available
@@ -1543,11 +1564,8 @@ void* CUDT::tsbpd(void* param)
           timespec locktime;
           locktime.tv_sec = tsbpdtime / 1000000;
           locktime.tv_nsec = (tsbpdtime % 1000000) * 1000;
-          int seq = 0;
-          if ( rdpkt )
-              seq = rdpkt->getSeqNo();
           uint64_t now = CTimer::getTime();
-          LOGC(tslog.Debug) << self->CONID() << "FUTURE PACKET seq=" << seq << " T=" << logging::FormatTime(tsbpdtime) << " - waiting " << ((tsbpdtime - now)/1000.0) << "ms";
+          LOGC(tslog.Debug) << self->CONID() << "FUTURE PACKET seq=" << curpktseq << " T=" << logging::FormatTime(tsbpdtime) << " - waiting " << ((tsbpdtime - now)/1000.0) << "ms";
           pthread_cond_timedwait(&self->m_RcvTsbPdCond, &self->m_RecvLock, &locktime);
           THREAD_RESUMED();
       }
@@ -2296,6 +2314,9 @@ int CUDT::recvmsg(char* data, int len, uint64_t& srctime)
 
    if (len <= 0)
       return 0;
+
+    // Mark the very first entry point, before any mutex sugar tax applies.
+    LOGC(perflog.Note) << "receiveMessage: START";
 
    CGuard recvguard(m_RecvLock);
 
