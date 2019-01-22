@@ -18,8 +18,11 @@
 #include <iterator>
 #include <map>
 #include <srt.h>
-#if !defined(WIN32)
+#if !defined(_WIN32)
 #include <sys/ioctl.h>
+#else
+#include <fcntl.h> 
+#include <io.h>
 #endif
 
 #include "netinet_any.h"
@@ -102,7 +105,7 @@ Iface* CreateFile(const string& name) { return new typename File<Iface>::type (n
 
 
 template <class PerfMonType>
-void PrintSrtStats(int sid, const PerfMonType& mon)
+static void PrintSrtStats(int sid, const PerfMonType& mon)
 {
     std::ostringstream output;
 
@@ -156,6 +159,19 @@ void PrintSrtStats(int sid, const PerfMonType& mon)
         output << "WINDOW      FLOW: " << setw(11) << mon.pktFlowWindow      << "  CONGESTION: " << setw(11) << mon.pktCongestionWindow  << "  FLIGHT: " << setw(11) << mon.pktFlightSize << endl;
         output << "LINK         RTT: " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s " << endl;
         output << "BUFFERLEFT:  SND: " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
+    }
+
+    cerr << output.str() << std::flush;
+}
+
+static void PrintSrtBandwidth(double mbpsBandwidth)
+{
+    std::ostringstream output;
+
+    if (printformat_json) {
+        output << "{\"bandwidth\":" << mbpsBandwidth << '}' << endl;
+    } else {
+        output << "+++/+++SRT BANDWIDTH: " << mbpsBandwidth << endl;
     }
 
     cerr << output.str() << std::flush;
@@ -601,7 +617,7 @@ bool SrtSource::Read(size_t chunk, bytevector& data)
     clear_stats = false;
     if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
     {
-        cerr << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth << endl;
+        PrintSrtBandwidth(perf.mbpsBandwidth);
     }
     if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
     {
@@ -647,11 +663,7 @@ bool SrtTarget::Write(const bytevector& data)
     clear_stats = false;
     if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
     {
-        if (printformat_json) {
-            cerr << "{\"bandwidth\":" << perf.mbpsBandwidth << '}' << endl;
-        } else {
-            cerr << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth << endl;
-        }
+        PrintSrtBandwidth(perf.mbpsBandwidth);
     }
     if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
     {
@@ -757,6 +769,11 @@ public:
 
     ConsoleSource()
     {
+#ifdef _WIN32
+        // The default stdin mode on windows is text.
+        // We have to set it to the binary mode
+        _setmode(_fileno(stdin), _O_BINARY);
+#endif
     }
 
     bool Read(size_t chunk, bytevector& data) override
@@ -791,6 +808,11 @@ public:
 
     ConsoleTarget()
     {
+#ifdef _WIN32
+        // The default stdout mode on windows is text.
+        // We have to set it to the binary mode
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
     }
 
     bool Write(const bytevector& data) override
@@ -845,7 +867,7 @@ protected:
         ::setsockopt(m_sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof yes);
 
         // set non-blocking mode
-#if defined(WIN32)
+#if defined(_WIN32)
         unsigned long ulyes = 1;
         if (ioctlsocket(m_sock, FIONBIO, &ulyes) == SOCKET_ERROR)
 #else
@@ -914,7 +936,7 @@ protected:
                 mreq_arg_ptr = &mreq;
             }
 
-#ifdef WIN32
+#ifdef _WIN32
             const char* mreq_arg = (const char*)mreq_arg_ptr;
             const auto status_error = SOCKET_ERROR;
 #else
@@ -922,7 +944,7 @@ protected:
             const auto status_error = -1;
 #endif
 
-#if defined(WIN32) || defined(__CYGWIN__)
+#if defined(_WIN32) || defined(__CYGWIN__)
             // On Windows it somehow doesn't work when bind()
             // is called with multicast address. Write the address
             // that designates the network device here.
@@ -990,7 +1012,7 @@ protected:
 
     ~UdpCommon()
     {
-#ifdef WIN32
+#ifdef _WIN32
         if (m_sock != -1)
         {
            shutdown(m_sock, SD_BOTH);

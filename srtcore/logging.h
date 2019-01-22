@@ -22,7 +22,7 @@ written by
 #include <set>
 #include <sstream>
 #include <cstdarg>
-#ifdef WIN32
+#ifdef _WIN32
 #include "win/wintime.h"
 #include <sys/timeb.h>
 #else
@@ -66,9 +66,9 @@ written by
 
 #if ENABLE_HEAVY_LOGGING
 
-#define HLOGC(...) LOGC(__VA_ARGS__)
-#define HLOGF(...) LOGF(__VA_ARGS__)
-#define HLOGP(...) LOGP(__VA_ARGS__)
+#define HLOGC LOGC
+#define HLOGP LOGP
+#define HLOGF LOGF
 
 #else
 
@@ -452,6 +452,7 @@ inline void LogDispatcher::SendLogLine(const char* file, int line, const std::st
     else if ( src_config->log_stream )
     {
         (*src_config->log_stream) << msg;
+        (*src_config->log_stream).flush();
     }
     src_config->unlock();
 }
