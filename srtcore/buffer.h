@@ -311,7 +311,7 @@ public:
       /// both cases).
 
    bool isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
-   bool isRcvDataReady();
+   bool isRcvDataReady(uint64_t nowtime = 0);
    bool isRcvDataAvailable()
    {
        return m_iLastAckPos != m_iStartPos;

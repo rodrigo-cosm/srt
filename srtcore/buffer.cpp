@@ -1161,12 +1161,28 @@ CPacket* CRcvBuffer::getRcvReadyPacket()
     return 0;
 }
 
-bool CRcvBuffer::isRcvDataReady()
+bool CRcvBuffer::isRcvDataReady(uint64_t nowtime)
 {
-   uint64_t tsbpdtime;
-   int32_t seq;
+   if (m_bTsbPdMode)
+   {
+       CPacket* pkt = getRcvReadyPacket();
+       if ( pkt )
+       {
+            /* 
+            * Acknowledged data is available,
+            * Only say ready if time to deliver.
+            * Report the timestamp, ready or not.
+            */
+            uint64_t tsbpdtime = getPktTsbPdTime(pkt->getMsgTimeStamp());
+            if (!nowtime)
+                nowtime = CTimer::getTime();
+            if (tsbpdtime <= nowtime)
+               return true;
+       }
+       return false;
+   }
 
-   return isRcvDataReady(Ref(tsbpdtime), Ref(seq));
+   return isRcvDataAvailable();
 }
 
 int CRcvBuffer::getAvailBufSize() const

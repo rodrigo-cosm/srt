@@ -5455,54 +5455,97 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     }
 
     int res = 0;
+    int received_size = 0;
     bool timeout = false;
     //Do not block forever, check connection status each 1 sec.
     uint64_t recvtmo = m_iRcvTimeOut < 0 ? 1000 : m_iRcvTimeOut;
+    uint64_t now_us = m_bTsbPd ? CTimer::getTime() : 0ull;
 
-    do
+    for (;;)
     {
-        if (stillConnected() && !timeout && (!m_pRcvBuffer->isRcvDataReady()))
-        {
-            /* Kick TsbPd thread to schedule next wakeup (if running) */
-            if (m_bTsbPd)
-            {
-                HLOGP(tslog.Debug, "recvmsg: KICK tsbpd()");
-                pthread_cond_signal(&m_RcvTsbPdCond);
-            }
-
-            do
-            {
-                if (CTimer::condTimedWaitUS(&m_RecvDataCond, &m_RecvLock, recvtmo * 1000) == ETIMEDOUT)
-                {
-                    if (!(m_iRcvTimeOut < 0))
-                        timeout = true;
-                    HLOGP(tslog.Debug, "recvmsg: DATA COND: EXPIRED -- trying to get data anyway");
-                }
-                else
-                {
-                    HLOGP(tslog.Debug, "recvmsg: DATA COND: KICKED.");
-                }
-            } while (stillConnected() && !timeout && (!m_pRcvBuffer->isRcvDataReady()));
-        }
-
-        /* XXX DEBUG STUFF - enable when required
-        LOGC(dlog.Debug, "RECVMSG/GO-ON BROKEN " << m_bBroken << " CONN " << m_bConnected
-                << " CLOSING " << m_bClosing << " TMOUT " << timeout
-                << " NMSG " << m_pRcvBuffer->getRcvMsgNum());
-                */
-
-        res = m_pRcvBuffer->readMsg(data, len, r_mctrl);
-
+        // 1. Check initial conditions to see if reading operation can be done
         if (m_bBroken || m_bClosing)
         {
             if (!m_bMessageAPI && m_bShutdown)
                 return 0;
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
         }
-        else if (!m_bConnected)
-            throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
-    } while ((res == 0) && !timeout);
 
+        if (!m_bConnected)
+        {
+            throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
+        }
+
+        if (!m_pRcvBuffer->isRcvDataReady(now_us))
+        {
+            // Data not ready, block until got anything
+            if (m_bTsbPd)
+            {
+                HLOGP(tslog.Debug, "recvmsg: KICK tsbpd()");
+                pthread_cond_signal(&m_RcvTsbPdCond);
+            }
+
+            if (CTimer::condTimedWaitUS(&m_RecvDataCond, &m_RecvLock, recvtmo * 1000) == ETIMEDOUT)
+            {
+                if (!(m_iRcvTimeOut < 0))
+                {
+                    HLOGP(tslog.Debug, "recvmsg: DATA COND: EXPIRED -- TIMEOUT");
+                    timeout = true;
+                }
+                else
+                {
+                    HLOGP(tslog.Debug, "recvmsg: DATA COND: EXPIRED -- CHECKPOINT");
+                }
+            }
+            else
+            {
+                HLOGP(tslog.Debug, "recvmsg: DATA COND: SIGNALED.");
+            }
+
+            // If 'timeout' is reached, just stop reading, even if nothing was read
+            if (timeout)
+                break;
+
+            continue; // check all conditions again, we don't know the reason
+        }
+
+ReadAgain:
+
+        res = m_pRcvBuffer->readMsg(data, len, r_mctrl);
+
+        // Check if we still have free space in the buffer and more can be received.
+        if (res > 0)
+        {
+            received_size += res;
+            size_t remain = len - res;
+
+            // Don't check connected as long as you have successfully read at least one
+            // buffer and are able to continue reading up to the last ready to play and
+            // as long as there's still enough space in the user buffer.
+
+            // This procedure will *NOT* be used if payloadsize == 0, which would be the
+            // case for File/Message mode. In this case the user must have exactly one
+            // message extracted, always.
+            if (m_zOPT_ExpPayloadSize && remain >= m_zOPT_ExpPayloadSize && m_pRcvBuffer->isRcvDataReady(now_us))
+            {
+                data += res;
+                len -= res;
+                goto ReadAgain;
+            }
+        }
+
+        // If it happened at least once that something was extracted,
+        // simply interrupt the waiting loop.
+        if (received_size > 0)
+        {
+            res = received_size;
+            break;
+        }
+
+        // All checks will be now repeated.
+    }
+
+    // This time read the really current time here.
     if (!m_pRcvBuffer->isRcvDataReady())
     {
         // Falling here means usually that res == 0 && timeout == true.
