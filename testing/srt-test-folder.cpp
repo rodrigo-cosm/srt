@@ -249,25 +249,18 @@ bool CreateFolder(const string &path)
 bool CreateSubfolders(const string &path)
 {
     size_t found = path.find("./");
-    if (found != std::string::npos)
-    {
-        Verb() << "first './' found at: " << found << '\n';
-    }
-    else
+    if (found == std::string::npos)
     {
         found = path.find(".\\");
-        if (found != std::string::npos)
-            Verb() << "first '.\\' found at: " << found << '\n';
     }
 
+    size_t pos = found != std::string::npos ? (found + 2) : 0;
     const size_t last_delim = path.find_last_of("/\\");
-    if (last_delim == string::npos)
+    if (last_delim == string::npos || last_delim < pos)
     {
         Verb() << "No folders to create\n";
         return true;
     }
-
-    size_t pos = found != std::string::npos ? (found + 2) : 0;
 
     while (pos != std::string::npos && pos != last_delim)
     {
@@ -651,20 +644,20 @@ bool Upload(UriParser& srt_target_uri, UriParser& fileuri)
     string directory, filename;
     ExtractPath(path, ref(directory), ref(filename));
 
-    //if (!filename.empty())
-    //{
-    //    cerr << "Upload: source accepted only as a folder (file "
-    //         << filename << " is specified)\n";
-    //    return false;
-    //}
+    if (!filename.empty())
+    {
+        cerr << "Upload: source accepted only as a folder (file "
+             << filename << " is specified)\n";
+        return false;
+    }
 
     Verb() << "Extract path '" << path << "': directory=" << directory;
 
     // Add some extra parameters.
     srt_target_uri["transtype"] = "file";
 
-    //return DoUploadFolderContents(srt_target_uri, path);
-    return DoUploadJSONSeq(srt_target_uri, path, directory);
+    return DoUploadFolderContents(srt_target_uri, path);
+    //return DoUploadJSONSeq(srt_target_uri, path, directory);
 }
 
 bool Download(UriParser& srt_source_uri, UriParser& fileuri)
