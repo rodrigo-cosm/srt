@@ -199,6 +199,8 @@ SRT_SOCKSTATUS srt_getsockstate(SRTSOCKET u) { return SRT_SOCKSTATUS((int)CUDT::
 // event mechanism
 int srt_epoll_create() { return CUDT::epoll_create(); }
 
+int srt_epoll_clear_usocks(int eit) { return CUDT::epoll_clear_usocks(eit); }
+
 // You can use either SRT_EPOLL_* flags or EPOLL* flags from <sys/epoll.h>, both are the same. IN/OUT/ERR only.
 // events == NULL accepted, in which case all flags are set.
 int srt_epoll_add_usock(int eid, SRTSOCKET u, const int * events) { return CUDT::epoll_add_usock(eid, u, events); }

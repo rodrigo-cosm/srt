@@ -68,7 +68,7 @@
 #include "uriparser.hpp"  // UriParser
 #include "socketoptions.hpp"
 #include "logsupport.hpp"
-#include "testmediabase.hpp"
+#include "testmedia.hpp"
 #include "verbose.hpp"
 
 // NOTE: This is without "haisrt/" because it uses an internal path
@@ -82,19 +82,6 @@ using namespace std;
 
 
 map<string,string> g_options;
-
-string Option(string deflt="") { return deflt; }
-
-template <class... Args>
-string Option(string deflt, string key, Args... further_keys)
-{
-    map<string, string>::iterator i = g_options.find(key);
-    if ( i == g_options.end() )
-        return Option(deflt, further_keys...);
-    return i->second;
-}
-
-ostream* cverb = &cout;
 
 struct ForcedExit: public std::runtime_error
 {
@@ -194,6 +181,86 @@ struct BandwidthGuard
     }
 };
 
+bool CheckMediaSpec(const string& prefix, const vector<string>& spec, ref_t<string> r_outspec)
+{
+    // This function prints error messages by itself then returns false.
+    // Otherwise nothing is printed and true is returned.
+    // r_outspec is for a case when a redundancy specification should be translated.
+
+    string& outspec = *r_outspec;
+
+    if (spec.empty())
+    {
+        cerr << prefix << ": Specification is empty\n";
+        return false;
+    }
+
+    if (spec.size() == 1)
+    {
+        // Then, whatever.
+        outspec = spec[0];
+        return true;
+    }
+
+    // We have multiple items specified, check each one
+    // it SRT, if so, craft the redundancy URI spec,
+    // otherwise reject
+    vector<string> adrs;
+    map<string,string> uriparam;
+    bool first = true;
+    bool allow_raw_spec = false;
+    for (auto uris: spec)
+    {
+        UriParser uri(uris, UriParser::EXPECT_HOST);
+        if (!allow_raw_spec && uri.type() != UriParser::SRT)
+        {
+            cerr << ": Multiple media must be all with SRT scheme, or srt://* as first.\n";
+            return false;
+        }
+
+        if (uri.host() == "*")
+        {
+            allow_raw_spec = true;
+            first = false;
+            uriparam = uri.parameters();
+
+            // This does not specify the address, only options and URI.
+            continue;
+        }
+
+        string aspec = uri.host() + ":" + uri.port();
+        if (aspec[0] == ':' || aspec[aspec.size()-1] == ':')
+        {
+            cerr << "Empty host or port in the address specification: " << uris << endl;
+            return false;
+        }
+
+        adrs.push_back(aspec);
+        if (first)
+        {
+            uriparam = uri.parameters();
+            first = false;
+        }
+    }
+
+    outspec = "srt:////group?";
+    if (map_getp(uriparam, "type") == nullptr)
+        uriparam["type"] = "redundancy";
+
+    for (auto& name_value: uriparam)
+    {
+        string name, value; tie(name, value) = name_value;
+        outspec += name + "=" + value + "&";
+    }
+    outspec += "nodes=";
+    for (string& a: adrs)
+        outspec += a + ",";
+
+    Verb() << "NOTE: " << prefix << " specification set as: " << (*r_outspec);
+
+    return true;
+}
+
 extern "C" void TestLogHandler(void* opaque, int level, const char* file, int line, const char* area, const char* message);
 
 int main( int argc, char** argv )
@@ -213,54 +280,105 @@ int main( int argc, char** argv )
         }
     } cleanupobj;
 
-    vector<string> args;
-    copy(argv+1, argv+argc, back_inserter(args));
 
-    // Check options
-    vector<string> params;
+    OptionName
+        o_timeout   ("<timeout[s]=0> Data transmission timeout", "t",   "to", "timeout" ),
+        o_chunk     ("<chunk=1316> Single reading operation buffer size", "c",   "chunk"),
+        o_bandwidth ("<bw[ms]=0[unlimited]> Input reading speed limit", "b",   "bandwidth", "bitrate"),
+        o_report    ("<frequency[1/pkt]=0> Print bandwidth report periodically", "r",   "bandwidth-report", "bitrate-report"),
+        o_verbose   (" Print size of every packet transferred on stdout", "v",   "verbose"),
+        o_crash     (" Core-dump when connection got broken by whatever reason (developer mode)", "k",   "crash"),
+        o_loglevel  ("<severity=fatal|error|note|warning|debug> Minimum severity for logs", "ll",  "loglevel"),
+        o_logfa     ("<FA=all> Enabled Functional Areas", "lfa", "logfa"),
+        o_logfile   ("<filepath> File to send logs to", "lf",  "logfile"),
+        o_stats     ("<freq[npkt]> How often stats should be reported", "s",   "stats", "stats-report-frequency"),
+        o_logint    (" Use internal function for receiving logs (for testing)",        "loginternal"),
+        o_skipflush (" Do not wait safely 5 seconds at the end to flush buffers", "sf",  "skipflush"),
+        o_stoptime  ("<time[s]=0[no timeout]> Time after which the application gets interrupted", "d", "stoptime"),
+        o_group     ("<URIs...> Using multiple SRT connections as redundancy group", "g"),
+        o_help      (" This help", "?",   "help", "-help")
+            ;
 
-    for (string a: args)
+
+    vector<OptionScheme> optargs = {
+        { o_timeout, OptionScheme::ARG_ONE },
+        { o_chunk, OptionScheme::ARG_ONE },
+        { o_bandwidth, OptionScheme::ARG_ONE },
+        { o_report, OptionScheme::ARG_ONE },
+        { o_verbose, OptionScheme::ARG_NONE },
+        { o_crash, OptionScheme::ARG_NONE },
+        { o_loglevel, OptionScheme::ARG_ONE },
+        { o_logfa, OptionScheme::ARG_ONE },
+        { o_logfile, OptionScheme::ARG_ONE },
+        { o_stats, OptionScheme::ARG_ONE },
+        { o_skipflush, OptionScheme::ARG_NONE },
+        { o_stoptime, OptionScheme::ARG_ONE },
+        { o_group, OptionScheme::ARG_VAR }
+    };
+
+    options_t params = ProcessOptions(argv, argc, optargs);
+
+    // Check the special option: -g
+    // The syntax is:
+    // ./stransmit -g SRT1 SRT2 SRT3 SRT4: <1, 2, 3> is a source redundancy group, 4 is target
+    // ./stransmit SRT1 -g SRT2 SRT3 SRT4: 1 is a single source, 2 3 4 is a target redundancy group
+    // ./stransmit SRT1 SRT2 SRT3 -g SRT4 SRT5 SRT6: 1, 2, 3 is a source redundancy group, 4, 5, 6 is a target redundancy group
+
+    bool need_help = Option<OutString>(params, "no", o_help) != "no";
+
+    vector<string> args = params[""];
+
+    string source_spec, target_spec;
+    vector<string> groupspec = Option<OutList>(params, vector<string>{}, o_group);
+    vector<string> source_items, target_items;
+
+    if (!need_help)
     {
-        if ( a[0] == '-' )
+        // You may still need help.
+
+        if ( !groupspec.empty() )
         {
-            string key = a.substr(1);
-            size_t pos = key.find(':');
-            if ( pos == string::npos )
-                pos = key.find(' ');
-            string value = pos == string::npos ? "" : key.substr(pos+1);
-            key = key.substr(0, pos);
-            g_options[key] = value;
-            continue;
+            // Check if you have something before -g and after -g.
+            if (args.empty())
+            {
+                // Then all items are sources, but the last one is a single target.
+                if (groupspec.size() < 3)
+                {
+                    cerr << "ERROR: Redundancy group: with nothing preceding -g, use -g <SRC-URI1> <SRC-URI2>... <TAR-URI> (at least 3 args)\n";
+                    need_help = true;
+                }
+                else
+                {
+                    copy(groupspec.begin(), groupspec.end()-1, back_inserter(source_items));
+                    target_items.push_back(*(groupspec.end()-1));
+                }
+            }
+            else
+            {
+                // Something before g, something after g. This time -g can accept also one argument.
+                copy(args.begin(), args.end(), back_inserter(source_items));
+                copy(groupspec.begin(), groupspec.end(), back_inserter(target_items));
+            }
         }
-
-        params.push_back(a);
+        else
+        {
+            if (args.size() < 2)
+            {
+                cerr << "ERROR: source and target URI must be specified.\n\n";
+                need_help = true;
+            }
+            else
+            {
+                source_items.push_back(args[0]);
+                target_items.push_back(args[1]);
+            }
+        }
     }
 
-    if ( params.size() != 2 )
-    {
-        cerr << "Usage: " << argv[0] << " [options] <input-uri> <output-uri>\n";
-        cerr << "\t-t:<timeout=0> - connection timeout\n";
-        cerr << "\t-c:<chunk=1316> - max size of data read in one step\n";
-        cerr << "\t-b:<bandwidth> - set SRT bandwidth\n";
-        cerr << "\t-r:<report-frequency=0> - bandwidth report frequency\n";
-        cerr << "\t-s:<stats-report-freq=0> - frequency of status report\n";
-        cerr << "\t-k - crash on error (aka developer mode)\n";
-        cerr << "\t-v - verbose mode (prints also size of every data packet passed)\n";
-        return 1;
-    }
+    // Check verbose option before extracting the argument so that Verb()s
+    // can be displayed also when they report something about option parsing.
+    string verbose_val = Option<OutString>(params, "no", o_verbose);
 
-    int timeout = stoi(Option("30", "t", "to", "timeout"), 0, 0);
-    size_t chunk = stoul(Option("0", "c", "chunk"), 0, 0);
-    if ( chunk == 0 )
-    {
-        chunk = SRT_LIVE_DEF_PLSIZE;
-    }
-    else
-    {
-        transmit_chunk_size = chunk;
-    }
-
-    string verbose_val = Option("no", "v", "verbose");
     int verbch = 1; // default cerr
     if (verbose_val != "no")
     {
@@ -288,36 +406,78 @@ int main( int argc, char** argv )
         }
     }
 
-    bool crashonx = Option("no", "k", "crash") != "no";
-    string loglevel = Option("error", "loglevel");
-    string logfa = Option("general", "logfa");
-    string logfile = Option("", "logfile");
-    bool internal_log = Option("no", "loginternal") != "no";
-    bool skip_flushing = Option("no", "S", "skipflush") != "no";
 
-    // Options that require integer conversion
-    size_t bandwidth;
-    size_t stoptime;
-
-    try
+    if (!need_help)
     {
-        bandwidth = stoul(Option("0", "b", "bandwidth", "bitrate"));
-        transmit_bw_report = stoul(Option("0", "r", "report", "bandwidth-report", "bitrate-report"));
-        transmit_stats_report = stoi(Option("0", "s", "stats", "stats-report-frequency"));
-        stoptime = stoul(Option("0", "d", "stoptime"));
+        // Redundancy is then simply recognized by the fact that there are
+        // multiple specified inputs or outputs, for SRT caller only. Check
+        // every URI in advance.
+        if (!CheckMediaSpec("INPUT", source_items, Ref(source_spec)))
+            need_help = true;
+        if (!CheckMediaSpec("OUTPUT", target_items, Ref(target_spec)))
+            need_help = true;
     }
-    catch (std::invalid_argument)
+
+    if (need_help)
     {
-        cerr << "ERROR: Incorrect integer number specified for an option.\n";
+        cerr << "Usage:\n";
+        cerr << "    (1) " << argv[0] << " [options] <input> <output>\n";
+        cerr << "    (2) " << argv[0] << " <inputs...> -g <outputs...> [options]\n";
+        cerr << "*** (Position of [options] is unrestricted.)\n";
+        cerr << "*** (<variadic...> option parameters can be only terminated by a next option.)\n";
+        cerr << "where:\n";
+        cerr << "    (1) Exactly one input and one output URI spec is required,\n";
+        cerr << "    (2) Multiple SRT inputs or output as redundant links are allowed.\n";
+        cerr << "        `URI1 URI2 -g URI3` uses 1, 2 input and 3 output\n";
+        cerr << "        `-g URI1 URI2 URI3` like above\n";
+        cerr << "        `URI1 -g URI2 URI3` uses 1 input and 2, 3 output\n";
+        cerr << "SUPPORTED URI SCHEMES:\n";
+        cerr << "    srt: use SRT connection\n";
+        cerr << "    udp: read from bound UDP socket or send to given address as UDP\n";
+        cerr << "    file (default if scheme not specified) specified as:\n";
+        cerr << "       - empty host/port and absolute file path in the URI\n";
+        cerr << "       - only a filename, also as a relative path\n";
+        cerr << "       - file://con ('con' as host): designates stdin or stdout\n";
+        cerr << "OPTIONS HELP SYNTAX: -option <parameter[unit]=default[meaning]>:\n";
+        for (auto os: optargs)
+            cout << OptionHelpItem(os.id) << endl;
         return 1;
     }
 
+    int timeout = Option<OutNumber>(params, "30", o_timeout);
+    size_t chunk = Option<OutNumber>(params, "0", o_chunk);
+    if ( chunk == 0 )
+    {
+        chunk = SRT_LIVE_DEF_PLSIZE;
+    }
+    else
+    {
+        transmit_chunk_size = chunk;
+    }
+    
+    size_t bandwidth = Option<OutNumber>(params, "0", o_bandwidth);
+    transmit_bw_report = Option<OutNumber>(params, "0", o_report);
+    bool crashonx = OptionPresent(params, o_crash);
+
+    string loglevel = Option<OutString>(params, "error", o_loglevel);
+    string logfa = Option<OutString>(params, "general", o_logfa);
+    string logfile = Option<OutString>(params, "", o_logfile);
+    transmit_stats_report = Option<OutNumber>(params, "0", o_stats);
+
+    bool internal_log = OptionPresent(params, o_logint);
+    bool skip_flushing = OptionPresent(params, o_skipflush);
+
+    // Options that require integer conversion
+    size_t stoptime = Option<OutNumber>(params, "0", o_stoptime);
     std::ofstream logfile_stream; // leave unused if not set
 
     srt_setloglevel(SrtParseLogLevel(loglevel));
     set<logging::LogFA> fas = SrtParseLogFA(logfa);
     for (set<logging::LogFA>::iterator i = fas.begin(); i != fas.end(); ++i)
         srt_addlogfa(*i);
+
+
+    UDT::addlogfa(SRT_LOGFA_APP);
 
     char NAME[] = "SRTLIB";
     if ( internal_log )
@@ -387,8 +547,8 @@ int main( int argc, char** argv )
 
     try
     {
-        src = Source::Create(params[0]);
-        tar = Target::Create(params[1]);
+        src = Source::Create(source_spec);
+        tar = Target::Create(target_spec);
     }
     catch(std::exception& x)
     {
@@ -424,7 +584,7 @@ int main( int argc, char** argv )
     // Now loop until broken
     BandwidthGuard bw(bandwidth);
 
-    Verb() << "STARTING TRANSMISSION: '" << params[0] << "' --> '" << params[1] << "'";
+    Verb() << "STARTING TRANSMISSION: '" << source_spec << "' --> '" << target_spec << "'";
 
     // After the time has been spent in the creation
     // (including waiting for connection)
@@ -453,6 +613,7 @@ int main( int argc, char** argv )
             {
                 alarm(timeout);
             }
+            Verb() << " << ... " << VerbNoEOL;
             const bytevector& data = src->Read(chunk);
             Verb() << " << " << data.size() << "  ->  " << VerbNoEOL;
             if ( data.empty() && src->End() )
@@ -465,16 +626,18 @@ int main( int argc, char** argv )
             {
                 alarm(0);
             }
+
             if ( tar->Broken() )
             {
-                Verb() << " OUTPUT broken\n";
+                Verb() << " OUTPUT broken";
                 break;
             }
 
-            Verb() << " sent";
+            Verb() << "sent";
+
             if ( int_state )
             {
-                cerr << "\n (interrupted on request)\n";
+                Verror() << "\n (interrupted on request)";
                 break;
             }
 
@@ -486,7 +649,7 @@ int main( int argc, char** argv )
                 int remain = stoptime - final_delay - elapsed;
                 if (remain < 0)
                 {
-                    cerr << "\n (interrupted on timeout: elapsed " << elapsed << "s) - waiting " << final_delay << "s for cleanup\n";
+                    Verror() << "\n (interrupted on timeout: elapsed " << elapsed << "s) - waiting " << final_delay << "s for cleanup";
                     this_thread::sleep_for(chrono::seconds(final_delay));
                     break;
                 }
@@ -498,17 +661,17 @@ int main( int argc, char** argv )
 
         if (!skip_flushing)
         {
-            cerr << "(DEBUG) EOF when reading file. Looping until the sending bufer depletes.\n";
+            Verror() << "(DEBUG) EOF when reading file. Looping until the sending bufer depletes.\n";
             for (;;)
             {
                 size_t still = tar->Still();
                 if (still == 0)
                 {
-                    cerr << "(DEBUG) DEPLETED. Done.\n";
+                    Verror() << "(DEBUG) DEPLETED. Done.\n";
                     break;
                 }
 
-                cerr << "(DEBUG)... still " << still << " bytes (sleep 1s)\n";
+                Verror() << "(DEBUG)... still " << still << " bytes (sleep 1s)\n";
                 this_thread::sleep_for(chrono::seconds(1));
             }
         }
@@ -516,20 +679,24 @@ int main( int argc, char** argv )
 
         if (stoptime != 0 && ::timer_state)
         {
-            cerr << "Exit on timeout.\n";
+            Verror() << "Exit on timeout.";
         }
         else if (::int_state)
         {
+            Verror() << "Exit on interrupt.";
             // Do nothing.
         }
         else
         {
-            cerr << "STD EXCEPTION: " << x.what() << endl;
+            Verror() << "STD EXCEPTION: " << x.what();
         }
+
+        if ( crashonx )
+            throw;
 
         if (final_delay > 0)
         {
-            cerr << "Waiting " << final_delay << "s for possible cleanup...\n";
+            Verror() << "Waiting " << final_delay << "s for possible cleanup...";
             this_thread::sleep_for(chrono::seconds(final_delay));
         }
         if (stoptime != 0 && ::timer_state)
@@ -539,7 +706,7 @@ int main( int argc, char** argv )
 
     } catch (...) {
 
-        cerr << "UNKNOWN type of EXCEPTION\n";
+        Verror() << "UNKNOWN type of EXCEPTION";
         if ( crashonx )
             throw;
 

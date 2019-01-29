@@ -14,11 +14,15 @@
 #include <string>
 #include <map>
 #include <stdexcept>
+#include <deque>
 
 #include "testmediabase.hpp"
 #include <udt.h> // Needs access to CUDTException
 
 using namespace std;
+
+const logging::LogFA SRT_LOGFA_APP = 10;
+extern logging::Logger applog;
 
 // Trial version of an exception. Try to implement later an official
 // interruption mechanism in SRT using this.
@@ -33,11 +37,27 @@ struct TransmissionError: public std::runtime_error
 
 class SrtCommon
 {
-    int srt_conn_epoll = -1;
-
     void SpinWaitAsync();
 
 protected:
+
+    struct Connection
+    {
+        string host;
+        int port = 0;
+        SRTSOCKET socket = SRT_INVALID_SOCK;
+        SRT_SOCKSTATUS status = SRTS_NONEXIST;
+        sockaddr_storage peeraddr;
+        int result = -1;
+        int errorcode = SRT_SUCCESS;
+
+        // Add for caller
+        Connection(string h, int p): host(h), port(p) {}
+
+        // Add for listener
+        Connection(SRTSOCKET s): socket(s), status(SRTS_CONNECTED), result(0)
+        {}
+    };
 
     int srt_epoll = -1;
     SRT_EPOLL_OPT m_direction = SRT_EPOLL_OPT_NONE; //< Defines which of SND or RCV option variant should be used, also to set SRT_SENDER for output
@@ -48,35 +68,53 @@ protected:
     string m_mode;
     string m_adapter;
     map<string, string> m_options; // All other options, as provided in the URI
-    SRTSOCKET m_sock = SRT_INVALID_SOCK;
-    SRTSOCKET m_bindsock = SRT_INVALID_SOCK;
-    bool IsUsable() { SRT_SOCKSTATUS st = srt_getsockstate(m_sock); return st > SRTS_INIT && st < SRTS_BROKEN; }
-    bool IsBroken() { return srt_getsockstate(m_sock) > SRTS_CONNECTED; }
+    vector<Connection> m_links;
+    string m_group_type;
+    TransportPacket* m_group_wrapper = nullptr;
+
+    int32_t m_group_seqno = -1;
+
+    struct ReadPos
+    {
+        int32_t sequence;
+        bytevector packet;
+    };
+    map<SRTSOCKET, ReadPos> m_group_positions;
+    SRTSOCKET m_group_active; // The link from which the last packet was delivered
+
+    SRTSOCKET m_listener = SRT_INVALID_SOCK;
+    bool m_listener_group = false;
+    bool IsUsable() { SRT_SOCKSTATUS st = srt_getsockstate(Socket()); return st > SRTS_INIT && st < SRTS_BROKEN; }
+    bool IsBroken() { return srt_getsockstate(Socket()) > SRTS_CONNECTED; }
 
 public:
-    void InitParameters(string host, map<string,string> par);
+    void InitParameters(string host, string path, map<string,string> par);
     void PrepareListener(string host, int port, int backlog);
     void StealFrom(SrtCommon& src);
-    void AcceptNewClient();
+    Connection& AcceptNewClient();
 
-    SRTSOCKET Socket() { return m_sock; }
-    SRTSOCKET Listener() { return m_bindsock; }
+    SRTSOCKET Socket() { return m_links.empty() ? SRT_INVALID_SOCK : m_links[0].socket; }
+    SRTSOCKET Listener() { return m_listener; }
 
     virtual void Close();
 
 protected:
 
     void Error(UDT::ERRORINFO& udtError, string src);
-    void Init(string host, int port, map<string,string> par, SRT_EPOLL_OPT dir);
-    int AddPoller(SRTSOCKET socket, int modes);
+    void Error(string msg);
+    void Init(string host, int port, string path, map<string,string> par, SRT_EPOLL_OPT dir);
+    void AddPoller(SRTSOCKET socket, int modes);
     virtual int ConfigurePost(SRTSOCKET sock);
     virtual int ConfigurePre(SRTSOCKET sock);
 
     void OpenClient(string host, int port);
-    void PrepareClient();
-    void SetupAdapter(const std::string& host, int port);
-    void ConnectClient(string host, int port);
-    void SetupRendezvous(string adapter, int port);
+    void OpenGroupClient();
+    SRTSOCKET PrepareClient(bool blocking);
+    void SetupAdapter(SRTSOCKET sock, const std::string& host, int port);
+    void ConnectClient(SRTSOCKET sock, string host, int port);
+    void SetupRendezvous(SRTSOCKET sock, string adapter, int port);
+
+    void UpdateGroupCallers();
 
     void OpenServer(string host, int port)
     {
@@ -84,11 +122,13 @@ protected:
         AcceptNewClient();
     }
 
-    void OpenRendezvous(string adapter, string host, int port)
+    SRTSOCKET OpenRendezvous(string adapter, string host, int port)
     {
-        PrepareClient();
-        SetupRendezvous(adapter, port);
-        ConnectClient(host, port);
+        SRTSOCKET sock = PrepareClient();
+        SetupRendezvous(sock, adapter, port);
+        ConnectClient(sock, host, port);
+        m_links.push_back(sock);
+        return sock;
     }
 
     virtual ~SrtCommon();
@@ -100,13 +140,16 @@ class SrtSource: public virtual Source, public virtual SrtCommon
     std::string hostport_copy;
 public:
 
-    SrtSource(std::string host, int port, const std::map<std::string,std::string>& par);
+    SrtSource(std::string host, int port, std::string path, const std::map<std::string,std::string>& par);
     SrtSource()
     {
         // Do nothing - create just to prepare for use
     }
 
     bytevector Read(size_t chunk) override;
+    bytevector GroupRead(size_t chunk);
+    bool GroupCheckPacketAhead(bytevector& output);
+
 
     /*
        In this form this isn't needed.
@@ -129,11 +172,13 @@ class SrtTarget: public virtual Target, public virtual SrtCommon
 {
 public:
 
-    SrtTarget(std::string host, int port, const std::map<std::string,std::string>& par);
+    SrtTarget(std::string host, int port, std::string path, const std::map<std::string,std::string>& par);
     SrtTarget() {}
 
-    int ConfigurePre(SRTSOCKET sock) override;
+    int ConfigurePre(int sock) override;
+    int ConfigurePre(SRTSOCKET sock, bool blocking);
     void Write(const bytevector& data) override;
+    void GroupWrite(const bytevector& data);
     bool IsOpen() override { return IsUsable(); }
     bool Broken() override { return IsBroken(); }
     void Close() override { return SrtCommon::Close(); }
@@ -141,7 +186,7 @@ public:
     size_t Still() override
     {
         size_t bytes;
-        int st = srt_getsndbuffer(m_sock, nullptr, &bytes);
+        int st = srt_getsndbuffer(Socket(), nullptr, &bytes);
         if (st == -1)
             return 0;
         return bytes;
@@ -152,7 +197,7 @@ public:
 class SrtRelay: public Relay, public SrtSource, public SrtTarget
 {
 public:
-    SrtRelay(std::string host, int port, const std::map<std::string,std::string>& par);
+    SrtRelay(std::string host, int port, std::string path, const std::map<std::string,std::string>& par);
     SrtRelay() {}
 
     int ConfigurePre(SRTSOCKET sock) override
@@ -199,14 +244,41 @@ public:
 
     void Close()
     {
-        if (m_sock != SRT_INVALID_SOCK)
+        for (auto& l: m_links)
         {
-            srt_close(m_sock);
-            m_sock = SRT_INVALID_SOCK;
+            srt_close(l.socket);
         }
+        m_links.clear();
     }
 };
 
+class RTPTransportPacket: public TransportPacket
+{
+    // 'payload' is derived, add RTP headers here:
 
+public:
+    virtual void load(const char* p, size_t size) override;
+    virtual void save(char* out, size_t bufsize) override;
+};
+
+
+// Set tools
+namespace set_op {
+
+    // VALUE % SET : VALUE is contained in SET
+template <class Value, class Container>
+inline bool operator%(const Value& v, const Container& c)
+{
+    return c.count(v) != 0;
+}
+
+    // VALUE / SET : VALUE is not contained in SET
+template <class Value, class Container>
+inline bool operator/(const Value& v, const Container& c)
+{
+    return c.count(v) == 0;
+}
+
+}
 
 #endif

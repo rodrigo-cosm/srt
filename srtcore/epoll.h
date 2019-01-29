@@ -58,8 +58,7 @@ modified by
 #include <set>
 #include "udt.h"
 
-
-struct CEPollDesc
+struct CEPollDesc: public SrtPollState
 {
    int m_iID;                                // epoll ID
    std::set<SRTSOCKET> m_sUDTSocksOut;       // set of UDT sockets waiting for write events
@@ -69,10 +68,32 @@ struct CEPollDesc
    int m_iLocalID;                           // local system epoll ID
    std::set<SYSSOCKET> m_sLocals;            // set of local (non-UDT) descriptors
 
-   std::set<SRTSOCKET> m_sUDTWrites;         // UDT sockets ready for write
-   std::set<SRTSOCKET> m_sUDTReads;          // UDT sockets ready for read
-   std::set<SRTSOCKET> m_sUDTExcepts;        // UDT sockets with exceptions (connection broken, etc.)
+   bool empty() const
+   {
+       return m_sUDTSocksIn.empty() && m_sUDTSocksOut.empty() && m_sUDTSocksEx.empty();
+   }
 };
+
+// Type-to-constant binder
+template <int event_type>
+class CEPollET;
+
+#define CEPOLL_BIND(event_type, subscriber, eventsink, descname) \
+template<> \
+class CEPollET<event_type> \
+{ \
+public: \
+    static std::set<SRTSOCKET> CEPollDesc::*subscribers() { return &CEPollDesc:: subscriber; } \
+    static std::set<SRTSOCKET> CEPollDesc::*eventsinks() { return &CEPollDesc:: eventsink; } \
+    static const char* name() { return descname; } \
+}
+
+CEPOLL_BIND(SRT_EPOLL_IN, m_sUDTSocksIn, m_sUDTReads, "IN");
+CEPOLL_BIND(SRT_EPOLL_OUT, m_sUDTSocksOut, m_sUDTWrites, "OUT");
+CEPOLL_BIND(SRT_EPOLL_ERR, m_sUDTSocksEx, m_sUDTExcepts, "ERR");
+
+#undef CEPOLL_BIND
+
 
 class CEPoll
 {
@@ -88,7 +109,13 @@ public: // for CUDTUnited API
       /// create a new EPoll.
       /// @return new EPoll ID if success, otherwise an error number.
 
-   int create();
+   int create(CEPollDesc** ppd = 0);
+
+
+   /// delete all user sockets (SRT sockets) from an EPoll
+   /// @param [in] eid EPoll ID.
+   /// @return 0 
+   int clear_usocks(int eid);
 
       /// add a UDT socket to an EPoll.
       /// @param [in] eid EPoll ID.
@@ -146,6 +173,11 @@ public: // for CUDTUnited API
 
    int wait(const int eid, std::set<SRTSOCKET>* readfds, std::set<SRTSOCKET>* writefds, int64_t msTimeOut, std::set<SYSSOCKET>* lrfds, std::set<SYSSOCKET>* lwfds);
 
+   int swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut, bool report_by_exception = true);
+
+   // Could be a template directly, but it's now hidden in the imp file.
+   void clear_ready_usocks(CEPollDesc& d, int direction);
+
       /// close and release an EPoll.
       /// @param [in] eid EPoll ID.
       /// @return 0 if success, otherwise an error number.
@@ -162,6 +194,8 @@ public: // for CUDT to acknowledge IO status
       /// @return 0 if success, otherwise an error number
 
    int update_events(const SRTSOCKET& uid, std::set<int>& eids, int events, bool enable);
+
+   const CEPollDesc& access(int eid);
 
 private:
    int m_iIDSeed;                            // seed to generate a new ID

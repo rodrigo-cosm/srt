@@ -12,15 +12,18 @@
 #include <string>
 #include <iomanip>
 
+#define SRT_TEST_CIRCULAR_BUFFER 1
+
 #include <udt.h>
 #include <utilities.h>
+#include <common.h>
 #include <packet.h>
 #include <crypto.h>
 
+using namespace std;
+
 int main()
 {
-    using namespace std;
-
     cout << "PacketBoundary: " << hex << MSGNO_PACKET_BOUNDARY::mask << endl;
 
     cout << "PB_FIRST: " << hex << PacketBoundaryBits(PB_FIRST) << endl;
@@ -39,5 +42,6 @@ int main()
     cout << "Creating array of bytes: 10, 11, 20, 25 - FormatBinaryString: ";
     uint8_t array[4] = { 10, 11, 20, 25 };
     cout << FormatBinaryString(array, 4) << endl;
+
     return 0;
 }

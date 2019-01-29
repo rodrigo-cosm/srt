@@ -24,6 +24,12 @@
 #endif
 
 #include "netinet_any.h"
+#include "common.h"
+#include "api.h"
+#include "udt.h"
+#include "logging.h"
+#include "utilities.h"
+
 #include "apputil.hpp"
 #include "socketoptions.hpp"
 #include "uriparser.hpp"
@@ -39,11 +45,12 @@ int transmit_bw_report = 0;
 unsigned transmit_stats_report = 0;
 size_t transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
 
+logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-test");
 
 string DirectionName(SRT_EPOLL_OPT direction)
 {
     string dir_name;
-    if (direction)
+    if (direction & ~SRT_EPOLL_ERR)
     {
         if (direction & SRT_EPOLL_IN)
         {
@@ -56,6 +63,11 @@ string DirectionName(SRT_EPOLL_OPT direction)
                 dir_name = "relay";
             else
                 dir_name = "target";
+        }
+
+        if (direction & SRT_EPOLL_ERR)
+        {
+            dir_name += "+error";
         }
     }
     else
@@ -173,7 +185,7 @@ void PrintSrtStats(int sid, const PerfMonType& mon)
 }
 
 
-void SrtCommon::InitParameters(string host, map<string,string> par)
+void SrtCommon::InitParameters(string host, string path, map<string,string> par)
 {
     // Application-specific options: mode, blocking, timeout, adapter
     if ( Verbose::on )
@@ -182,6 +194,63 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
         for (map<string,string>::iterator i = par.begin(); i != par.end(); ++i)
         {
             Verb() << "\t" << i->first << " = '" << i->second << "'\n";
+        }
+    }
+
+    if (path != "")
+    {
+        // Special case handling of an unusual specification.
+
+        if (path.substr(0, 2) != "//")
+        {
+            Error("Path specification not supported for SRT (use // in front for special cases)");
+        }
+
+        path = path.substr(2);
+
+        if (path == "group")
+        {
+            // Group specified, check type.
+            m_group_type = par["type"];
+            if (m_group_type == "")
+            {
+                Error("With //group, the group 'type' must be specified.");
+            }
+
+            if (m_group_type != "redundancy")
+            {
+                Error("With //group, only type=redundancy is currently supported");
+            }
+
+            vector<string> nodes;
+            Split(par["nodes"], ',', back_inserter(nodes));
+
+            if (nodes.empty())
+            {
+                Error("With //group, 'nodes' must specify comma-separated host:port specs.");
+            }
+
+            // Check if correctly specified
+            for (string& hostport: nodes)
+            {
+                if (hostport == "")
+                    continue;
+                UriParser check(hostport, UriParser::EXPECT_HOST);
+                if (check.host() == "" || check.port() == "")
+                {
+                    Error("With //group, 'nodes' must specify comma-separated host:port specs.");
+                }
+
+                if (check.portno() <= 1024)
+                {
+                    Error("With //group, every node in 'nodes' must have port >1024");
+                }
+
+                m_links.push_back(Connection(check.host(), check.portno()));
+            }
+
+            par.erase("type");
+            par.erase("nodes");
         }
     }
 
@@ -194,7 +263,7 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
         // Use the following convention:
         // 1. Server for source, Client for target
         // 2. If host is empty, then always server.
-        if ( host == "" )
+        if ( host == "" && m_links.empty() )
             m_mode = "listener";
         //else if ( !dir_output )
         //m_mode = "server";
@@ -206,6 +275,11 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
         m_mode = "caller";
     else if ( m_mode == "server" )
         m_mode = "listener";
+
+    if (m_mode == "listener" && !m_links.empty())
+    {
+        Error("Multiple nodes (redundant links) only supported in CALLER (client) mode.");
+    }
 
     par.erase("mode");
 
@@ -260,38 +334,39 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
 
     // Assign the others here.
     m_options = par;
+    m_options["mode"] = m_mode;
 }
 
 void SrtCommon::PrepareListener(string host, int port, int backlog)
 {
-    m_bindsock = srt_socket(AF_INET, SOCK_DGRAM, 0);
-    if ( m_bindsock == SRT_ERROR )
+    m_listener = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    if ( m_listener == SRT_ERROR )
         Error(UDT::getlasterror(), "srt_socket");
 
-    int stat = ConfigurePre(m_bindsock);
+    int stat = ConfigurePre(m_listener);
     if ( stat == SRT_ERROR )
         Error(UDT::getlasterror(), "ConfigurePre");
 
     if ( !m_blocking_mode )
     {
-        srt_conn_epoll = AddPoller(m_bindsock, SRT_EPOLL_OUT);
+        AddPoller(m_listener, SRT_EPOLL_IN);
     }
 
     sockaddr_in sa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&sa;
     Verb() << "Binding a server on " << host << ":" << port << " ...";
-    stat = srt_bind(m_bindsock, psa, sizeof sa);
+    stat = srt_bind(m_listener, psa, sizeof sa);
     if ( stat == SRT_ERROR )
     {
-        srt_close(m_bindsock);
+        srt_close(m_listener);
         Error(UDT::getlasterror(), "srt_bind");
     }
 
     Verb() << " listen... " << VerbNoEOL;
-    stat = srt_listen(m_bindsock, backlog);
+    stat = srt_listen(m_listener, backlog);
     if ( stat == SRT_ERROR )
     {
-        srt_close(m_bindsock);
+        srt_close(m_listener);
         Error(UDT::getlasterror(), "srt_listen");
     }
 
@@ -300,12 +375,12 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
 
     if ( !m_blocking_mode )
     {
-        Verb() << "[ASYNC] ";
+        Verb() << "[ASYNC] (conn=" << srt_epoll << ")";
 
         int len = 2;
         SRTSOCKET ready[2];
-        if ( srt_epoll_wait(srt_conn_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) == -1 )
-            Error(UDT::getlasterror(), "srt_epoll_wait");
+        if ( srt_epoll_wait(srt_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) == -1 )
+            Error(UDT::getlasterror(), "srt_epoll_wait(srt_conn_epoll)");
 
         Verb() << "[EPOLL: " << len << " sockets] " << VerbNoEOL;
     }
@@ -321,23 +396,23 @@ void SrtCommon::StealFrom(SrtCommon& src)
     m_timeout = src.m_timeout;
     m_tsbpdmode = src.m_tsbpdmode;
     m_options = src.m_options;
-    m_bindsock = SRT_INVALID_SOCK; // no listener
-    m_sock = src.m_sock;
-    src.m_sock = SRT_INVALID_SOCK; // STEALING
+    m_listener = SRT_INVALID_SOCK; // no listener
+    m_links = src.m_links;
+    src.m_links.clear();
 }
 
-void SrtCommon::AcceptNewClient()
+SrtCommon::Connection& SrtCommon::AcceptNewClient()
 {
     sockaddr_in scl;
     int sclen = sizeof scl;
 
     Verb() << " accept..." << VerbNoEOL;
 
-    m_sock = srt_accept(m_bindsock, (sockaddr*)&scl, &sclen);
-    if ( m_sock == SRT_INVALID_SOCK )
+    int sock = srt_accept(m_listener, (sockaddr*)&scl, &sclen);
+    if ( sock == SRT_INVALID_SOCK )
     {
-        srt_close(m_bindsock);
-        m_bindsock = SRT_INVALID_SOCK;
+        srt_close(m_listener);
+        m_listener = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "srt_accept");
     }
 
@@ -346,15 +421,24 @@ void SrtCommon::AcceptNewClient()
 
     // ConfigurePre is done on bindsock, so any possible Pre flags
     // are DERIVED by sock. ConfigurePost is done exclusively on sock.
-    int stat = ConfigurePost(m_sock);
+    int stat = ConfigurePost(sock);
     if ( stat == SRT_ERROR )
+    {
+        srt_close(m_listener);
+        m_listener = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "ConfigurePost");
+    }
+
+    m_links.push_back(Connection(sock));
+    Connection& c = m_links.back();
+    memcpy(&c.peeraddr, &scl, sclen);
+    return c;
 }
 
-void SrtCommon::Init(string host, int port, map<string,string> par, SRT_EPOLL_OPT dir)
+void SrtCommon::Init(string host, int port, string path, map<string,string> par, SRT_EPOLL_OPT dir)
 {
     m_direction = dir;
-    InitParameters(host, par);
+    InitParameters(host, path, par);
 
     Verb() << "Opening SRT " << DirectionName(dir) << " " << m_mode
         << "(" << (m_blocking_mode ? "" : "non-") << "blocking)"
@@ -363,7 +447,16 @@ void SrtCommon::Init(string host, int port, map<string,string> par, SRT_EPOLL_OP
     try
     {
         if ( m_mode == "caller" )
-            OpenClient(host, port);
+        {
+            if (m_links.empty())
+            {
+                OpenClient(host, port);
+            }
+            else
+            {
+                OpenGroupClient(); // Source data are in the fields already.
+            }
+        }
         else if ( m_mode == "listener" )
             OpenServer(m_adapter, port);
         else if ( m_mode == "rendezvous" )
@@ -380,42 +473,89 @@ void SrtCommon::Init(string host, int port, map<string,string> par, SRT_EPOLL_OP
         // close the sockets. This intercepts the exception
         // to close them.
         Verb() << "Open FAILED - closing SRT sockets";
-        if (m_bindsock != SRT_INVALID_SOCK)
-            srt_close(m_bindsock);
-        if (m_sock != SRT_INVALID_SOCK)
-            srt_close(m_sock);
-        m_sock = m_bindsock = SRT_INVALID_SOCK;
+        if (m_listener != SRT_INVALID_SOCK)
+            srt_close(m_listener);
+        m_listener = SRT_INVALID_SOCK;
+
+        for (auto s: m_links)
+            srt_close(s.socket);
+        m_links.clear();
         throw;
     }
 
     int pbkeylen = 0;
     SRT_KM_STATE kmstate, snd_kmstate, rcv_kmstate;
     int len = sizeof (int);
-    srt_getsockflag(m_sock, SRTO_PBKEYLEN, &pbkeylen, &len);
-    srt_getsockflag(m_sock, SRTO_KMSTATE, &kmstate, &len);
-    srt_getsockflag(m_sock, SRTO_SNDKMSTATE, &snd_kmstate, &len);
-    srt_getsockflag(m_sock, SRTO_RCVKMSTATE, &rcv_kmstate, &len);
+    vector<Connection>::iterator l = find_if(m_links.begin(), m_links.end(),
+             [] (Connection& c) { return c.socket != SRT_INVALID_SOCK; });
 
-    // Bring this declaration temporarily, this is only for testing
-    std::string KmStateStr(SRT_KM_STATE state);
+    if (l == m_links.end())
+    {
+        Error("No active links");
+    }
 
-    Verb() << "ENCRYPTION status: " << KmStateStr(kmstate)
-        << " (SND:" << KmStateStr(snd_kmstate) << " RCV:" << KmStateStr(rcv_kmstate)
-        << ") PBKEYLEN=" << pbkeylen;
+    // Display some selected options on the socket.
+    if (Verbose::on)
+    {
+        srt_getsockflag(l->socket, SRTO_PBKEYLEN, &pbkeylen, &len);
+        srt_getsockflag(l->socket, SRTO_KMSTATE, &kmstate, &len);
+        srt_getsockflag(l->socket, SRTO_SNDKMSTATE, &snd_kmstate, &len);
+        srt_getsockflag(l->socket, SRTO_RCVKMSTATE, &rcv_kmstate, &len);
+
+        // Bring this declaration temporarily, this is only for testing
+        std::string KmStateStr(SRT_KM_STATE state);
+
+        Verb() << "ENCRYPTION status: " << KmStateStr(kmstate)
+            << " (SND:" << KmStateStr(snd_kmstate) << " RCV:" << KmStateStr(rcv_kmstate)
+            << ") PBKEYLEN=" << pbkeylen;
+
+        int64_t bandwidth = 0;
+        int latency = 0;
+        bool blocking_snd = false, blocking_rcv = false;
+        int dropdelay = 0;
+        int size_int = sizeof (int), size_int64 = sizeof (int64_t), size_bool = sizeof (bool);
+
+        srt_getsockflag(l->socket, SRTO_MAXBW, &bandwidth, &size_int64);
+        srt_getsockflag(l->socket, SRTO_RCVLATENCY, &latency, &size_int);
+        srt_getsockflag(l->socket, SRTO_RCVSYN, &blocking_rcv, &size_bool);
+        srt_getsockflag(l->socket, SRTO_SNDSYN, &blocking_snd, &size_bool);
+        srt_getsockflag(l->socket, SRTO_SNDDROPDELAY, &dropdelay, &size_int);
+
+        Verb() << "OPTIONS: maxbw=" << bandwidth << " rcvlatency=" << latency << boolalpha
+            << " blocking{rcv=" << blocking_rcv << " snd=" << blocking_snd
+            << "} snddropdelay=" << dropdelay;
+    }
 
     if ( !m_blocking_mode )
     {
-        srt_epoll = AddPoller(m_sock, dir);
+        // Don't add new epoll if already created as a part
+        // of group management: if (srt_epoll == -1)...
+        for (auto s: m_links)
+            AddPoller(s.socket, dir);
+    }
+    else
+    {
+        // Remove connected sockets from polling.
+        for (auto& c: m_links)
+        {
+            c.status = srt_getsockstate(c.socket);
+            if (c.status == SRTS_CONNECTED)
+                srt_epoll_remove_usock(srt_epoll, c.socket);
+        }
     }
 }
 
-int SrtCommon::AddPoller(SRTSOCKET socket, int modes)
+void SrtCommon::AddPoller(SRTSOCKET socket, int modes)
 {
-    int pollid = srt_epoll_create();
-    if ( pollid == -1 )
-        throw std::runtime_error("Can't create epoll in nonblocking mode");
-    srt_epoll_add_usock(pollid, socket, &modes);
-    return pollid;
+    if (srt_epoll == -1)
+    {
+        srt_epoll = srt_epoll_create();
+        if ( srt_epoll == -1 )
+            throw std::runtime_error("Can't create epoll in nonblocking mode");
+    }
+    Verb() << "EPOLL: creating eid=" << srt_epoll << " and adding @" << socket
+        << " in " << DirectionName(SRT_EPOLL_OPT(modes)) << " mode";
+    srt_epoll_add_usock(srt_epoll, socket, &modes);
 }
 
 int SrtCommon::ConfigurePost(SRTSOCKET sock)
@@ -424,22 +564,28 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
     int result = 0;
     if ( m_direction & SRT_EPOLL_OUT )
     {
+        Verb() << "Setting SND blocking mode: " << boolalpha << yes << " timeout=" << m_timeout;
         result = srt_setsockopt(sock, 0, SRTO_SNDSYN, &yes, sizeof yes);
         if ( result == -1 )
             return result;
 
         if ( m_timeout )
-            return srt_setsockopt(sock, 0, SRTO_SNDTIMEO, &m_timeout, sizeof m_timeout);
+            result = srt_setsockopt(sock, 0, SRTO_SNDTIMEO, &m_timeout, sizeof m_timeout);
+        if ( result == -1 )
+            return result;
     }
 
     if ( m_direction & SRT_EPOLL_IN )
     {
+        Verb() << "Setting RCV blocking mode: " << boolalpha << yes << " timeout=" << m_timeout;
         result = srt_setsockopt(sock, 0, SRTO_RCVSYN, &yes, sizeof yes);
         if ( result == -1 )
             return result;
 
         if ( m_timeout )
-            return srt_setsockopt(sock, 0, SRTO_RCVTIMEO, &m_timeout, sizeof m_timeout);
+            result = srt_setsockopt(sock, 0, SRTO_RCVTIMEO, &m_timeout, sizeof m_timeout);
+        if ( result == -1 )
+            return result;
     }
 
     SrtConfigurePost(sock, m_options);
@@ -467,6 +613,11 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
 
 int SrtCommon::ConfigurePre(SRTSOCKET sock)
 {
+    return ConfigurePre(sock, m_blocking_mode);
+}
+
+int SrtCommon::ConfigurePre(SRTSOCKET sock, bool blocking)
+{
     int result = 0;
 
     int no = 0;
@@ -479,7 +630,14 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
 
     // Let's pretend async mode is set this way.
     // This is for asynchronous connect.
-    int maybe = m_blocking_mode;
+    // Note: Beside the reading operation (srt_recv*), the
+    // SRTO_RCVSYN defines also whether srt_connect and srt_accept
+    // operations are blocking.
+    //
+    // Note a slight discrepancy: Even though nonblocking srt_connect
+    // is setup by SRTO_RCVSYN, the epoll event reporting that srt_connect
+    // operation has succeeded in background is SRT_EPOLL_OUT.
+    int maybe = blocking;
     result = srt_setsockopt(sock, 0, SRTO_RCVSYN, &maybe, sizeof maybe);
     if ( result == -1 )
         return result;
@@ -508,42 +666,155 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
     return 0;
 }
 
-void SrtCommon::SetupAdapter(const string& host, int port)
+void SrtCommon::SetupAdapter(SRTSOCKET sock, const string& host, int port)
 {
     sockaddr_in localsa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&localsa;
-    int stat = srt_bind(m_sock, psa, sizeof localsa);
+    int stat = srt_bind(sock, psa, sizeof localsa);
     if ( stat == SRT_ERROR )
         Error(UDT::getlasterror(), "srt_bind");
 }
 
 void SrtCommon::OpenClient(string host, int port)
 {
-    PrepareClient();
+    SRTSOCKET sock = PrepareClient(m_blocking_mode);
 
     if ( m_outgoing_port )
     {
-        SetupAdapter("", m_outgoing_port);
+        SetupAdapter(sock, "", m_outgoing_port);
     }
 
-    ConnectClient(host, port);
+    ConnectClient(sock, host, port);
+
+    // Set it as the only socket
+    m_links.push_back(sock);
 }
 
-void SrtCommon::PrepareClient()
+SRTSOCKET SrtCommon::PrepareClient(bool blocking)
 {
-    m_sock = srt_socket(AF_INET, SOCK_DGRAM, 0);
-    if ( m_sock == SRT_ERROR )
+    struct CloseIfFailed
+    {
+        int s = -1;
+        ~CloseIfFailed() { srt_close(s); }
+    } cif;
+
+    cif.s = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    if ( cif.s == SRT_ERROR )
         Error(UDT::getlasterror(), "srt_socket");
 
-    int stat = ConfigurePre(m_sock);
+    int stat = ConfigurePre(cif.s, blocking);
     if ( stat == SRT_ERROR )
         Error(UDT::getlasterror(), "ConfigurePre");
 
-    if ( !m_blocking_mode )
+    if ( !blocking)
     {
-        srt_conn_epoll = AddPoller(m_sock, SRT_EPOLL_OUT);
+        AddPoller(cif.s, SRT_EPOLL_OUT);
     }
 
+    int sock = cif.s;
+    cif.s = -1;
+    return sock;
+}
+
+void SrtCommon::OpenGroupClient()
+{
+    // Resolve group type.
+    if (m_group_type == "redundancy" || m_group_type == "bonding")
+    {
+    }
+    else
+    {
+        Error("With //group, type='" + m_group_type + "' undefined");
+    }
+
+    // Don't check this. Should this fail, the above would already.
+
+    // ConnectClient can't be used here, the code must
+    // be more-less repeated. In this case the situation
+    // that not all connections can be established is tolerated,
+    // the only case of error is when none of the connections
+    // can be established.
+
+    bool any_node = false;
+
+    Verb() << "REDUNDANT connections with " << m_links.size() << " nodes:";
+
+    int namelen = sizeof (sockaddr_in);
+
+    Verb() << "Connecting to nodes:";
+    int i = 1;
+    for (Connection& c: m_links)
+    {
+        sockaddr_in sa = CreateAddrInet(c.host, c.port);
+        sockaddr* psa = (sockaddr*)&sa;
+        Verb() << "\t[" << i << "] " << c.host << ":" << c.port << " ... " << VerbNoEOL;
+        ++i;
+
+        // Set nonblocking mode for connection always. This is because
+        // the connection might be made to potentially multiple endpoints.
+        c.socket = PrepareClient(false);
+
+        // Add this socket to poller as well, as we use non-blocking mode here.
+        AddPoller(c.socket, SRT_EPOLL_OUT);
+
+        c.result = srt_connect(sock, psa, namelen);
+        c.errorcode = srt_getlasterror();
+    }
+
+    // Get current connection timeout from the first socket (all should have same).
+    int conntimeo = 0;
+    int conntimeo_size = sizeof conntimeo;
+    srt_getsockflag(m_links[0].socket, SRTO_CONNTIMEO, &conntimeo, &conntimeo_size);
+
+    // Ok, so all connections have started in background.
+    // Wait for at least one connection to be established.
+
+    SrtPollState sready;
+    int nready = UDT::epoll_swait(srt_epoll, sready, conntimeo, false /* by retval - this ex isn't handled*/);
+
+    if (nready == 0)
+    {
+        Error(m_links[0].errorcode, "srt_connect(group, none connected)");
+    }
+
+    // Configure only those that have connected. Others will have to wait
+    // for the opportunity.
+
+    using namespace set_op;
+
+    for (Connection& c: m_links)
+    {
+        if (c.socket % sready.ex())
+        {
+            Verb() << "TARGET '" << c.host << ":" << c.port <<  "' connection failed.";
+            // Mark error on the link
+            c.result = -1;
+            c.errorcode = SRT_ECONNFAIL;
+            c.status = SRTS_BROKEN;
+            continue;
+        }
+
+        if (c.socket / sready.wr())
+            continue; // Socket not ready
+
+        // Configuration change applied on a group should
+        // spread the setting on all sockets.
+        int stat = ConfigurePost(c.socket);
+        if (stat == -1)
+        {
+            // This kind of error must reject the whole operation.
+            // Usually you'll get this error on the first socket,
+            // and doing this on the others would result in the same.
+            Error(UDT::getlasterror(), "ConfigurePost");
+        }
+        Verb() << "TARGET '" << c.host << ":" << c.port <<  "' connection successful.";
+        any_node = true;
+    }
+
+    if (!any_node)
+    {
+        Error("GROUP: all redundant connections failed");
+    }
 }
 
 /*
@@ -556,7 +827,7 @@ void SrtCommon::PrepareClient()
 
    for (;;)
    {
-   SRT_SOCKSTATUS state = srt_getsockstate(m_sock);
+   SRT_SOCKSTATUS state = srt_getsockstate(m_links);
    if ( int(state) < SRTS_CONNECTED )
    {
    if ( Verbose::on )
@@ -574,22 +845,22 @@ void SrtCommon::PrepareClient()
    }
  */
 
-void SrtCommon::ConnectClient(string host, int port)
+void SrtCommon::ConnectClient(SRTSOCKET sock, string host, int port)
 {
-
     sockaddr_in sa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&sa;
     Verb() << "Connecting to " << host << ":" << port << " ... " << VerbNoEOL;
-    int stat = srt_connect(m_sock, psa, sizeof sa);
+    int stat = srt_connect(sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
     {
-        srt_close(m_sock);
+        srt_close(sock);
         Error(UDT::getlasterror(), "UDT::connect");
     }
 
     // Wait for REAL connected state if nonblocking mode
     if ( !m_blocking_mode )
     {
+        AddPoller(sock, SRT_EPOLL_OUT);
         Verb() << "[ASYNC] " << VerbNoEOL;
 
         // SPIN-WAITING version. Don't use it unless you know what you're doing.
@@ -598,18 +869,21 @@ void SrtCommon::ConnectClient(string host, int port)
         // Socket readiness for connection is checked by polling on WRITE allowed sockets.
         int len = 2;
         SRTSOCKET ready[2];
-        if ( srt_epoll_wait(srt_conn_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) != -1 )
+        if ( srt_epoll_wait(srt_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) != -1 )
         {
             Verb() << "[EPOLL: " << len << " sockets] " << VerbNoEOL;
         }
         else
         {
-            Error(UDT::getlasterror(), "srt_epoll_wait");
+            Error(UDT::getlasterror(), "srt_epoll_wait(srt_conn_epoll)");
         }
+
+        if (m_direction != SRT_EPOLL_OUT)
+            AddPoller(sock, m_direction);
     }
 
     Verb() << " connected.";
-    stat = ConfigurePost(m_sock);
+    stat = ConfigurePost(sock);
     if ( stat == SRT_ERROR )
         Error(UDT::getlasterror(), "ConfigurePost");
 }
@@ -627,18 +901,25 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src)
     throw TransmissionError("error: " + src + ": " + message);
 }
 
-void SrtCommon::SetupRendezvous(string adapter, int port)
+void SrtCommon::Error(string msg)
+{
+    cerr << "\nERROR (app): " << msg << endl;
+    throw std::runtime_error(msg);
+}
+
+
+void SrtCommon::SetupRendezvous(SRTSOCKET sock, string adapter, int port)
 {
     bool yes = true;
-    srt_setsockopt(m_sock, 0, SRTO_RENDEZVOUS, &yes, sizeof yes);
+    srt_setsockopt(sock, 0, SRTO_RENDEZVOUS, &yes, sizeof yes);
 
     sockaddr_in localsa = CreateAddrInet(adapter, port);
     sockaddr* plsa = (sockaddr*)&localsa;
     Verb() << "Binding a server on " << adapter << ":" << port << " ...";
-    int stat = srt_bind(m_sock, plsa, sizeof localsa);
+    int stat = srt_bind(sock, plsa, sizeof localsa);
     if ( stat == SRT_ERROR )
     {
-        srt_close(m_sock);
+        srt_close(sock);
         Error(UDT::getlasterror(), "srt_bind");
     }
 }
@@ -647,20 +928,20 @@ void SrtCommon::Close()
 {
     bool any = false;
     bool yes = true;
-    if ( m_sock != SRT_INVALID_SOCK )
+    for (auto& l: m_links)
     {
-        Verb() << "SrtCommon: DESTROYING CONNECTION, closing socket (rt%" << m_sock << ")...";
-        srt_setsockflag(m_sock, SRTO_SNDSYN, &yes, sizeof yes);
-        srt_close(m_sock);
+        Verb() << "SrtCommon: DESTROYING CONNECTION, closing l.socketet (rt%" << l.socket << ")...";
+        srt_setsockflag(l.socket, SRTO_SNDSYN, &yes, sizeof yes);
+        srt_close(l.socket);
         any = true;
     }
 
-    if ( m_bindsock != SRT_INVALID_SOCK )
+    if ( m_listener != SRT_INVALID_SOCK )
     {
-        Verb() << "SrtCommon: DESTROYING SERVER, closing socket (ls%" << m_bindsock << ")...";
+        Verb() << "SrtCommon: DESTROYING SERVER, closing socket (ls%" << m_listener << ")...";
         // Set sndsynchro to the socket to synch-close it.
-        srt_setsockflag(m_bindsock, SRTO_SNDSYN, &yes, sizeof yes);
-        srt_close(m_bindsock);
+        srt_setsockflag(m_listener, SRTO_SNDSYN, &yes, sizeof yes);
+        srt_close(m_listener);
         any = true;
     }
 
@@ -673,64 +954,717 @@ SrtCommon::~SrtCommon()
     Close();
 }
 
-SrtSource::SrtSource(string host, int port, const map<string,string>& par)
+void SrtCommon::UpdateGroupCallers()
 {
-    Init(host, port, par, SRT_EPOLL_IN);
+    int i = 1; // Verb only
+    for (auto& n: m_links)
+    {
+        // Check which nodes are no longer active and activate them.
+        if (n.socket != SRT_INVALID_SOCK)
+            continue;
+
+        sockaddr_in sa = CreateAddrInet(n.host, n.port);
+        sockaddr* psa = (sockaddr*)&sa;
+        Verb() << "[" << i << "] RECONNECTING to node " << n.host << ":" << n.port << " ... " << VerbNoEOL;
+        ++i;
+        int insock = srt_socket(AF_INET, SOCK_DGRAM, 0);
+        if (insock == SRT_INVALID_SOCK || srt_connect(insock, psa, sizeof sa) == SRT_INVALID_SOCK)
+        {
+            srt_close(insock);
+            Verb() << "FAILED: ";
+            continue;
+        }
+
+        // Have socket, store it into the group socket array.
+        n.socket = insock;
+    }
+}
+
+SrtSource::SrtSource(string host, int port, std::string path, const map<string,string>& par)
+{
+    Init(host, port, path, par, SRT_EPOLL_IN);
     ostringstream os;
     os << host << ":" << port;
     hostport_copy = os.str();
 }
 
+
+// NOTE: 'output' is expected to be EMPTY here.
+bool SrtSource::GroupCheckPacketAhead(bytevector& output)
+{
+    bool status = false;
+    vector<SRTSOCKET> past_ahead;
+
+    // This map no longer maps only ahead links.
+    // Here are all links, and whether ahead, it's defined by the sequence.
+    for (auto i = m_group_positions.begin(); i != m_group_positions.end(); ++i)
+    {
+        // i->first: socket ID
+        // i->second: ReadPos { sequence, packet }
+        // We are not interested with the socket ID because we
+        // aren't going to read from it - we have the packet already.
+        ReadPos& a = i->second;
+
+        int seqdiff = CSeqNo::seqcmp(a.sequence, m_group_seqno);
+        if ( seqdiff == 1)
+        {
+            // The very next packet. Return it.
+            m_group_seqno = a.sequence;
+            Verb() << " (SRT group: ahead delivery %" << a.sequence << " from @" << i->first << ")";
+            swap(output, a.packet);
+            status = true;
+        }
+        else if (seqdiff < 1 && !a.packet.empty())
+        {
+            Verb() << " (@" << i->first << " dropping collected ahead %" << a.sequence << ")";
+            a.packet.clear();
+        }
+        // In case when it's >1, keep it in ahead
+    }
+
+    return status;
+}
+
+static string DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::string prefix)
+{
+    typedef set<SRTSOCKET> fset_t;
+    ostringstream os;
+    os << prefix << " ";
+    for (fset_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
+    {
+        os << "@" << *i << " ";
+    }
+
+    return os.str();
+}
+
+bytevector SrtSource::GroupRead(size_t chunk)
+{
+    // Read the current group status. m_links is here the group id.
+    bytevector output;
+
+    // Later iteration over it might be less efficient than
+    // by vector, but we'll also often try to check a single id
+    // if it was ever seen broken, so that it's skipped.
+    set<SRTSOCKET> broken; // Same as sets in epoll
+
+RETRY_READING:
+
+    // Update status on all sockets in the group
+    bool connected = false;
+    for (auto& d: m_links)
+    {
+        d.status = srt_getsockstate(d.socket);
+        if (d.status == SRTS_CONNECTED)
+        {
+            connected = true;
+            break;
+        }
+    }
+    if (!connected)
+    {
+        Error("All sockets in the group disconnected");
+    }
+
+    if (Verbose::on)
+    {
+        for (auto& d: m_links)
+        {
+            if (d.status != SRTS_CONNECTED)
+                // id, status, result, peeraddr
+                Verb() << "@" << d.socket << " <" << SockStatusStr(d.status) << "> (=" << d.result << ") PEER:"
+                    << SockaddrToString((sockaddr*)&d.peeraddr);
+        }
+    }
+
+    // Check first the ahead packets if you have any to deliver.
+    if (m_group_seqno != -1 && !m_group_positions.empty())
+    {
+        bytevector ahead_packet;
+
+        // This function also updates the group sequence pointer.
+        if (GroupCheckPacketAhead(ahead_packet))
+            return move(ahead_packet);
+    }
+
+    // LINK QUALIFICATION NAMES:
+    //
+    // HORSE: Correct link, which delivers the very next sequence.
+    // Not necessarily this link is currently active.
+    //
+    // KANGAROO: Got some packets dropped and the sequence number
+    // of the packet jumps over the very next sequence and delivers
+    // an ahead packet.
+    //
+    // ELEPHANT: Is not ready to read, while others are, or reading
+    // up to the current latest delivery sequence number does not
+    // reach this sequence and the link becomes non-readable earlier.
+
+    // The above condition has ruled out one kangaroo and turned it
+    // into a horse.
+
+    // Below there's a loop that will try to extract packets. Kangaroos
+    // will be among the polled ones because skipping them risks that
+    // the elephants will take over the reading. Links already known as
+    // elephants will be also polled in an attempt to revitalize the
+    // connection that experienced just a short living choking.
+    //
+    // After polling we attempt to read from every link that reported
+    // read-readiness and read at most up to the sequence equal to the
+    // current delivery sequence.
+
+    // Links that deliver a packet below that sequence will be retried
+    // until they deliver no more packets or deliver the packet of
+    // expected sequence. Links that don't have a record in m_group_positions
+    // and report readiness will be always read, at least to know what
+    // sequence they currently stand on.
+    //
+    // Links that are already known as kangaroos will be polled, but
+    // no reading attempt will be done. If after the reading series
+    // it will turn out that we have no more horses, the slowest kangaroo
+    // will be "advanced to a horse" (the ahead link with a sequence
+    // closest to the current delivery sequence will get its sequence
+    // set as current delivered and its recorded ahead packet returned
+    // as the read packet).
+
+    // If we find at least one horse, the packet read from that link
+    // will be delivered. All other link will be just ensured update
+    // up to this sequence number, or at worst all available packets
+    // will be read. In this case all kangaroos remain kangaroos,
+    // until the current delivery sequence m_group_seqno will be lifted
+    // to the sequence recorded for these links in m_group_positions,
+    // during the next time ahead check, after which they will become
+    // horses.
+
+    Verb() << "E(" << srt_epoll << ") " << VerbNoEOL;
+
+    for (size_t i = 0; i < m_links.size(); ++i)
+    {
+        Connection& d = m_links[i];
+        if (d.status == SRTS_CONNECTING)
+        {
+            Verb() << "@" << d.socket << " [" << i << "] <pending> " << VerbNoEOL;
+            continue; // don't read over a failed or pending socket
+        }
+
+        if (d.status >= SRTS_BROKEN)
+        {
+            broken.insert(d.socket);
+        }
+
+        if (broken.count(d.socket))
+        {
+            Verb() << "@" << d.socket << " [" << i << "] <broken> " << VerbNoEOL;
+            continue;
+        }
+
+        if (d.status != SRTS_CONNECTED)
+        {
+            Verb() << "@" << d.socket  << " [" << i << "] <idle:" << SockStatusStr(d.status) << "> " << VerbNoEOL;
+            // Sockets in this state are ignored. We are waiting until it
+            // achieves CONNECTING state, then it's added to write.
+            continue;
+        }
+
+        // Don't skip packets that are ahead because if we have a situation
+        // that all links are either "elephants" (do not report read readiness)
+        // and "kangaroos" (have already delivered an ahead packet) then
+        // omiting kangaroos will result in only elephants to be polled for
+        // reading. Elephants, due to the strict timing requirements and
+        // ensurance that TSBPD on every link will result in exactly the same
+        // delivery time for a packet of given sequence, having an elephant
+        // and kangaroo in one cage means that the elephant is simply a broken
+        // or half-broken link (the data are not delivered, but it will get
+        // repaired soon, enough for SRT to maintain the connection, but it
+        // will still drop packets that didn't arrive in time), in both cases
+        // it may potentially block the reading for an indefinite time, while
+        // simultaneously a kangaroo might be a link that got some packets
+        // dropped, but then it's still capable to deliver packets on time.
+
+        // Note also that about the fact that some links turn out to be
+        // elephants we'll learn only after we try to poll and read them.
+
+        // Note that d.socket might be a socket that was previously being polled
+        // on write, when it's attempting to connect, but now it's connected.
+        // This will update the socket with the new event set.
+
+        int modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
+        srt_epoll_add_usock(srt_epoll, d.socket, &modes);
+        Verb() << "@" << d.socket << "[READ] " << VerbNoEOL;
+    }
+
+    Verb() << "";
+
+    // Here we need to make an additional check.
+    // There might be a possibility that all sockets that
+    // were added to the reader group, are ahead. At least
+    // surely we don't have a situation that any link contains
+    // an ahead-read subsequent packet, because GroupCheckPacketAhead
+    // already handled that case.
+    //
+    // What we can have is that every link has:
+    // - no known seq position yet (is not registered in the position map yet)
+    // - the position equal to the latest delivered sequence
+    // - the ahead position
+
+    // Now the situation is that we don't have any packets
+    // waiting for delivery so we need to wait for any to report one.
+    // XXX We support blocking mode only at the moment.
+    // The non-blocking mode would need to simply check the readiness
+    // with only immediate report, and read-readiness would have to
+    // be done in background.
+
+    SrtPollState sready;
+
+    // Poll on this descriptor until reading is available, indefinitely.
+    if (UDT::epoll_swait(srt_epoll, sready, -1) == SRT_ERROR)
+    {
+        Error(UDT::getlasterror(), "UDT::epoll_swait(srt_epoll, group)");
+    }
+    if (Verbose::on)
+    {
+        Verb() << "RDY: {"
+            << DisplayEpollResults(sready.rd(), "[R]")
+            << DisplayEpollResults(sready.wr(), "[W]")
+            << DisplayEpollResults(sready.ex(), "[E]")
+            << "} " << VerbNoEOL;
+
+    }
+
+    LOGC(applog.Debug, log << "epoll_swait: "
+            << DisplayEpollResults(sready.rd(), "[R]")
+            << DisplayEpollResults(sready.wr(), "[W]")
+            << DisplayEpollResults(sready.ex(), "[E]"));
+
+    typedef set<SRTSOCKET> fset_t;
+
+    // Handle sockets of pending connection and with errors.
+    broken = sready.ex();
+
+    // We don't do anything about sockets that have been configured to
+    // poll on writing (that is, pending for connection). What we need
+    // is that the epoll_swait call exit on that fact. Probably if this
+    // was the only socket reported, no broken and no read-ready, this
+    // will later check on output if still empty, if so, repeat the whole
+    // function. This write-ready socket will be there already in the
+    // connected state and will be added to read-polling.
+
+    // Ok, now we need to have some extra qualifications:
+    // 1. If a socket has no registry yet, we read anyway, just
+    // to notify the current position. We read ONLY ONE PACKET this time,
+    // we'll worry later about adjusting it to the current group sequence
+    // position.
+    // 2. If a socket is already position ahead, DO NOT read from it, even
+    // if it is ready.
+
+    // The state of things whether we were able to extract the very next
+    // sequence will be simply defined by the fact that `output` is nonempty.
+
+    int32_t next_seq = m_group_seqno;
+
+    // If this set is empty, it won't roll even once, therefore output
+    // will be surely empty. This will be checked then same way as when
+    // reading from every socket resulted in error.
+    for (fset_t::const_iterator i = sready.rd().begin(); i != sready.rd().end(); ++i)
+    {
+        // Check if this socket is in aheads
+        // If so, don't read from it, wait until the ahead is flushed.
+
+        SRTSOCKET id = *i;
+        ReadPos* p = nullptr;
+        auto pe = m_group_positions.find(id);
+        if (pe != m_group_positions.end())
+        {
+            p = &pe->second;
+            // Possible results of comparison:
+            // x < 0: the sequence is in the past, the socket should be adjusted FIRST
+            // x = 0: the socket should be ready to get the exactly next packet
+            // x = 1: the case is already handled by GroupCheckPacketAhead.
+            // x > 1: AHEAD. DO NOT READ.
+            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_seqno);
+            if (seqdiff > 1)
+            {
+                Verb() << "EPOLL: @" << id << " %" << p->sequence << " AHEAD, not reading.";
+                continue;
+            }
+        }
+
+
+        // Read from this socket stubbornly, until:
+        // - reading is no longer possible (AGAIN)
+        // - the sequence difference is >= 1
+
+        int fi = 1; // marker for Verb to display flushing
+        for (;;)
+        {
+            bytevector data(chunk);
+            int stat = srt_recvmsg(id, data.data(), chunk);
+            if (stat == SRT_ERROR)
+            {
+                if (fi == 0)
+                {
+                    if (Verbose::on)
+                    {
+                        if (p)
+                        {
+                            int32_t pktseq = p->sequence;
+                            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_seqno);
+                            Verb() << ". %" << pktseq << " " << seqdiff << ")";
+                        }
+                        else
+                        {
+                            Verb() << ".)";
+                        }
+                    }
+                    fi = 1;
+                }
+                int err = srt_getlasterror(0);
+                if (err == SRT_EASYNCRCV)
+                {
+                    // Do not treat this as spurious, just stop reading.
+                    break;
+                }
+                Verb() << "Error @" << id << ": " << srt_getlasterror_str();
+                broken.insert(id);
+                break;
+            }
+            int32_t pktseq = 0;
+            if (!m_group_wrapper)
+                Error("Group not configured");
+
+            m_group_wrapper->load(data, stat);
+            data = m_group_wrapper->payload;
+            pktseq = m_group_wrapper->seqno();
+
+            // NOTE: checks against m_group_seqno and decisions based on it
+            // must NOT be done if m_group_seqno is -1, which means that we
+            // are about to deliver the very first packet and we take its
+            // sequence number as a good deal.
+
+            // The order must be:
+            // - check discrepancy
+            // - record the sequence
+            // - check ordering.
+            // The second one must be done always, but failed discrepancy
+            // check should exclude the socket from any further checks.
+            // That's why the common check for m_group_seqno != -1 can't
+            // embrace everything below.
+
+            // We need to first qualify the sequence, just for a case
+            if (m_group_seqno != -1 && abs(m_group_seqno - pktseq) > CSeqNo::m_iSeqNoTH)
+            {
+                // This error should be returned if the link turns out
+                // to be the only one, or set to the group data.
+                // err = SRT_ESECFAIL;
+                if (fi == 0)
+                {
+                    Verb() << ".)";
+                    fi = 1;
+                }
+                Verb() << "Error @" << id << ": SEQUENCE DISCREPANCY: base=%" << m_group_seqno << " vs pkt=%" << pktseq << ", setting ESECFAIL";
+                broken.insert(id);
+                break;
+            }
+
+            // Rewrite it to the state for a case when next reading
+            // would not succeed. Do not insert the buffer here because
+            // this is only required when the sequence is ahead; for that
+            // it will be fixed later.
+            if (!p)
+            {
+                p = &(m_group_positions[id] = ReadPos { pktseq, {} });
+            }
+            else
+            {
+                p->sequence = pktseq;
+            }
+
+            if (m_group_seqno != -1)
+            {
+                // Now we can safely check it.
+                int seqdiff = CSeqNo::seqcmp(pktseq, m_group_seqno);
+
+                if (seqdiff <= 0)
+                {
+                    if (fi == 1)
+                    {
+                        Verb() << "(@" << id << " FLUSH:" << VerbNoEOL;
+                        fi = 0;
+                    }
+
+                    Verb() << "." << VerbNoEOL;
+
+                    // The sequence is recorded, the packet has to be discarded.
+                    // That's all.
+                    continue;
+                }
+
+                // Finish flush reporting if fallen into here
+                if (fi == 0)
+                {
+                    Verb() << ". %" << pktseq << " " << (-seqdiff) << ")";
+                    fi = 1;
+                }
+
+                // Now we have only two possibilities:
+                // seqdiff == 1: The very next sequence, we want to read and return the packet.
+                // seqdiff > 1: The packet is ahead - record the ahead packet, but continue with the others.
+
+                if (seqdiff > 1)
+                {
+                    Verb() << "@" << id << " %" << pktseq << " AHEAD";
+                    p->packet = move(data);
+                    break; // Don't read from that socket anymore.
+                }
+            }
+
+            // We have seqdiff = 1, or we simply have the very first packet
+            // which's sequence is taken as a good deal. Update the sequence
+            // and record output.
+
+            if (!output.empty())
+            {
+                Verb() << "@" << id << " %" << pktseq << " REDUNDANT";
+                break;
+            }
+
+
+            Verb() << "@" << id << " %" << pktseq << " DELIVERING";
+            output = move(data);
+
+            // Record, but do not update yet, until all sockets are handled.
+            next_seq = pktseq;
+            break;
+        }
+    }
+
+    // ready_len is only the length of currently reported
+    // ready sockets, NOT NECESSARILY containing all sockets from the group.
+    if (broken.size() == m_links.size())
+    {
+        // All broken
+        Error("All sockets broken");
+    }
+
+    if (!broken.empty())
+    {
+        if (Verbose::on)
+        {
+            Verb() << "BROKEN: " << Printable(broken) << " - removing";
+        }
+
+        // Now remove all broken sockets from aheads, if any.
+        // Even if they have already delivered a packet.
+        for (auto& c: m_links)
+        {
+            if (c.socket / broken)
+                continue;
+
+            // This loops rolls over only broken sockets
+            m_group_positions.erase(c.socket);
+            srt_close(c.socket);
+            c.socket = -1;
+        }
+
+        // May be required to be re-read.
+        broken.clear();
+
+        // Call it only in case when this is a caller. For listener,
+        // even if this is for a group connection, simply wait for
+        // the caller side to revive the connection.
+        if (!m_listener_group)
+            UpdateGroupCallers();
+    }
+
+    if (!output.empty())
+    {
+        // We have extracted something, meaning that we have the sequence shift.
+        // Update it now and don't do anything else with the sockets.
+
+        // Sanity check
+        if (next_seq == -1)
+        {
+            Error("IPE: next_seq not set after output extracted!");
+        }
+        m_group_seqno = next_seq;
+        return output;
+    }
+
+    // Check if we have any sockets left :D
+
+    // Here we surely don't have any more HORSES,
+    // only ELEPHANTS and KANGAROOS. Qualify them and
+    // attempt to at least take advantage of KANGAROOS.
+
+    // In this position all links are either:
+    // - updated to the current position
+    // - updated to the newest possible possition available
+    // - not yet ready for extraction (not present in the group)
+
+    // If we haven't extracted the very next sequence position,
+    // it means that we might only have the ahead packets read,
+    // that is, the next sequence has been dropped by all links.
+
+    if (!m_group_positions.empty())
+    {
+        // This might notify both lingering links, which didn't
+        // deliver the required sequence yet, and links that have
+        // the sequence ahead. Review them, and if you find at
+        // least one packet behind, just wait for it to be ready.
+        // Use again the waiting function because we don't want
+        // the general waiting procedure to skip others.
+        set<SRTSOCKET> elephants;
+
+        // const because it's `typename decltype(m_group_positions)::value_type`
+        pair<const SRTSOCKET, ReadPos>* slowest_kangaroo = nullptr;
+
+        for (auto& sock_rp: m_group_positions)
+        {
+            // NOTE that m_group_seqno in this place wasn't updated
+            // because we haven't successfully extracted anything.
+            int seqdiff = CSeqNo::seqcmp(sock_rp.second.sequence, m_group_seqno);
+            if (seqdiff < 0)
+            {
+                elephants.insert(sock_rp.first);
+            }
+            // If seqdiff == 0, we have a socket ON TRACK.
+            else if (seqdiff > 0)
+            {
+                if (!slowest_kangaroo)
+                {
+                    slowest_kangaroo = &sock_rp;
+                }
+                else
+                {
+                    // Update to find the slowest kangaroo.
+                    int seqdiff = CSeqNo::seqcmp(slowest_kangaroo->second.sequence, sock_rp.second.sequence);
+                    if (seqdiff > 0)
+                    {
+                        slowest_kangaroo = &sock_rp;
+                    }
+                }
+            }
+        }
+
+        // Note that if no "slowest_kangaroo" was found, it means
+        // that we don't have kangaroos.
+        if (slowest_kangaroo)
+        {
+            // We have a slowest kangaroo. Elephants must be ignored.
+            // Best case, they will get revived, worst case they will be
+            // soon broken.
+            //
+            // As we already have the packet delivered by the slowest
+            // kangaroo, we can simply return it.
+
+            m_group_seqno = slowest_kangaroo->second.sequence;
+            Verb() << "@" << slowest_kangaroo->first << " %" << m_group_seqno << " KANGAROO->HORSE";
+            swap(output, slowest_kangaroo->second.packet);
+            return output;
+        }
+
+        // Here ALL LINKS ARE ELEPHANTS, stating that we still have any.
+        if (Verbose::on)
+        {
+            if (!elephants.empty())
+            {
+                // If we don't have kangaroos, then simply reattempt to
+                // poll all elephants again anyway (at worst they are all
+                // broken and we'll learn about it soon).
+                Verb() << "ALL LINKS ELEPHANTS. Re-polling.";
+            }
+            else
+            {
+                Verb() << "ONLY BROKEN WERE REPORTED. Re-polling.";
+            }
+        }
+        goto RETRY_READING;
+    }
+
+    // We have checked so far only links that were ready to poll.
+    // Links that are not ready should be re-checked.
+    // Links that were not ready at the entrance should be checked
+    // separately, and probably here is the best moment to do it.
+    // After we make sure that at least one link is ready, we can
+    // reattempt to read a packet from it.
+
+    // Ok, so first collect all sockets that are in
+    // connecting state, make a poll for connection.
+    bool have_connectors = false, have_ready = false;
+    for (auto& d: m_links)
+    {
+        if (d.status < SRTS_CONNECTED)
+        {
+            // Not sure anymore if IN or OUT signals the connect-readiness,
+            // but no matter. The signal will be cleared once it is used,
+            // while it will be always on when there's anything ready to read.
+            int modes = SRT_EPOLL_IN | SRT_EPOLL_OUT;
+            srt_epoll_add_usock(srt_epoll, d.socket, &modes);
+            have_connectors = true;
+        }
+        else if (d.status == SRTS_CONNECTED)
+        {
+            have_ready = true;
+        }
+    }
+
+    if (have_ready || have_connectors)
+    {
+        Verb() << "(still have: " << (have_ready ? "+" : "-") << "ready, "
+            << (have_connectors ? "+" : "-") << "conenctors).";
+        goto RETRY_READING;
+    }
+
+    if (have_ready)
+    {
+        Verb() << "(connected in the meantime)";
+        // Some have connected in the meantime, don't
+        // waste time on the pending ones.
+        goto RETRY_READING;
+    }
+
+    if (have_connectors)
+    {
+        Verb() << "(waiting for pending connectors to connect)";
+        // Wait here for them to be connected.
+        vector<SRTSOCKET> sready;
+        sready.resize(m_links.size());
+        int ready_len = m_links.size();
+        if (srt_epoll_wait(srt_epoll, sready.data(), &ready_len, 0, 0, -1, 0, 0, 0, 0) == SRT_ERROR)
+        {
+            Error("All sockets in the group disconnected");
+        }
+
+        goto RETRY_READING;
+    }
+
+    Error("No data extracted");
+    return output; // Just a marker - this above function throws an exception
+}
+
+
 bytevector SrtSource::Read(size_t chunk)
 {
     static size_t counter = 1;
 
+    bool have_group = !m_links.empty();
+
     bytevector data(chunk);
-    bool ready = true;
-    int stat;
-    do
+    // EXPERIMENTAL
+
+    if (have_group || m_listener_group)
     {
-        ::transmit_throw_on_interrupt = true;
-        stat = srt_recvmsg(m_sock, data.data(), chunk);
-        ::transmit_throw_on_interrupt = false;
-        if ( stat == SRT_ERROR )
-        {
-            if ( !m_blocking_mode )
-            {
-                // EAGAIN for SRT READING
-                if ( srt_getlasterror(NULL) == SRT_EASYNCRCV )
-                {
-                    Verb() << "AGAIN: - waiting for data by epoll...";
-                    // Poll on this descriptor until reading is available, indefinitely.
-                    int len = 2;
-                    SRTSOCKET sready[2];
-                    if ( srt_epoll_wait(srt_epoll, sready, &len, 0, 0, -1, 0, 0, 0, 0) != -1 )
-                    {
-                        if ( Verbose::on )
-                        {
-                            Verb() << "... epoll reported ready " << len << " sockets";
-                        }
-                        continue;
-                    }
-                    // If was -1, then passthru.
-                }
-            }
-            Error(UDT::getlasterror(), "recvmsg");
-        }
-
-        if ( stat == 0 )
-        {
-            throw ReadEOF(hostport_copy);
-        }
+        data = GroupRead(chunk);
     }
-    while (!ready);
 
-    chunk = size_t(stat);
-    if ( chunk < data.size() )
-        data.resize(chunk);
+    if (have_group)
+    {
+        // This is to be done for caller mode only
+        UpdateGroupCallers();
+    }
 
     CBytePerfMon perf;
-    srt_bstats(m_sock, &perf, true);
+    srt_bstats(m_links[0].socket, &perf, true);
     if ( transmit_bw_report && int(counter % transmit_bw_report) == transmit_bw_report - 1 )
     {
         Verb() << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth;
@@ -738,7 +1672,7 @@ bytevector SrtSource::Read(size_t chunk)
 
     if ( transmit_stats_report && counter % transmit_stats_report == transmit_stats_report - 1)
     {
-        PrintSrtStats(m_sock, perf);
+        PrintSrtStats(m_links[0].socket, perf);
     }
 
     ++counter;
@@ -746,9 +1680,9 @@ bytevector SrtSource::Read(size_t chunk)
     return data;
 }
 
-SrtTarget::SrtTarget(std::string host, int port, const std::map<std::string,std::string>& par)
+SrtTarget::SrtTarget(std::string host, int port, std::string path, const std::map<std::string,std::string>& par)
 {
-    Init(host, port, par, SRT_EPOLL_OUT);
+    Init(host, port, path, par, SRT_EPOLL_OUT);
 }
 
 
@@ -772,6 +1706,13 @@ int SrtTarget::ConfigurePre(SRTSOCKET sock)
 
 void SrtTarget::Write(const bytevector& data)
 {
+    bool have_group = !m_links.empty();
+
+    if (have_group || m_listener_group)
+    {
+        return GroupWrite(data);
+    }
+
     ::transmit_throw_on_interrupt = true;
 
     // Check first if it's ready to write.
@@ -781,23 +1722,84 @@ void SrtTarget::Write(const bytevector& data)
         int ready[2];
         int len = 2;
         if ( srt_epoll_wait(srt_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) == SRT_ERROR )
-            Error(UDT::getlasterror(), "srt_epoll_wait");
+            Error(UDT::getlasterror(), "srt_epoll_wait(srt_epoll)");
     }
 
-    int stat = srt_sendmsg2(m_sock, data.data(), data.size(), nullptr);
+    SRT_MSGCTRL mctrl = srt_msgctrl_default;
+
+    int stat = srt_sendmsg2(m_links[0].socket, data.data(), data.size(), &mctrl);
+
+    // For a socket group, the error is reported only
+    // if ALL links from the group have failed to perform
+    // the operation. If only one did, the result will be
+    // visible in the status array.
     if ( stat == SRT_ERROR )
         Error(UDT::getlasterror(), "srt_sendmsg");
     ::transmit_throw_on_interrupt = false;
 }
 
-SrtRelay::SrtRelay(std::string host, int port, const std::map<std::string,std::string>& par)
+void SrtTarget::GroupWrite(const bytevector& data)
 {
-    Init(host, port, par, SRT_EPOLL_IN | SRT_EPOLL_OUT);
+    if ( !m_blocking_mode )
+    {
+        int ready[2];
+        int len = 2;
+        if ( srt_epoll_wait(srt_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) == SRT_ERROR )
+            Error(UDT::getlasterror(), "srt_epoll_wait(srt_epoll)");
+    }
+
+    if (!m_group_wrapper)
+        Error("Group not configured");
+
+    int32_t seqno = m_group_seqno;
+    ++m_group_seqno;
+
+    bytevector packet;
+    m_group_wrapper->payload = data;
+    m_group_wrapper->seqno() = seqno;
+
+    // XXX Temporary; it should be set to some uniq id in the beginning.
+    m_group_wrapper->srcid() = 0xCAFEB1BA;
+    m_group_wrapper->save(packet);
+
+    bool ok = false;
+
+    for (auto c: m_links)
+    {
+        // Send the same payload over all sockets
+        SRT_MSGCTRL mctrl = srt_msgctrl_default;
+        c.result = srt_sendmsg2(c.socket, packet.packet(), packet.size(), &mctrl);
+        c.status = srt_getsockstate(c.socket);
+        if (c.result > 0 && c.status == SRTS_CONNECTED)
+        {
+            c.errorcode = SRT_SUCCESS;
+            ok = true;
+        }
+        else
+        {
+            c.errorcode = srt_getlasterror(nullptr);
+            srt_close(c.socket);
+            c.socket = SRT_INVALID_SOCK;
+            // The socket will be reconnected soon
+        }
+    }
+
+    if (!ok)
+    {
+        Error("srt_sendmsg2(group)");
+    }
+
+    UpdateGroupCallers();
+}
+
+SrtRelay::SrtRelay(std::string host, int port, std::string path, const std::map<std::string,std::string>& par)
+{
+    Init(host, port, path, par, SRT_EPOLL_IN | SRT_EPOLL_OUT);
 }
 
 SrtModel::SrtModel(string host, int port, map<string,string> par)
 {
-    InitParameters(host, par);
+    InitParameters(host, "", par);
     if (m_mode == "caller")
         is_caller = true;
     else if (m_mode == "rendezvous")
@@ -819,20 +1821,21 @@ void SrtModel::Establish(ref_t<std::string> name)
     // medium, it should send back a single byte with value 0. This means
     // that agent should stop connecting.
 
+    int sock = SRT_INVALID_SOCK;
     if (is_rend)
     {
-        OpenRendezvous(m_adapter, m_host, m_port);
+        sock = OpenRendezvous(m_adapter, m_host, m_port);
     }
     else if (is_caller)
     {
         // Establish a connection
 
-        PrepareClient();
+        sock = PrepareClient(m_blocking_mode);
 
         if (name.get() != "")
         {
             Verb() << "Connect with requesting stream [" << name.get() << "]";
-            UDT::setstreamid(m_sock, *name);
+            UDT::setstreamid(sock, *name);
         }
         else
         {
@@ -842,18 +1845,19 @@ void SrtModel::Establish(ref_t<std::string> name)
         if (m_outgoing_port)
         {
             Verb() << "Setting outgoing port: " << m_outgoing_port;
-            SetupAdapter("", m_outgoing_port);
+            SetupAdapter(sock, "", m_outgoing_port);
         }
 
-        ConnectClient(m_host, m_port);
+        ConnectClient(sock, m_host, m_port);
 
+        m_links.push_back(sock);
         if (m_outgoing_port == 0)
         {
             // Must rely on a randomly selected one. Extract the port
             // so that it will be reused next time.
             sockaddr_any s(AF_INET);
             int namelen = s.size();
-            if ( srt_getsockname(Socket(), &s, &namelen) == SRT_ERROR )
+            if ( srt_getsockname(sock, &s, &namelen) == SRT_ERROR )
             {
                 Error(UDT::getlasterror(), "srt_getsockname");
             }
@@ -873,9 +1877,9 @@ void SrtModel::Establish(ref_t<std::string> name)
         }
 
         Verb() << "Accepting a client...";
-        AcceptNewClient();
-        // This rewrites m_sock with a new SRT socket ("accepted" socket)
-        *name = UDT::getstreamid(m_sock);
+        Connection& cc = AcceptNewClient();
+        // This rewrites m_links with a new SRT socket ("accepted" socket)
+        *name = UDT::getstreamid(cc.socket);
         Verb() << "... GOT CLIENT for stream [" << name.get() << "]";
     }
 }
@@ -887,7 +1891,8 @@ template <> struct Srt<Target> { typedef SrtTarget type; };
 template <> struct Srt<Relay> { typedef SrtRelay type; };
 
 template <class Iface>
-Iface* CreateSrt(const string& host, int port, const map<string,string>& par) { return new typename Srt<Iface>::type (host, port, par); }
+Iface* CreateSrt(const string& host, int port, std::string path, const map<string,string>& par)
+{ return new typename Srt<Iface>::type (host, port, path, par); }
 
 bytevector ConsoleRead(size_t chunk)
 {
@@ -1233,13 +2238,7 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
         break;
 
     case UriParser::SRT:
-        iport = atoi(u.port().c_str());
-        if ( iport <= 1024 )
-        {
-            cerr << "Port value invalid: " << iport << " - must be >1024\n";
-            throw invalid_argument("Invalid port number");
-        }
-        ptr.reset( CreateSrt<Base>(u.host(), iport, u.parameters()) );
+        ptr.reset( CreateSrt<Base>(u.host(), u.portno(), u.path(), u.parameters()) );
         break;
 
 
@@ -1269,3 +2268,21 @@ std::unique_ptr<Target> Target::Create(const std::string& url)
 {
     return CreateMedium<Target>(url);
 }
+
+// Parse the RTP packet and extract the header and payload
+void RTPTransportProtocol::load(const bytevector& data, size_t size)
+{
+    static const nosize = ~size_t();
+
+    if (size == nosize)
+        size = data.size();
+
+    // Check the minimum RTP header size
+}
+
+// Write the RTP packet out of collected header and payload
+void RTPTransportProtocol::save(char* out, size_t bufsize)
+{
+}
+
+

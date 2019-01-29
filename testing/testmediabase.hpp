@@ -69,4 +69,21 @@ public:
 };
 
 
+// A class for managing wrapper protocol
+
+struct TransportPacket
+{
+    bytevector payload;
+
+    virtual void load(const bytevector& in, size_t size = ~size_t()) = 0;
+    virtual void save(bytevector& out) = 0;
+
+    // Accessing basic information. This can be changed
+    // either through this returned reference, or load().
+    virtual int32_t& seqno() = 0;
+    virtual int32_t& srcid() = 0;
+};
+
+
+
 #endif
