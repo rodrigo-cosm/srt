@@ -698,13 +698,15 @@ void CSndBuffer::increase()
 //const int CRcvBuffer::TSBPD_DRIFT_PRT_SAMPLES = 200;   // ACK-ACK packets
 #endif
 
-CRcvBuffer::CRcvBuffer(CUnitQueue* queue, int bufsize):
+CRcvBuffer::CRcvBuffer(CUnitQueue* queue, int bufsize, int32_t last_skip_ack, bool live):
 m_pUnit(NULL),
 m_iSize(bufsize),
 m_pUnitQueue(queue),
 m_iStartPos(0),
 m_iLastAckPos(0),
 m_iMaxPos(0),
+m_LastAckSequence(last_skip_ack),
+m_bImmediateAck(live),
 m_iNotch(0)
 ,m_BytesCountLock()
 ,m_iBytesCount(0)
@@ -781,22 +783,213 @@ void CRcvBuffer::countBytes(int pkts, int bytes, bool acked)
    }
 }
 
-int CRcvBuffer::addData(CUnit* unit, int offset)
+CRcvBuffer::BufferState CRcvBuffer::addDataAt(int32_t sequence, CUnit* unit)
 {
-   int pos = (m_iLastAckPos + offset) % m_iSize;
-   if (offset >= m_iMaxPos)
-      m_iMaxPos = offset + 1;
+    // Initial statement:
+    //     HEAD                 TAIL     PAST   .... HEAD+MAXSIZE
+    //      |                    |        |     ....    |
+    //
+    // SIZE = TAIL - HEAD = TAIL.seq - HEAD.seq
+    // HEAD.seq = TAIL.seq - SIZE
+    // MAX.seq = HEAD.seq + MAXSIZE
 
-   if (m_pUnit[pos] != NULL) {
-      return -1;
+    // m_LastAckSequence is the sequence number of the packet
+    // stored at m_iLastAckPos. By decreasing it with the size of
+    // the acknowledged range, we get the sequence at m_iStartPos.
+    int head_sequence = CSeqNo::decseq(m_LastAckSequence, getRcvDataSize());
+
+    // So, this is the maximum sequence number that this may have.
+    int max_sequence = CSeqNo::incseq(head_sequence, m_iSize);
+
+    // Good. Now check if the sequence number is in the range:
+    // <m_LastAckSequence, max_sequence>
+    //
+    // That is, the sequence is between the moment when the packets
+    // are acknowledged (packets already acked should be rejected anyway),
+    // and the maximum position allowed by the buffer capacity.
+    // To check the sequence range, we must compare the seqoff.
+
+    int allowed_span = CSeqNo::seqoff(m_LastAckSequence, max_sequence);
+    int offset = CSeqNo::seqoff(m_LastAckSequence, sequence);
+
+    // Offset can be < 0 for lost packets, just must be within the existing
+    // buffer range. This can go that far below 0 as for the head_sequence.
+    int min_offset = -CSeqNo::seqoff(head_sequence, m_LastAckSequence);
+
+    HLOGC(dlog.Debug, log << "addDataAt: seq=" << sequence << " into RNG[" << head_sequence << "-" << m_LastAckSequence << "..." << (m_LastAckSequence + m_iMaxPos) << "]");
+
+    if (offset < min_offset)
+    {
+        HLOGC(dlog.Debug, log << "Sequence number " << sequence << " is in the past (last ack: " << m_LastAckSequence << ") - discarding");
+        return BS_PAST;
+    }
+
+    if (offset > allowed_span)
+    {
+        LOGC(dlog.Error, log << "Packet with sequence=" << sequence << " can't be stored, buffer space depleted.");
+        return BS_OVERFLOW;
+    }
+
+    BufferState result = addData(unit, offset);
+    HLOGC(dlog.Debug, log << "addDataAt: UPDATED: RNG[" << head_sequence << "-" << m_LastAckSequence << "..." << (m_LastAckSequence + m_iMaxPos) << "] result:" << result);
+    return result;
+}
+
+// Return value:
+// BS_PAST: packet not stored (there already is a packet at that position)
+// BS_SUBSEQUENT: packet stored, and it follows at least one existing packet
+// BS_NEWHEAD: packet stored is a new head - supersedes the head or buffer was empty
+// BS_OVERFLOW: packet not stored, the sequence points outside the buffer capacity
+// (head is the first good cell on HEAD-TAIL range)
+/// (Internal) add the unit at position described by offset. The offset is
+/// calculated initially as a distance between the sequence number in the packet
+/// and the sequence number cached in @a m_LastAckSequence, which is the
+/// sequence of the packet stored at @a m_iLastAckPos - so it's simultaneously
+/// a distance towards @a m_iLastAckPos.
+/// @param unit Unit to be stored (containing a packet)
+/// @param offset Position towards the @a m_iLastAckPos
+/// @retval -1 This position is already covered, so packet was not stored.
+/// @retval 0 Packet stored, and at least one packet in the buffer is at earlier position
+/// @retval 1 Packet stored, and it's a new head (earliest position)
+CRcvBuffer::BufferState CRcvBuffer::addData(CUnit* unit, int offset)
+{
+    // Get the place predicted for given sequence
+   int pos = shift(m_iLastAckPos, offset);
+    if (m_pUnit[pos] != NULL)
+    {
+        HLOGP(dlog.Debug, "addData: there is a packet already at that position");
+#if ENABLE_LOGGING
+        // Make a sanity check here. The condition to check if the offset exceeds
+        // m_iMaxPos was before this condition earlier, however if it
+        // has ever happened that there is a valid packet stored at the position
+        // that HAS NOT BEEN READ TO EVER BEFORE, then there's something really wrong here.
+        if (offset >= m_iMaxPos)
+        {
+            LOGP(dlog.Fatal, "INCOMING PACKET offset EXCEEDS the non-contiguous range and found an existing packet there");
+            // This is a change: in this case, leave the past-tail-delta unchanged.
+            // Not sure what should be done in this case, however.
+        }
+#endif
+        return BS_PAST;
+    }
+
+    // Update position at which it was placed.
+    // ReadTail doesn't change the position here.
+    BufferState new_head_status = BS_SUBSEQUENT;
+    if (empty())
+    {
+        HLOGP(dlog.Debug, "addData: WILL NEED SIGNAL because this is the first packet");
+        new_head_status = BS_NEWHEAD;
+    }
+
+    // NOTE: empty() and the below condition MIGHT be satisfied as either of or both simultaneously.
+   if (offset >= m_iMaxPos)
+    {
+        // Subsequent packet.
+      m_iMaxPos = offset + 1;
+    }
+    else if (m_bImmediateAck && new_head_status == BS_SUBSEQUENT)
+    {
+        // Packet recovered. Unless:
+        // - "packet contiguousness ACK" method is by-sent-ack (in contradiction to immediate)
+        //   - the check for it is deferred to the moment when UMSG_ACK is to be sent
+        // - the packet to be newly inserted is the only packet in the buffer
+        //   - then we already know that it's a head-ahead (and becomes a new head)
+        //
+        // Otherwise check if between the cell of a newly inserted packet and the end
+        // of the so far contiguous range (HEAD-TAIL) there is any good cell.
+
+        for (int d = offset+1; d < m_iMaxPos; ++d)
+        {
+            int p = shift(m_iLastAckPos, d);
+            if (m_pUnit[p] && m_pUnit[p]->m_iFlag == CUnit::GOOD)
+            {
+                // If we have a situation that the sequence of the packet
+                // to be inserted is EARLIER than the head-ahead packet,
+                // it becomes this way a new head-ahead packet. This causes
+                // returning 1 here to declare that the TSBPD condition
+                // must be signaled because it is probably currently sleeping
+                // with either timeout set to the old head-ahead packet,
+                // or indefinitely, that is, it expects to be woken up on
+                // a signal from here.
+                new_head_status = BS_NEWHEAD;
+                HLOGP(dlog.Debug, "addData: WILL NEED SIGNAL because it's new head");
+                break;
+            }
+        }
    }
+
    m_pUnit[pos] = unit;
    countBytes(1, unit->m_Packet.getLength());
 
    unit->m_iFlag = CUnit::GOOD;
    ++ m_pUnitQueue->m_iCount;
 
-   return 0;
+    if (m_bImmediateAck)
+    {
+        ackContiguous();
+    }
+    else
+    {
+        HLOGC(dlog.Debug, log << "addData: NOT acknowledging packets internally - will be done when sending UMSG_ACK");
+    }
+
+    return new_head_status;
+}
+
+void CRcvBuffer::ackContiguous()
+{
+    // This is done immediately after adding a packet.
+    int bytes = 0;
+
+    // Start with the position of past-the-end of the contiguous range.
+    // Ride up to the m_iMaxPos, stopping on the first non-contiguous.
+    // The position at m_iLastAckPos + m_iMaxPos should be obviously
+    // lacking, but the new position of m_iLastAckPos should be at the first
+    // empty cell.
+
+    int read_tail = m_iLastAckPos;
+    int ack_delta = 0;
+    for (; ack_delta < m_iMaxPos; ++ack_delta, read_tail = shift_forward(read_tail))
+    {
+        // Just a while ago there was added a packet,
+        // either at the position m_iMaxPos-1 (fresh),
+        // or next to m_iLastAckPos. Start from m_iLastAckPos
+        // and check packets up to m_iMaxPos if all
+        // of them are contiguous. When a lacking packet found,
+        // then acknowledge only up to this one.
+        if (m_pUnit[read_tail] && m_pUnit[read_tail]->m_iFlag == CUnit::GOOD)
+        {
+            bytes += m_pUnit[read_tail]->m_Packet.getLength();
+        }
+        else
+        {
+            break;
+        }
+    }
+
+#if ENABLE_HEAVY_LOGGING
+    int base = CSeqNo::incseq(m_LastAckSequence, 1);
+    int end = CSeqNo::incseq(m_LastAckSequence, ack_delta);
+
+    HLOGC(mglog.Debug, log << "ackContiguous: to be clipped: from=" << base << " to=" << end);
+#endif
+
+    // If the loop didn't catch any empty cell, then at exit d == m_iMaxPos.
+
+    // This will be 0, if the above loop found a lacking packet already
+    // at the [0] position.
+    if (ack_delta > 0)
+    {
+        countBytes(ack_delta, bytes, true);
+
+        // Update pointers
+        m_iMaxPos -= ack_delta;
+        m_iLastAckPos = read_tail; // SHARED DATA, not sure if volatile makes it
+        m_LastAckSequence = CSeqNo::incseq(m_LastAckSequence, ack_delta);
+
+        CTimer::triggerEvent();
+    }
 }
 
 int CRcvBuffer::readBuffer(char* data, int len)
@@ -895,41 +1088,110 @@ int CRcvBuffer::readBufferToFile(fstream& ofs, int len)
    return len - rs;
 }
 
+bool CRcvBuffer::ackDataTo(int32_t upseq)
+{
+    if (upseq < 0)
+        return false;
+
+    bool updated = false;
+
+    int acksize = CSeqNo::seqoff(m_LastAckSequence, upseq);
+    if (acksize > 0)
+    {
+        HLOGC(dlog.Debug, log << "ackDataTo: ACKing seq: " << m_LastAckSequence
+            << " - " << upseq << " (" << acksize << " packets)");
+        ackData(acksize);
+        updated = true;
+    }
+    m_LastAckSequence = upseq;
+    return updated;
+}
+
 void CRcvBuffer::ackData(int len)
 {
-   {
-      int pkts = 0;
-      int bytes = 0;
-      for (int i = m_iLastAckPos, n = (m_iLastAckPos + len) % m_iSize; i != n; i = (i + 1) % m_iSize)
-      {
-          if (m_pUnit[i] == NULL)
-              continue;
+    // Move the m_iLastAckPos position further by 'len'.
+    // This is done regardless if there are units on that position, although
+    // the primary statement is that the range between m_iStartPos and
+    // m_iLastAckPos is perfectly contiguous. This might not be true in case
+    // when 'skipData' was called and therefore packets at positions where the
+    // unit is lacking are intentionally dropped.
 
-          pkts++;
-          bytes += m_pUnit[i]->m_Packet.getLength();
-      }
-      if (pkts > 0) countBytes(pkts, bytes, true);
-   }
-   m_iLastAckPos = (m_iLastAckPos + len) % m_iSize;
-   m_iMaxPos -= len;
-   if (m_iMaxPos < 0)
-      m_iMaxPos = 0;
+    // This actually declares more packets that are considered ACK-ed
+    // and therefore available for in-order reading.
 
-   CTimer::triggerEvent();
+    int pkts = 0;
+    int bytes = 0;
+
+    // for (i: m_iLastAckPos ... m_iLastAckPos +% len)
+    int i_end = shift(m_iLastAckPos, len);
+    for (int i = m_iLastAckPos; i != i_end; i = shift_forward(i))
+    {
+        if (m_pUnit[i]) // have something there
+    {
+            pkts++;
+        pkts++;
+        }
+    }
+    if (pkts > 0)
+    {
+        countBytes(pkts, bytes, true);
+    }
+    m_iLastAckPos = i_end;
+    m_iMaxPos -= len;
+    if (m_iMaxPos < 0)
+        m_iMaxPos = 0;
+
+    CTimer::triggerEvent();
+}
+
+int CRcvBuffer::skipDataTo(int32_t upseq)
+{
+    if (upseq == -1) // nothing to skip
+        return 0;
+
+    int seqlen = CSeqNo::seqoff(m_LastAckSequence, upseq);
+    if (seqlen > 0)
+        skipData(seqlen);
+    m_LastAckSequence = upseq;
+    return seqlen;
 }
 
 void CRcvBuffer::skipData(int len)
 {
    /* 
    * Caller need protect both AckLock and RecvLock
-   * to move both m_iStartPos and m_iLastAckPost
+   * to move both m_iStartPos and m_iLastAckPos
    */
-   if (m_iStartPos == m_iLastAckPos)
-      m_iStartPos = (m_iStartPos + len) % m_iSize;
-   m_iLastAckPos = (m_iLastAckPos + len) % m_iSize;
+
+    // This shifts FOA m_iLastAckPos by 'len'. If the buffer was empty, shift
+    // also m_iStartPos to the position of m_iLastAckPos (to keep it empty),
+    // otherwise there are some remaining data to be read from the buffer.
+
+    // If the buffer wasn't empty, but there are still empty cells
+    // in the HEAD-TAIL range, this range is still considered contiguous.
+
+    bool empty = m_iStartPos == m_iLastAckPos;
+    m_iLastAckPos = shift(m_iLastAckPos, len);
+    if (empty)
+        m_iStartPos = m_iLastAckPos;
+
+    // The m_iMaxPos must stay where it is (delta to be decreased by the
+    // length), unless the m_iLastAckPos is to be set further than that, in which
+    // case it should also keep its position (delta to be set 0).
+
    m_iMaxPos -= len;
    if (m_iMaxPos < 0)
+   {
       m_iMaxPos = 0;
+   }
+   else
+   {
+        // In case when there are still some packets "ahead of tail",
+        // try to internal-ACK them if they are contiguous
+        if (m_bImmediateAck)
+            ackContiguous();
+
+   }
 }
 
 bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passack, ref_t<int32_t> r_skipseqno, ref_t<int32_t> r_curpktseq)
@@ -943,16 +1205,21 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
     // - tsbpdtime: real time when the packet is ready to play (whether ready to play or not)
     // - passack: false (the report concerns a packet with an exactly next sequence)
     // - skipseqno == -1: no packets to skip towards the first RTP
-    // - ppkt: that exactly packet that is reported (for debugging purposes)
-    // - @return: whether the reported packet is ready to play
+    // - curpktseq: sequence number for reported packet (for debug purposes)
+    // - @return: ready (to play) or not
 
     /* Check the acknowledged packets */
+
+    // getRcvReadyMsg returns true if the time to play for the first message
+    // (returned in r_tsbpdtime) is in the past.
     if (getRcvReadyMsg(r_tsbpdtime, r_curpktseq))
     {
         return true;
     }
     else if (*r_tsbpdtime != 0)
     {
+        // This means that a message next to be played, has been found,
+        // but the time to play is in future.
         return false;
     }
 
@@ -960,9 +1227,13 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
 
     // Below this line we have only two options:
     // - m_iMaxPos == 0, which means that no more packets are in the buffer
-    //    - returned: tsbpdtime=0, passack=true, skipseqno=-1, ppkt=0, @return false
+    //    - returned: tsbpdtime=0, passack=true, skipseqno=-1, curpktseq=0, @return false
     // - m_iMaxPos > 0, which means that there are packets arrived after a lost packet:
     //    - returned: tsbpdtime=PKT.TS, passack=true, skipseqno=PKT.SEQ, ppkt=PKT, @return LOCAL(PKT.TS) <= NOW
+    //
+    // (note: the "passack" range from this architecture point of view are simply packets for
+    //  which the UMSG_ACK wasn't yet sent; as in case of live mode packets get ACK-ed quickly,
+    //  it can be approximated that the first packet in the "passack" range is missing).
 
     /* 
      * No acked packets ready but caller want to know next packet to wait for
@@ -1053,6 +1324,29 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
     for (int i = m_iStartPos, n = m_iLastAckPos; i != n; i = (i + 1) % m_iSize)
     {
         bool freeunit = false;
+
+        // NOTE: according to the way how this functions in case of TSBPD
+        // and live mode, this should be impossible because:
+
+        // 1. If empty buffer (m_iStartPos == m_iLastAckPos), this loop will not execute.
+        // 2. If there happened a situation that m_iLastAckPos was shifted, it could
+        // only be done as:
+        // - a result of received ACKACK, if file mode is used (until then the 
+        //   newly arrived packets stay past the m_iLastAckPos position, even if they
+        //   are contiguous). When this happens, m_iLastAckPos is only shifted up to
+        //   the position of the first lost packet, that is, after this shift all
+        //   packets in this range are contiguous (m_pUnit[i] != NULL).
+        // - just after adding a new packet to the buffer, in live mode (m_bImmediateAck)
+        //   the m_iLastAckPos pointer is moved up to the first lost packet, or up to
+        //   the position pointed by m_iMaxPos.
+        // 3. If the TLPKTDROP situation happens, the skipData() function is called,
+        //    which starts with the situation that m_iStartPos == m_iLastAckPos (the cell
+        //    at that position == NULL because it's a lost packet), and exits with
+        //    the situation that there's at least one packet in this range, and again,
+        //    all packets in the head-tail range are contiguous.
+        //
+        // Result: this is only a sanity check and this condition should
+        // not be possible to happen.
 
         /* Skip any invalid skipped/dropped packets */
         if (m_pUnit[i] == NULL)

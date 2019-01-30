@@ -279,6 +279,8 @@ public: // internal API
     // a different channel.
     void skipIncoming(int32_t seq);
 
+    bool forgetPacketsUpTo(int32_t skiptoseqno);
+    void signalNewPacketAtHead();
     void ConnectSignal(ETransmissionEvent tev, EventSlot sl);
     void DisconnectSignal(ETransmissionEvent tev);
 
@@ -306,7 +308,6 @@ private:
     /// @retval -1 Connection failed
 
     SRT_ATR_NODISCARD EConnectStatus processConnectResponse(const CPacket& pkt, CUDTException* eout, bool synchro) ATR_NOEXCEPT;
-
 
     // This function works in case of HSv5 rendezvous. It changes the state
     // according to the present state and received message type, as well as the
@@ -500,6 +501,8 @@ private:
     // TSBPD thread main function.
     static void* tsbpd(void* param);
 
+    void updateForgotten(int seqlen, int32_t lastack, int32_t skiptoseqno);
+
     static CUDTUnited s_UDTUnited;               // UDT global management base
 
 private: // Identification
@@ -646,7 +649,7 @@ private: // Receiving related data
 #ifdef ENABLE_LOGGING
     int32_t m_iDebugPrevLastAck;
 #endif
-    int32_t m_iRcvLastSkipAck;                   // Last dropped sequence ACK
+    // int32_t m_iRcvLastSkipAck;                   // Last dropped sequence ACK <-- field moved do CRcvBuffer.
     uint64_t m_ullLastAckTime_tk;                   // Timestamp of last ACK
     int32_t m_iRcvLastAckAck;                    // Last sent ACK that has been acknowledged
     int32_t m_iAckSeqNo;                         // Last ACK sequence number

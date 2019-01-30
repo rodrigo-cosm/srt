@@ -300,15 +300,17 @@ void CTimer::sleep()
    #endif
 }
 
-int CTimer::condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64_t delay) {
+CTimer::EWait CTimer::condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64_t delay)
+{
     timeval now;
     gettimeofday(&now, 0);
     uint64_t time_us = now.tv_sec * uint64_t(1000000) + now.tv_usec + delay;
     timespec timeout;
     timeout.tv_sec = time_us / 1000000;
     timeout.tv_nsec = (time_us % 1000000) * 1000;
-    
-    return pthread_cond_timedwait(cond, mutex, &timeout);
+
+    int reason = pthread_cond_timedwait(cond, mutex, &timeout);
+    return reason == ETIMEDOUT ? WT_TIMEOUT : reason == 0 ? WT_EVENT : WT_ERROR;
 }
 
 

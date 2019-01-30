@@ -213,7 +213,8 @@ public:
    // Currently just "unimplemented".
    std::string CONID() const { return ""; }
 
-   CRcvBuffer(CUnitQueue* queue, int bufsize = 65536);
+   static const int DEFAULT_SIZE = 65536;
+   CRcvBuffer(CUnitQueue* queue, int bufsize, int32_t last_skip_ack, bool live);
    ~CRcvBuffer();
 
       /// Write data into the buffer.
@@ -221,7 +222,9 @@ public:
       /// @param [in] offset offset from last ACK point.
       /// @return 0 is success, -1 if data is repeated.
 
-   int addData(CUnit* unit, int offset);
+   enum BufferState {BS_PAST, BS_NEWHEAD, BS_SUBSEQUENT, BS_OVERFLOW};
+
+   BufferState addDataAt(int32_t sequence, CUnit* unit);
 
       /// Read data into a user buffer.
       /// @param [in] data pointer to user buffer.
@@ -241,7 +244,7 @@ public:
       /// @param [in] len size of data to be acknowledged.
       /// @return 1 if a user buffer is fulfilled, otherwise 0.
 
-   void ackData(int len);
+   bool ackDataTo(int32_t upseq);
 
       /// Query how many buffer space left for data receiving.
       /// @return size of available buffer space (including user buffer) for data receiving.
@@ -353,7 +356,7 @@ public:
       /// Update the ACK point of the buffer.
       /// @param [in] len size of data to be skip & acknowledged.
 
-   void skipData(int len);
+   int skipDataTo(int32_t upseq);
 
 
 private:
@@ -372,14 +375,24 @@ private:
 
    uint64_t getTsbPdTimeBase(uint32_t timestamp);
 
-      /// Get packet local delivery time
-      /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
-      /// @return local delivery time (usec)
+   /// Internally acknowledge packets. That is, move the m_iLastAckPos pointer
+   /// to point to the last packet that is still contiguous.
+   /// @return The number of newly acknowledged contiguous packets.
+   void ackContiguous();
 
 public:
    uint64_t getPktTsbPdTime(uint32_t timestamp);
    int debugGetSize() const;
    bool empty() const;
+
+   int32_t lastSkipAck()
+   {
+       return m_LastAckSequence;
+   }
+
+   bool immediateAck() { return m_bImmediateAck; }
+   void immediateAck(bool v) { m_bImmediateAck = v; }
+
 private:
 
    /// thread safe bytes counter of the Recv & Ack buffer
@@ -388,21 +401,47 @@ private:
    /// @param [in] acked true when adding new pkt in RcvBuffer; false when acking/removing pkts to/from buffer
 
    void countBytes(int pkts, int bytes, bool acked = false);
+   void ackData(int offset);
+   void skipData(int len);
+   BufferState addData(CUnit* unit, int offset);
 
 private:
    bool scanMsg(ref_t<int> start, ref_t<int> end, ref_t<bool> passack);
+
+   int shift(int basepos, int shift)
+   {
+       return (basepos + shift) % m_iSize;
+   }
+
+   // Simplified versions with ++ and --; avoid using division instruction
+   int shift_forward(int basepos)
+   {
+       if (++basepos == m_iSize)
+           basepos = 0;
+       return basepos;
+   }
+
+   int shift_backward(int basepos)
+   {
+       if (basepos == 0)
+           basepos = m_iSize-1;
+       return --basepos;
+   }
 
 private:
    CUnit** m_pUnit;                     // pointer to the protocol buffer
    int m_iSize;                         // size of the protocol buffer
    CUnitQueue* m_pUnitQueue;		// the shared unit queue
 
-   int m_iStartPos;                     // the head position for I/O (inclusive)
+   int m_iStartPos;                  // HEAD: first packet available for reading
    int m_iLastAckPos;                   // the last ACKed position (exclusive)
 					// EMPTY: m_iStartPos = m_iLastAckPos   FULL: m_iStartPos = m_iLastAckPos + 1
-   int m_iMaxPos;			// the furthest data position
+   int m_iMaxPos;              // delta between contiguous-TAIL and reception-TAIL
 
-   int m_iNotch;			// the starting read point of the first unit
+   volatile int32_t m_LastAckSequence;       // sequence number assigned to a packet at m_iLastAckPos
+   bool m_bImmediateAck;             // If true, then the ACK pointer moves immediately upon reception
+
+   int m_iNotch;			         // the starting read point of the first unit
 
    pthread_mutex_t m_BytesCountLock;    // used to protect counters operations
    int m_iBytesCount;                   // Number of payload bytes in the buffer

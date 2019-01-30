@@ -491,7 +491,7 @@ public:
       /// @retval 0 Wait was successfull
       /// @retval ETIMEDOUT The wait timed out
 
-   static int condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64_t delay);
+   static EWait condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64_t delay);
 
 private:
    uint64_t getTimeInMicroSec();

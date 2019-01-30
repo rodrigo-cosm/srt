@@ -3673,7 +3673,7 @@ void CUDT::applyResponseSettings()
 #ifdef ENABLE_LOGGING
     m_iDebugPrevLastAck = m_iRcvLastAck;
 #endif
-    m_iRcvLastSkipAck = m_iRcvLastAck;
+    //m_iRcvLastSkipAck = m_iRcvLastAck; <-- initialized with the CRcvBuffer
     m_iRcvLastAckAck = m_ConnRes.m_iISN;
     m_iRcvCurrSeqNo = m_ConnRes.m_iISN - 1;
     m_PeerID = m_ConnRes.m_iID;
@@ -4202,33 +4202,13 @@ void* CUDT::tsbpd(void* param)
            */
           if (rxready)
           {
-             /* Packet ready to play according to time stamp but... */
-             int seqlen = CSeqNo::seqoff(self->m_iRcvLastSkipAck, skiptoseqno);
-
-             if (skiptoseqno != -1 && seqlen > 0)
-             {
-                /* 
-                * skiptoseqno != -1,
-                * packet ready to play but preceeded by missing packets (hole).
-                */
-
-                /* Update drop/skip stats */
-                self->m_iRcvDropTotal += seqlen;
-                self->m_iTraceRcvDrop += seqlen;
-                /* Estimate dropped/skipped bytes from average payload */
-                int avgpayloadsz = self->m_pRcvBuffer->getRcvAvgPayloadSize();
-                self->m_ullRcvBytesDropTotal += seqlen * avgpayloadsz;
-                self->m_ullTraceRcvBytesDrop += seqlen * avgpayloadsz;
-
-                self->unlose(self->m_iRcvLastSkipAck, CSeqNo::decseq(skiptoseqno)); //remove(from,to-inclusive)
-                self->m_pRcvBuffer->skipData(seqlen);
-
-                self->m_iRcvLastSkipAck = skiptoseqno;
-
+              if (self->forgetPacketsUpTo(skiptoseqno))
+              {
 #if ENABLE_LOGGING
                 int64_t timediff = 0;
                 if ( tsbpdtime )
                      timediff = int64_t(tsbpdtime) - int64_t(CTimer::getTime());
+                int seqlen = CSeqNo::seqoff(self->m_pRcvBuffer->lastSkipAck(), skiptoseqno);
 #if ENABLE_HEAVY_LOGGING
                 HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: DROPSEQ: up to seq=" << CSeqNo::decseq(skiptoseqno)
                     << " (" << seqlen << " packets) playable at " << logging::FormatTime(tsbpdtime) << " delayed "
@@ -4274,6 +4254,11 @@ void* CUDT::tsbpd(void* param)
          tsbpdtime = 0;
       }
 
+#if ENABLE_HEAVY_LOGGING
+      std::string wakeup_area;
+#endif
+
+      CTimer::EWait wakeup_reason = CTimer::WT_ERROR;
       if (tsbpdtime != 0)
       {
          int64_t timediff = int64_t(tsbpdtime) - int64_t(CTimer::getTime());
@@ -4285,8 +4270,11 @@ void* CUDT::tsbpd(void* param)
           THREAD_PAUSED();
           HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: FUTURE PACKET seq=" << current_pkt_seq
               << " T=" << logging::FormatTime(tsbpdtime) << " - waiting " << (timediff/1000.0) << "ms");
-          CTimer::condTimedWaitUS(&self->m_RcvTsbPdCond, &self->m_RecvLock, timediff);
+          wakeup_reason = CTimer::condTimedWaitUS(&self->m_RcvTsbPdCond, &self->m_RecvLock, timediff);
           THREAD_RESUMED();
+#if ENABLE_HEAVY_LOGGING
+      wakeup_area = "NEXT PACKET";
+#endif
       }
       else
       {
@@ -4303,14 +4291,56 @@ void* CUDT::tsbpd(void* param)
          HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: no data, scheduling wakeup at ack");
          self->m_bTsbPdAckWakeup = true;
          THREAD_PAUSED();
-         pthread_cond_wait(&self->m_RcvTsbPdCond, &self->m_RecvLock);
+         int reason = pthread_cond_wait(&self->m_RcvTsbPdCond, &self->m_RecvLock);
          THREAD_RESUMED();
+         wakeup_reason = reason == ETIMEDOUT ? CTimer::WT_TIMEOUT : reason == 0 ? CTimer::WT_EVENT : CTimer::WT_ERROR;
+#if ENABLE_HEAVY_LOGGING
+      wakeup_area = "NEW HEAD";
+#endif
       }
+
+      HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: WAKE UP: " << wakeup_area << " - " <<
+              (wakeup_reason == CTimer::WT_TIMEOUT ? "TIMEOUT" : wakeup_reason == CTimer::WT_EVENT ? "SIGNAL" : "ERROR"));
    }
    CGuard::leaveCS(self->m_RecvLock);
    THREAD_EXIT();
    HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: EXITING");
    return NULL;
+}
+
+void CUDT::updateForgotten(int seqlen, int32_t lastack, int32_t skiptoseqno)
+{
+    // (done under this condition because otherwise
+    // these packets are not in the loss list)
+    unlose(lastack, CSeqNo::decseq(skiptoseqno)); //remove(from,to-inclusive)
+    /* Update drop/skip stats */
+    m_iRcvDropTotal += seqlen;
+    m_iTraceRcvDrop += seqlen;
+    /* Estimate dropped/skipped bytes from average payload */
+    int avgpayloadsz = m_pRcvBuffer->getRcvAvgPayloadSize();
+    m_ullRcvBytesDropTotal += seqlen * avgpayloadsz;
+    m_ullTraceRcvBytesDrop += seqlen * avgpayloadsz;
+}
+
+bool CUDT::forgetPacketsUpTo(int32_t skiptoseqno)
+{
+    /* Packet ready to play according to time stamp but... */
+
+/*
+    int seqlen = CSeqNo::seqoff(m_pRcvBuffer->lastSkipAck(), skiptoseqno);
+
+    if (skiptoseqno != -1 && seqlen > 0)
+    */
+
+    int32_t lastack = m_pRcvBuffer->lastSkipAck();
+    int seqlen = m_pRcvBuffer->skipDataTo(skiptoseqno);
+    if (seqlen > 0)
+    {
+        updateForgotten(seqlen, lastack, skiptoseqno);
+        return true;
+    }
+
+    return false;
 }
 
 bool CUDT::prepareConnectionObjects(const CHandShake& hs, HandshakeSide hsd, CUDTException* eout)
@@ -4350,7 +4380,7 @@ bool CUDT::prepareConnectionObjects(const CHandShake& hs, HandshakeSide hsd, CUD
     try
     {
         m_pSndBuffer = new CSndBuffer(32, m_iMaxSRTPayloadSize);
-        m_pRcvBuffer = new CRcvBuffer(&(m_pRcvQueue->m_UnitQueue), m_iRcvBufSize);
+        m_pRcvBuffer = new CRcvBuffer(&(m_pRcvQueue->m_UnitQueue), m_iRcvBufSize, m_iRcvLastAckAck, m_bTsbPd);
         // after introducing lite ACK, the sndlosslist may not be cleared in time, so it requires twice space.
         m_pSndLossList = new CSndLossList(m_iFlowWindowSize * 2);
         m_pRcvLossList = new CRcvLossList(m_iFlightFlagSize);
@@ -4395,7 +4425,7 @@ void CUDT::acceptAndRespond(const sockaddr* peer, CHandShake* hs, const CPacket&
 #ifdef ENABLE_LOGGING
    m_iDebugPrevLastAck = m_iRcvLastAck;
 #endif
-   m_iRcvLastSkipAck = m_iRcvLastAck;
+   // m_iRcvLastSkipAck = m_iRcvLastAck; <-- inside the buffer, initialized in prepareConnectionObjects()
    m_iRcvLastAckAck = hs->m_iISN;
    m_iRcvCurrSeqNo = hs->m_iISN - 1;
 
@@ -6319,9 +6349,11 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
       // IF ack > m_iRcvLastAck
       if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
       {
-         int acksize = CSeqNo::seqoff(m_iRcvLastSkipAck, ack);
 
          m_iRcvLastAck = ack;
+         bool updated = m_pRcvBuffer->ackDataTo(ack); // <-- updates also value of m_pRcvBuffer->lastSkipAck()
+
+         /*
          m_iRcvLastSkipAck = ack;
 
          // XXX Unknown as to whether it matters.
@@ -6332,34 +6364,53 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
          // Preventing to call this on zero size makes sense, if it prevents false alerts.
          if (acksize > 0)
              m_pRcvBuffer->ackData(acksize);
-         CGuard::leaveCS(m_AckLock);
+         */
 
-         // If TSBPD is enabled, then INSTEAD OF signaling m_RecvDataCond,
-         // signal m_RcvTsbPdCond. This will kick in the tsbpd thread, which
-         // will signal m_RecvDataCond when there's time to play for particular
-         // data packet.
+         if (updated) // don't signal anything if nothing was updated
+         {
+             // note that the case when the update has happened and tsbpd
+             // is on should never happen because in case of live mode the
+             // packets in the receiver buffer should be internally acknowledged
+             // up to the position where they are contiguous.
+             //
+             // should there happen an ipe that they are not, as an error-fallback
+             // kick the tsbpd thread so that it re-checks the time-to-play of
+             // a possibly newly available packet.
+             CGuard::leaveCS(m_AckLock);
 
-         if (m_bTsbPd)
-         {
-             /* Newly acknowledged data, signal TsbPD thread */
-             pthread_mutex_lock(&m_RecvLock);
-             if (m_bTsbPdAckWakeup)
-                pthread_cond_signal(&m_RcvTsbPdCond);
-             pthread_mutex_unlock(&m_RecvLock);
-         }
-         else
-         {
-             if (m_bSynRecving)
+             // If TSBPD is enabled, then INSTEAD OF signaling m_RecvDataCond,
+             // signal m_RcvTsbPdCond. This will kick in the tsbpd thread, which
+             // will signal m_RecvDataCond when there's time to play for particular
+             // data packet.
+
+             if (m_bTsbPd)
              {
-                 // signal a waiting "recv" call if there is any data available
-                 pthread_mutex_lock(&m_RecvDataLock);
-                 pthread_cond_signal(&m_RecvDataCond);
-                 pthread_mutex_unlock(&m_RecvDataLock);
+                 LOGC(mglog.Error, log << "IPE: UMSG_ACK caused internal ACK seq=" << ack << " of bufferred packets, which SHOULD NOT HAPPEN in TSBPD mode!");
+
+                 // But still, the problem needs to be solved, so signal the TSBPD thread anyway.
+                 // Note that this problem must be elliminated if found because it may really worsen the performance.
+
+                 /* Newly acknowledged data, signal TsbPD thread */
+                 // XXX to be used with signalNewPacketAtHead()
+                 pthread_mutex_lock(&m_RecvLock);
+                 if (m_bTsbPdAckWakeup)
+                     pthread_cond_signal(&m_RcvTsbPdCond);
+                 pthread_mutex_unlock(&m_RecvLock);
              }
-             // acknowledge any waiting epolls to read
-             s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_IN, true);
+             else
+             {
+                 if (m_bSynRecving)
+                 {
+                     // signal a waiting "recv" call if there is any data available
+                     pthread_mutex_lock(&m_RecvDataLock);
+                     pthread_cond_signal(&m_RecvDataCond);
+                     pthread_mutex_unlock(&m_RecvDataLock);
+                 }
+                 // acknowledge any waiting epolls to read
+                 s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_IN, true);
+             }
+             CGuard::enterCS(m_AckLock);
          }
-         CGuard::enterCS(m_AckLock);
       }
       else if (ack == m_iRcvLastAck)
       {
@@ -7557,9 +7608,21 @@ int CUDT::processData(CUnit* unit)
 #endif
    }
 
+#if ENABLE_HEAVY_LOGGING
+   {
+       int tsbpddelay = m_iTsbPdDelay_ms*1000; // (value passed to CRcvBuffer::setRcvTsbPdMode)
 
-   HLOGC(dlog.Debug, log << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength() << " seq=" << packet.getSeqNo());
-   //    << "(" << rexmitstat[pktrexmitflag] << rexmit_reason << ")";
+       // It's easier to remove the latency factor from this value than to add a function
+       // that exposes the details basing on which this value is calculated.
+       uint64_t pts = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
+       uint64_t ets = pts - tsbpddelay;
+
+       HLOGC(dlog.Debug, log << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength()
+           << " seq=" << packet.getSeqNo()
+           << " ETS=" << logging::FormatTime(ets)
+           << " PTS=" << logging::FormatTime(pts));
+   }
+#endif
 
    updateCC(TEV_RECEIVE, &packet);
    ++ m_iPktCount;
@@ -7580,112 +7643,124 @@ int CUDT::processData(CUnit* unit)
    ++ m_llRecvTotal;
 
    {
-      /*
-      * Start of offset protected section
-      * Prevent TsbPd thread from modifying Ack position while adding data
-      * offset from RcvLastAck in RcvBuffer must remain valid between seqoff() and addData()
-      */
-      CGuard recvbuf_acklock(m_AckLock);
+       /*
+        * Start of offset protected section
+        * Prevent TsbPd thread from modifying Ack position while adding data
+        * offset from RcvLastAck in RcvBuffer must remain valid between seqoff() and addData()
+        */
+       CGuard recvbuf_acklock(m_AckLock);
 
-      int32_t offset = CSeqNo::seqoff(m_iRcvLastSkipAck, packet.m_iSeqNo);
+       //int32_t offset = CSeqNo::seqoff(m_iRcvLastSkipAck, packet.m_iSeqNo);
+       int32_t offset = CSeqNo::seqoff(m_pRcvBuffer->lastSkipAck(), packet.m_iSeqNo);
 
-      bool excessive = false;
-      string exc_type = "EXPECTED";
-      if ((offset < 0))
-      {
-          exc_type = "BELATED";
-          excessive = true;
-          m_iTraceRcvBelated++;
-          uint64_t tsbpdtime = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
-          uint64_t bltime = CountIIR(
-                  uint64_t(m_fTraceBelatedTime)*1000,
-                  CTimer::getTime() - tsbpdtime, 0.2);
-          m_fTraceBelatedTime = double(bltime)/1000.0;
-      }
-      else
-      {
+       bool excessive = false;
+       string exc_type = "EXPECTED";
+       if (offset < 0)
+       {
+           exc_type = "BELATED";
+           excessive = true;
+           m_iTraceRcvBelated++;
+           uint64_t tsbpdtime = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
+           uint64_t bltime = CountIIR(
+                   uint64_t(m_fTraceBelatedTime)*1000,
+                   CTimer::getTime() - tsbpdtime, 0.2);
+           m_fTraceBelatedTime = double(bltime)/1000.0;
+       }
+       else
+       {
 
-          int avail_bufsize = m_pRcvBuffer->getAvailBufSize();
-          if (offset >= avail_bufsize)
-          {
-              // This is already a sequence discrepancy. Probably there could be found
-              // some way to make it continue reception by overriding the sequence and
-              // make a kinda TLKPTDROP, but there has been found no reliable way to do this.
-              if (m_bTsbPd && m_bTLPktDrop && m_pRcvBuffer->empty())
-              {
-                  // Only in live mode. In File mode this shall not be possible
-                  // because the sender should stop sending in this situation.
-                  // In Live mode this means that there is a gap between the
-                  // lowest sequence in the empty buffer and the incoming sequence
-                  // that exceeds the buffer size. Receiving data in this situation
-                  // is no longer possible and this is a point of no return.
+           switch ( m_pRcvBuffer->addDataAt(packet.m_iSeqNo, unit) )
+           {
+           case CRcvBuffer::BS_PAST:
+               // addDataAt returns BS_PAST if at the m_iLastAckPos+offset position there already is a packet.
+               // So this packet is "redundant".
+               exc_type = "UNACKED";
+               excessive = true;
+               break;
 
-                  LOGC(mglog.Error,
-                          log << CONID() <<
-                          "SEQUENCE DISCREPANCY, reception no longer possible. REQUESTING TO CLOSE.");
+           case CRcvBuffer::BS_NEWHEAD:
+               // addDataAt returns BS_NEWHEAD if the newly inserted packet has been
+               // inserted as "head-ahead", that is, before the packet that was
+               // previously the head and therefore this packet is a new head. When
+               // this happens, a TSBPD thread must be informed that the timeout
+               // for his current sleep is outdated and it must "recalculate" its
+               // sleeping time, or even act immediately.
+               signalNewPacketAtHead();
+               break;
 
-                  // This is a scoped lock with AckLock, but for the moment
-                  // when processClose() is called this lock must be taken out,
-                  // otherwise this will cause a deadlock. We don't need this
-                  // lock anymore, and at 'return' it will be unlocked anyway.
-                  recvbuf_acklock.forceUnlock();
-                  processClose();
-                  return -1;
-              }
-              else
-              {
-                  LOGC(mglog.Error, log << CONID() << "No room to store incoming packet: offset="
-                          << offset << " avail=" << avail_bufsize
-                          << " ack.seq=" << m_iRcvLastSkipAck << " pkt.seq=" << packet.m_iSeqNo
-                          << " rcv-remain=" << m_pRcvBuffer->debugGetSize()
-                          );
-                  return -1;
-              }
+           case CRcvBuffer::BS_OVERFLOW:
 
-          }
+               // This is already a sequence discrepancy. Probably there could be found
+               // some way to make it continue reception by overriding the sequence and
+               // make a kinda TLKPTDROP, but there has been found no reliable way to do this.
+               if (m_bTsbPd && m_pRcvBuffer->empty())
+               {
+                   // Only in live mode. In File mode this shall not be possible
+                   // because the sender should stop sending in this situation.
+                   // In Live mode this means that there is a gap between the
+                   // lowest sequence in the empty buffer and the incoming sequence
+                   // that exceeds the buffer size. Receiving data in this situation
+                   // is no longer possible and this is a point of no return.
 
-          if (m_pRcvBuffer->addData(unit, offset) < 0)
-          {
-              // addData returns -1 if at the m_iLastAckPos+offset position there already is a packet.
-              // So this packet is "redundant".
-              exc_type = "UNACKED";
-              excessive = true;
-          }
-      }
+                   LOGC(mglog.Error,
+                           log << CONID() <<
+                           "SEQUENCE DISCREPANCY, reception no longer possible. REQUESTING TO CLOSE.");
 
-      HLOGC(mglog.Debug, log << CONID() << "RECEIVED: seq=" << packet.m_iSeqNo << " offset=" << offset
-          << (excessive ? " EXCESSIVE" : " ACCEPTED")
-          << " (" << exc_type << "/" << rexmitstat[pktrexmitflag] << rexmit_reason << ") FLAGS: "
-          << packet.MessageFlagStr());
+                   // This is a scoped lock with AckLock, but for the moment
+                   // when processClose() is called this lock must be taken out,
+                   // otherwise this will cause a deadlock. We don't need this
+                   // lock anymore, and at 'return' it will be unlocked anyway.
+                   recvbuf_acklock.forceUnlock();
+                   processClose();
+                   return -1;
+               }
+               else
+               {
+                   LOGC(mglog.Error, log << CONID() << "No room to store incoming packet: offset="
+                           << offset << " avail=" << m_pRcvBuffer->getAvailBufSize()
+                           << " ack.seq=" << m_pRcvBuffer->lastSkipAck() << " pkt.seq=" << packet.m_iSeqNo
+                           << " rcv-remain=" << m_pRcvBuffer->debugGetSize()
+                       );
+                   return -1;
+               }
 
-      if ( excessive )
-      {
-          return -1;
-      }
+           default: ;
+           }
+       }
 
-      if (packet.getMsgCryptoFlags())
-      {
-          // Crypto should be already created during connection process,
-          // this is rather a kinda sanity check.
-          EncryptionStatus rc = m_pCryptoControl ? m_pCryptoControl->decrypt(Ref(packet)) : ENCS_NOTSUP;
-          if ( rc != ENCS_CLEAR )
-          {
-              /*
-               * Could not decrypt
-               * Keep packet in received buffer
-               * Crypto flags are still set
-               * It will be acknowledged
-               */
-              m_iTraceRcvUndecrypt += 1;
-              m_ullTraceRcvBytesUndecrypt += pktsz;
-              m_iRcvUndecryptTotal += 1;
-              m_ullRcvBytesUndecryptTotal += pktsz;
-          }
-      }
-      else
-      {
-          HLOGC(dlog.Debug, log << "crypter: data not encrypted, returning as plain");
-      }
+       HLOGC(mglog.Debug, log << CONID() << "processData: RECEIVED: seq=" << packet.m_iSeqNo << " offset=" << offset
+               << (excessive ? " EXCESSIVE" : " ACCEPTED")
+               << " (" << exc_type << "/" << rexmitstat[pktrexmitflag] << rexmit_reason << ") FLAGS: "
+               << packet.MessageFlagStr());
+
+       if ( excessive )
+       {
+           return -1;
+       }
+
+       if (packet.getMsgCryptoFlags())
+       {
+           // Crypto should be already created during connection process,
+           // this is rather a kinda sanity check.
+           EncryptionStatus rc = m_pCryptoControl ? m_pCryptoControl->decrypt(Ref(packet)) : ENCS_NOTSUP;
+           if ( rc != ENCS_CLEAR )
+           {
+               /*
+                * Could not decrypt
+                * Keep packet in received buffer
+                * Crypto flags are still set
+                * It will be acknowledged
+                */
+               m_iTraceRcvUndecrypt += 1;
+               m_ullTraceRcvBytesUndecrypt += pktsz;
+               m_iRcvUndecryptTotal += 1;
+               m_ullRcvBytesUndecryptTotal += pktsz;
+           }
+       }
+       else
+       {
+           HLOGC(dlog.Debug, log << "processData: crypter: data not encrypted, returning as plain");
+       }
 
    }  /* End of recvbuf_acklock*/
 
@@ -8702,3 +8777,19 @@ int CUDT::getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes)
 
     return std::abs(timespan);
 }
+
+void CUDT::signalNewPacketAtHead()
+{
+   //THREAD_CHECK_AFFINITY(m_pRcvQueue->threadId());
+
+   // Signal it "relaxed way" because we just want to kick it in case
+   // when it's not running (is sleeping on condition variable). When
+   // it's running, that's even better and we don't need to do anything.
+   if (m_bTsbPd)
+   {
+       // Single socket TSBPD is running, signal it.
+       HLOGC(dlog.Debug, log << CONID() << "NEW HEAD: Kicking SINGLE TSBPD");
+       pthread_cond_signal(&m_RcvTsbPdCond);
+   }
+}
+
