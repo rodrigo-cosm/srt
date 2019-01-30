@@ -20,7 +20,7 @@ int srt_msngr_connect(char *uri, size_t message_size)
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
     ut["blocking"]   = string("true");
-    ut["sndbuf"]     = to_string(message_size * 1472 / 1456 + 1472);
+    ut["sndbuf"]     = to_string(3 * (message_size * 1472 / 1456 + 1472));
 
     s_snd_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
@@ -38,7 +38,7 @@ int srt_msngr_listen(char *uri, size_t message_size)
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
     ut["blocking"]   = string("true");
-    ut["rcvbuf"]     = to_string(message_size * 1472 / 1456 + 1472);
+    ut["rcvbuf"]     = to_string(3 * (message_size * 1472 / 1456 + 1472));
     s_rcv_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
     string dummy;
