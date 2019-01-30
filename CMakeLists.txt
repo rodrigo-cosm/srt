@@ -784,6 +784,27 @@ if ( ENABLE_CXX11 )
 
 endif()
 
+if (ENABLE_MESSENGER_LIB)
+
+	add_library(srt-messenger SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/testing/srt-messenger.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/testing/srt-messenger.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/testing/testmedia.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/testing/testmedia.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/testing/testmediabase.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/uriparser.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/uriparser.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/socketoptions.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/socketoptions.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/verbose.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/verbose.hpp
+    )
+
+	target_include_directories(srt-messenger PRIVATE common)
+    target_include_directories(srt-messenger PRIVATE apps)
+    target_link_libraries(srt-messenger ${srt_link_library})
+endif()
+
 if (ENABLE_EXAMPLES)
 
 	# No examples should need C++11
