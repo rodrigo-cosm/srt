@@ -8,8 +8,9 @@ using namespace std;
 static unique_ptr<SrtModel> s_rcv_srt_model;
 static unique_ptr<SrtModel> s_snd_srt_model;
 
-list<SRTSOCKET> s_rcv_sockets;
-list<SRTSOCKET> s_snd_socket;
+static list<SRTSOCKET> s_rcv_sockets;
+static list<SRTSOCKET> s_snd_socket;
+static int s_rcv_epoll_id;
 
 
 
@@ -18,7 +19,8 @@ int srt_msngr_connect(char *uri, size_t message_size)
     UriParser ut(uri);
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
-    ut["sndbuf"]     = to_string(8 * 1061313);
+    ut["blocking"]   = string("true");
+    ut["sndbuf"]     = to_string(message_size * 1472 / 1456 + 1472);
 
     s_snd_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
@@ -31,10 +33,12 @@ int srt_msngr_connect(char *uri, size_t message_size)
 
 int srt_msngr_listen(char *uri, size_t message_size)
 {
+
     UriParser ut(uri);
-    ut["transtype"] = string("file");
+    ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
-    ut["sndbuf"] = to_string(8 * 1061313);
+    ut["blocking"]   = string("true");
+    ut["rcvbuf"]     = to_string(message_size * 1472 / 1456 + 1472);
     s_rcv_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
     string dummy;

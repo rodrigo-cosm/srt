@@ -787,6 +787,8 @@ endif()
 if (ENABLE_MESSENGER_LIB)
 
 	add_library(srt-messenger SHARED
+		${CMAKE_SOURCE_DIR}/testing/srt-receiver.hpp
+		${CMAKE_SOURCE_DIR}/testing/srt-receiver.cpp
 		${CMAKE_SOURCE_DIR}/testing/srt-messenger.h
 		${CMAKE_SOURCE_DIR}/testing/srt-messenger.cpp
 		${CMAKE_SOURCE_DIR}/testing/testmedia.cpp
@@ -805,10 +807,9 @@ if (ENABLE_MESSENGER_LIB)
 	target_link_libraries(srt-messenger ${srt_link_library})
 
 	#srt_add_testprogram(srt-test-messenger)
-	#	target_include_directories(srt-test-messenger PRIVATE
-	#		"${CMAKE_SOURCE_DIR}/testing/srt-messenger.h",
-	#		"${CMAKE_SOURCE_DIR}/testing/srt-messenger.cpp"
-	#	)
+	#target_include_directories(srt-test-messenger PRIVATE common)
+	#target_include_directories(srt-test-messenger PRIVATE apps)
+    #
 	#target_link_libraries(srt-test-messenger srt-messenger)
 	#srt_make_application(srt-test-messenger)
 

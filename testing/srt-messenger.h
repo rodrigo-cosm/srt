@@ -15,8 +15,8 @@ written by
 
 #ifndef INC__SRT_MESSENGER_H
 #define INC__SRT_MESSENGER_H
-#include "srt.h"
 
+#define SRT_MSNGR_API __declspec(dllimport)
 
 
 /**
@@ -26,7 +26,7 @@ written by
  *                      (e.g. "srt://192.168.0.12:4200")
  * @param messahe_size  payload size of one message to send
  */
-SRT_API extern int         srt_msngr_connect(char *uri, size_t message_size);
+SRT_MSNGR_API extern int         srt_msngr_connect(char *uri, size_t message_size);
 
 
 /**
@@ -36,7 +36,7 @@ SRT_API extern int         srt_msngr_connect(char *uri, size_t message_size);
  *                      (e.g. "srt://:4200")
  * @param messahe_size  payload size of one message to send
  */
-SRT_API extern int         srt_msngr_listen (char *uri, size_t message_size);
+SRT_MSNGR_API extern int         srt_msngr_listen (char *uri, size_t message_size);
 
 
 /**
@@ -49,7 +49,7 @@ SRT_API extern int         srt_msngr_listen (char *uri, size_t message_size);
  *                      -1 in case of error
  *                       0 in case all the connection are closed
  */
-SRT_API extern int         srt_msngr_send(const char *buffer, size_t buffer_len);
+SRT_MSNGR_API extern int         srt_msngr_send(const char *buffer, size_t buffer_len);
 
 
 /**
@@ -62,17 +62,17 @@ SRT_API extern int         srt_msngr_send(const char *buffer, size_t buffer_len)
  *                      -1 in case of error
  *                       0 in case all the connection are closed
  */
-SRT_API extern int         srt_msngr_recv(char *buffer, size_t buffer_len);
+SRT_MSNGR_API extern int         srt_msngr_recv(char *buffer, size_t buffer_len);
 
 
 
-SRT_API extern const char* srt_msngr_getlasterror_str(void);
+SRT_MSNGR_API extern const char* srt_msngr_getlasterror_str(void);
 
 
-SRT_API extern int         srt_msngr_getlasterror(void);
+SRT_MSNGR_API extern int         srt_msngr_getlasterror(void);
 
 
-SRT_API extern int         srt_msngr_destroy();
+SRT_MSNGR_API extern int         srt_msngr_destroy();
 
 
 #endif // INC__SRT_MESSENGER_H
