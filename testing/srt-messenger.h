@@ -18,8 +18,6 @@ written by
 #include "srt.h"
 
 
-SRT_API extern int         srt_msngr_create();
-
 
 /**
  * Establish SRT connection to a a remote host.
@@ -28,38 +26,43 @@ SRT_API extern int         srt_msngr_create();
  *                      (e.g. "srt://192.168.0.12:4200")
  * @param messahe_size  payload size of one message to send
  */
-SRT_API extern SRTSOCKET   srt_msngr_connect(char *uri, size_t message_size);
+SRT_API extern int         srt_msngr_connect(char *uri, size_t message_size);
 
 
 /**
  * Listen for the incomming SRT connections.
  *
- * @param port          port number to listen on (e.g. 4200)
+ * @param uri           a null terminated string representing local URI to listen on
+ *                      (e.g. "srt://:4200")
  * @param messahe_size  payload size of one message to send
  */
-SRT_API extern SRTSOCKET   srt_msngr_listen (int port, size_t message_size);
+SRT_API extern int         srt_msngr_listen (char *uri, size_t message_size);
 
 
 /**
  * Receive a message.
  *
- * @param socket        SRT socket to receive a message on (was returned by srt_msngr_listen())
  * @param buffer        a buffer to send (has be less then the `message_size` used in srt_msngr_listen())
  * @param buffer_len    length of the buffer
  *
  * @return              number of bytes actually sent
+ *                      -1 in case of error
+ *                       0 in case all the connection are closed
  */
-SRT_API extern int         srt_msngr_send(SRTSOCKET sock, const char *buffer, size_t buffer_len);
+SRT_API extern int         srt_msngr_send(const char *buffer, size_t buffer_len);
 
 
 /**
  * Send a message.
  *
- * @param socket        SRT socket to receive a message on (was returned by srt_msngr_connect())
  * @param buffer        a buffer to send (has be less then the `message_size` used in srt_msngr_connect())
  * @param buffer_len    length of the buffer
+ *
+ * @return              number of bytes actually received
+ *                      -1 in case of error
+ *                       0 in case all the connection are closed
  */
-SRT_API extern int         srt_msngr_recv(SRTSOCKET sock, char *buffer, size_t buffer_len);
+SRT_API extern int         srt_msngr_recv(char *buffer, size_t buffer_len);
 
 
 

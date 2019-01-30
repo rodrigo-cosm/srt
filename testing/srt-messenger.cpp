@@ -1,57 +1,65 @@
+#include <list>
 #include "srt-messenger.h"
 #include "uriparser.hpp"
 #include "testmedia.hpp"
 
+using namespace std;
 
-static std::unique_ptr<SrtModel> s_model;
+static unique_ptr<SrtModel> s_rcv_srt_model;
+static unique_ptr<SrtModel> s_snd_srt_model;
+
+list<SRTSOCKET> s_rcv_sockets;
+list<SRTSOCKET> s_snd_socket;
 
 
-int srt_msngr_create()
-{
-    return 0;
-}
 
-
-SRTSOCKET srt_msngr_connect(char *uri, size_t message_size)
+int srt_msngr_connect(char *uri, size_t message_size)
 {
     UriParser ut(uri);
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
     ut["sndbuf"]     = to_string(8 * 1061313);
-    SrtModel m(ut.host(), ut.portno(), ut.parameters());
+
+    s_snd_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
     string dummy;
-    m.Establish(Ref(dummy));
+    s_snd_srt_model->Establish(Ref(dummy));
 
-    return m.Socket();
+    return s_snd_srt_model->Socket();
 }
 
 
-SRTSOCKET srt_msngr_listen(int port, size_t message_size)
+int srt_msngr_listen(char *uri, size_t message_size)
 {
-    UriParser ut("srt://:" + std::to_string(port));
+    UriParser ut(uri);
     ut["transtype"] = string("file");
     ut["messageapi"] = string("true");
     ut["sndbuf"] = to_string(8 * 1061313);
-    SrtModel m(ut.host(), ut.portno(), ut.parameters());
+    s_rcv_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
     string dummy;
-    m.Establish(Ref(dummy));
+    s_rcv_srt_model->Establish(Ref(dummy));
 
-    return m.Socket();
+    return s_snd_srt_model->Socket();
 }
 
 
-int srt_msngr_send(SRTSOCKET sock, const char *buffer, size_t buffer_len)
+int srt_msngr_send(const char *buffer, size_t buffer_len)
 {
-    const int n = srt_send(sock, buffer, buffer_len);
+    if (!s_snd_srt_model)
+        return -1;
+
+    const int n = srt_send(s_snd_srt_model->Socket(), buffer, buffer_len);
     return n;
 }
 
 
-int srt_msngr_recv(SRTSOCKET sock, char *buffer, size_t buffer_len)
+int srt_msngr_recv(char *buffer, size_t buffer_len)
 {
-    const int n = srt_recv(sock, buffer, buffer_len);
+    if (!s_rcv_srt_model)
+        return -1;
+
+    const int n = srt_recv(s_rcv_srt_model->Socket(), buffer, buffer_len);
     return n;
 }
 
@@ -70,6 +78,8 @@ int srt_msngr_getlasterror(void)
 
 int srt_msngr_destroy()
 {
+    s_snd_srt_model.release();
+    s_rcv_srt_model.release();
     return 0;
 }
 

@@ -448,7 +448,7 @@ MafReadDir(srtcore filelist.maf
 	SOURCES SOURCES_srt
 	PUBLIC_HEADERS HEADERS_srt
 	PROTECTED_HEADERS HEADERS_srt
-    PRIVATE_HEADERS HEADERS_srt
+	PRIVATE_HEADERS HEADERS_srt
 )
 
 # Auto generated version file and add it to the HEADERS_srt list.
@@ -787,22 +787,31 @@ endif()
 if (ENABLE_MESSENGER_LIB)
 
 	add_library(srt-messenger SHARED
-        ${CMAKE_CURRENT_SOURCE_DIR}/testing/srt-messenger.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/testing/srt-messenger.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/testing/testmedia.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/testing/testmedia.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/testing/testmediabase.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/uriparser.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/uriparser.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/socketoptions.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/socketoptions.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/verbose.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/verbose.hpp
-    )
+		${CMAKE_SOURCE_DIR}/testing/srt-messenger.h
+		${CMAKE_SOURCE_DIR}/testing/srt-messenger.cpp
+		${CMAKE_SOURCE_DIR}/testing/testmedia.cpp
+		${CMAKE_SOURCE_DIR}/testing/testmedia.hpp
+		${CMAKE_SOURCE_DIR}/testing/testmediabase.hpp
+		${CMAKE_SOURCE_DIR}/apps/uriparser.cpp
+		${CMAKE_SOURCE_DIR}/apps/uriparser.hpp
+		${CMAKE_SOURCE_DIR}/apps/socketoptions.cpp
+		${CMAKE_SOURCE_DIR}/apps/socketoptions.hpp
+		${CMAKE_SOURCE_DIR}/apps/verbose.cpp
+		${CMAKE_SOURCE_DIR}/apps/verbose.hpp
+	)
 
 	target_include_directories(srt-messenger PRIVATE common)
-    target_include_directories(srt-messenger PRIVATE apps)
-    target_link_libraries(srt-messenger ${srt_link_library})
+	target_include_directories(srt-messenger PRIVATE apps)
+	target_link_libraries(srt-messenger ${srt_link_library})
+
+	#srt_add_testprogram(srt-test-messenger)
+	#	target_include_directories(srt-test-messenger PRIVATE
+	#		"${CMAKE_SOURCE_DIR}/testing/srt-messenger.h",
+	#		"${CMAKE_SOURCE_DIR}/testing/srt-messenger.cpp"
+	#	)
+	#target_link_libraries(srt-test-messenger srt-messenger)
+	#srt_make_application(srt-test-messenger)
+
 endif()
 
 if (ENABLE_EXAMPLES)
