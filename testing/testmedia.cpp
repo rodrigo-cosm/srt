@@ -1371,6 +1371,8 @@ RETRY_READING:
                 data = m_group_wrapper->payload;
             pktseq = m_group_wrapper->seqno();
 
+            Verb() << "[WRP seq=" << pktseq << " src=" << m_group_wrapper->srcid() << "] " << VerbNoEOL;
+
             // NOTE: checks against m_group_wrapper->seqno() and decisions based on it
             // must NOT be done if m_group_wrapper->seqno() is -1, which means that we
             // are about to deliver the very first packet and we take its
@@ -1794,6 +1796,7 @@ void SrtTarget::GroupWrite(const bytevector& data)
 
     // XXX Temporary; it should be set to some uniq id in the beginning.
     m_group_wrapper->srcid() = 0xCAFEB1BA;
+    Verb() << "[WRP seq=" << m_group_wrapper->seqno() << " src=" << m_group_wrapper->srcid() <<  "] " << VerbNoEOL;
     m_group_wrapper->save(packet);
 
     bool ok = false;
