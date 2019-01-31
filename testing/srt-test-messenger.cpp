@@ -10,7 +10,7 @@ void main(int argc, char** argv)
 {
     const size_t message_size = 1024 * 1024;
 
-    srt_msngr_listen("srt://4200", message_size * 2);
+    srt_msngr_listen("srt://:4200?maxconn=4", message_size * 2);
 
     vector<char> message_rcvd(message_size);
     bool rcv_error = false;

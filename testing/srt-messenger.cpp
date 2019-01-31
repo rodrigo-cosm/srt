@@ -46,13 +46,20 @@ int srt_msngr_listen(char *uri, size_t message_size)
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
     ut["blocking"]   = string("true");
+
+    int maxconn = 5;
+    if (ut["maxconn"].exists())
+    {
+        maxconn = std::stoi(ut.queryValue("maxconn"));
+    }
+
     ut["rcvbuf"]     = to_string(3 * (message_size * 1472 / 1456 + 1472));
     s_rcv_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
     // Prepare a listener to accept up to 5 conections
     try
     {
-        s_rcv_srt_model->PrepareListener(5);
+        s_rcv_srt_model->PrepareListener(maxconn);
     }
     catch (TransmissionError &err)
     {
