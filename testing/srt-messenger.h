@@ -16,7 +16,13 @@ written by
 #ifndef INC__SRT_MESSENGER_H
 #define INC__SRT_MESSENGER_H
 
-#define SRT_MSNGR_API __declspec(dllimport)
+
+
+#ifdef _WIN32
+#define SRT_MSNGR_API __declspec(dllexport)
+#else
+#define SRT_MSNGR_API __attribute__ ((visibility("default")))
+#endif  // _WIN32
 
 
 /**
