@@ -37,10 +37,14 @@ SRT_MSNGR_API extern int         srt_msngr_connect(char *uri, size_t message_siz
 
 /**
  * Listen for the incomming SRT connections.
+ * A non-blocking function.
  *
  * @param uri           a null terminated string representing local URI to listen on
  *                      (e.g. "srt://:4200")
- * @param messahe_size  payload size of one message to send
+ * @param message_size  payload size of one message to send
+ *
+ * @return               0 on success
+ *                      -1 on error
  */
 SRT_MSNGR_API extern int         srt_msngr_listen (char *uri, size_t message_size);
 
@@ -66,7 +70,7 @@ SRT_MSNGR_API extern int         srt_msngr_send(const char *buffer, size_t buffe
  *
  * @return              number of bytes actually received
  *                      -1 in case of error
- *                       0 in case all the connection are closed
+ *                       0 in case all the connections are closed
  */
 SRT_MSNGR_API extern int         srt_msngr_recv(char *buffer, size_t buffer_len);
 

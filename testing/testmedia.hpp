@@ -195,7 +195,9 @@ public:
 
 
     SrtModel(string host, int port, map<string,string> par);
-    void Establish(ref_t<std::string> name);
+    virtual void Establish(ref_t<std::string> name);
+
+    void PrepareListener(int backlog);
 
     void Close()
     {
@@ -205,6 +207,8 @@ public:
             m_sock = SRT_INVALID_SOCK;
         }
     }
+
+    virtual ~SrtModel() {}
 };
 
 

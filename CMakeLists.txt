@@ -806,12 +806,12 @@ if (ENABLE_MESSENGER_LIB)
 	target_include_directories(srt-messenger PRIVATE apps)
 	target_link_libraries(srt-messenger ${srt_link_library})
 
-	#srt_add_testprogram(srt-test-messenger)
-	#target_include_directories(srt-test-messenger PRIVATE common)
-	#target_include_directories(srt-test-messenger PRIVATE apps)
-    #
-	#target_link_libraries(srt-test-messenger srt-messenger)
-	#srt_make_application(srt-test-messenger)
+	srt_add_testprogram(srt-test-messenger)
+	target_include_directories(srt-test-messenger PRIVATE common)
+	target_include_directories(srt-test-messenger PRIVATE apps)
+
+	target_link_libraries(srt-test-messenger srt-messenger)
+	srt_make_application(srt-test-messenger)
 
 endif()
 

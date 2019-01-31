@@ -24,8 +24,16 @@ int srt_msngr_connect(char *uri, size_t message_size)
 
     s_snd_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
-    string dummy;
-    s_snd_srt_model->Establish(Ref(dummy));
+    try
+    {
+        string connection_id;
+        s_snd_srt_model->Establish(Ref(connection_id));
+    }
+    catch (TransmissionError &err)
+    {
+        cerr << "ERROR! While setting up a listener: " << err.what();
+        return -1;
+    }
 
     return s_snd_srt_model->Socket();
 }
@@ -41,10 +49,18 @@ int srt_msngr_listen(char *uri, size_t message_size)
     ut["rcvbuf"]     = to_string(3 * (message_size * 1472 / 1456 + 1472));
     s_rcv_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
-    string dummy;
-    s_rcv_srt_model->Establish(Ref(dummy));
+    // Prepare a listener to accept up to 5 conections
+    try
+    {
+        s_rcv_srt_model->PrepareListener(5);
+    }
+    catch (TransmissionError &err)
+    {
+        cerr << "ERROR! While setting up a listener: " << err.what();
+        return -1;
+    }
 
-    return s_snd_srt_model->Socket();
+    return 0;
 }
 
 
@@ -62,6 +78,19 @@ int srt_msngr_recv(char *buffer, size_t buffer_len)
 {
     if (!s_rcv_srt_model)
         return -1;
+
+    if (s_rcv_srt_model->Socket() == SRT_INVALID_SOCK)
+    {
+        try
+        {
+            s_rcv_srt_model->AcceptNewClient();
+        }
+        catch (TransmissionError &err)
+        {
+            cerr << "ERROR! While accepting a connection: " << err.what();
+            return -1;
+        }
+    }
 
     const int n = srt_recv(s_rcv_srt_model->Socket(), buffer, buffer_len);
     return n;
