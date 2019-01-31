@@ -19,7 +19,7 @@ written by
 
 
 #ifdef _WIN32
-#define SRT_MSNGR_API __declspec(dllexport)
+#define SRT_MSNGR_API extern "C" __declspec(dllexport)
 #else
 #define SRT_MSNGR_API __attribute__ ((visibility("default")))
 #endif  // _WIN32
