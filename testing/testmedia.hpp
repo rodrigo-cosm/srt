@@ -121,7 +121,7 @@ protected:
     void ConnectClient(SRTSOCKET sock, string host, int port);
     void SetupRendezvous(SRTSOCKET sock, string adapter, int port);
 
-    void UpdateGroupCallers();
+    void UpdateGroupConnections();
 
     void OpenServer(string host, int port)
     {

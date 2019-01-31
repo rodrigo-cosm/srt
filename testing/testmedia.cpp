@@ -287,12 +287,12 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
     if ( m_mode == "default" )
     {
         // Use the following convention:
-        // 1. Server for source, Client for target
-        // 2. If host is empty, then always server.
+        // 1. If host is empty, then listener.
+        // 2. If host is specified, then caller.
+        // 3. If listener is enforced, host -> adapter
+        // 4. If caller is enforced, host = localhost.
         if ( host == "" && m_links.empty() )
             m_mode = "listener";
-        //else if ( !dir_output )
-        //m_mode = "server";
         else
             m_mode = "caller";
     }
@@ -358,6 +358,39 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
         }
     }
 
+    if (m_mode != "listener")
+    {
+        // Group specifications
+
+        if (par.count("wrapper"))
+        {
+            string group_wrapper = par["wrapper"];
+            vector<string> wrpoptions;
+            Split(group_wrapper, '/', back_inserter(wrpoptions));
+            group_wrapper = wrpoptions[0];
+
+            // XXX Simple dispatcher, expand later
+            if (group_wrapper == "rtp")
+                m_group_wrapper = new RTPTransportPacket();
+            else if (group_wrapper != "")
+                throw std::runtime_error("Unknown wrapper type");
+
+            // Might be that the wrapper name is empty,
+            // but the passthrough option is given. This means
+            // that the payload has to be used "as is" (we state
+            // that the input medium has already provided a
+            // protocol that the other side will understand).
+            if (wrpoptions.size() > 1)
+            {
+                string op = wrpoptions[1];
+                if (op[0] == 'p') // passthru
+                    m_wrapper_passthru = true;
+            }
+
+            m_listener_group = true;
+        }
+    }
+
     // Assign the others here.
     m_options = par;
     m_options["mode"] = m_mode;
@@ -373,7 +406,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
     if ( stat == SRT_ERROR )
         Error(UDT::getlasterror(), "ConfigurePre");
 
-    if ( !m_blocking_mode )
+    if ( !m_blocking_mode || m_listener_group)
     {
         AddPoller(m_listener, SRT_EPOLL_IN);
     }
@@ -980,8 +1013,25 @@ SrtCommon::~SrtCommon()
     Close();
 }
 
-void SrtCommon::UpdateGroupCallers()
+void SrtCommon::UpdateGroupConnections()
 {
+    if (m_listener_group)
+    {
+        // Check if a new conenction is pending for accept.
+        // If so, accept a new connection.
+        // Just check once, without waiting.
+
+        SrtPollState sready;
+        UDT::epoll_swait(srt_epoll, sready, 0);
+        if (sready.rd().count(m_listener))
+        {
+            AcceptNewClient();
+            Verb() << "NEW CONNECTION COMING IN";
+        }
+
+        return;
+    }
+
     int i = 1; // Verb only
     for (auto& n: m_links)
     {
@@ -1507,12 +1557,6 @@ RETRY_READING:
 
         // May be required to be re-read.
         broken.clear();
-
-        // Call it only in case when this is a caller. For listener,
-        // even if this is for a group connection, simply wait for
-        // the caller side to revive the connection.
-        if (!m_listener_group)
-            UpdateGroupCallers();
     }
 
     if (!output.empty())
@@ -1699,7 +1743,7 @@ bytevector SrtSource::Read(size_t chunk)
     if (have_group)
     {
         // This is to be done for caller mode only
-        UpdateGroupCallers();
+        UpdateGroupConnections();
     }
 
     CBytePerfMon perf;
@@ -1826,7 +1870,7 @@ void SrtTarget::GroupWrite(const bytevector& data)
         Error("srt_sendmsg2(group)");
     }
 
-    UpdateGroupCallers();
+    UpdateGroupConnections();
 }
 
 SrtRelay::SrtRelay(std::string host, int port, std::string path, const std::map<std::string,std::string>& par)
