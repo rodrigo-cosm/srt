@@ -82,6 +82,17 @@ struct TransportPacket
     // either through this returned reference, or load().
     virtual int32_t& seqno() = 0;
     virtual int32_t& srcid() = 0;
+
+    virtual ~TransportPacket() {}
+
+    static TransportPacket* create(const std::string& name)
+    {
+        return factory[name]();
+    }
+
+private:
+
+    static std::map<std::string, std::function<TransportPacket*()>> factory;
 };
 
 

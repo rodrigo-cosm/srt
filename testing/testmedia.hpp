@@ -71,8 +71,7 @@ protected:
     vector<Connection> m_links;
     string m_group_type;
     TransportPacket* m_group_wrapper = nullptr;
-
-    int32_t m_group_seqno = -1;
+    bool m_wrapper_passthru = false;
 
     struct ReadPos
     {
@@ -101,11 +100,19 @@ public:
 protected:
 
     void Error(UDT::ERRORINFO& udtError, string src);
+    void Error(int errorcode, string src)
+    {
+        auto major = CodeMajor(errorcode/1000);
+        auto minor = CodeMinor(errorcode%1000);
+        UDT::ERRORINFO i(major, minor, 0);
+        return Error(i, src);
+    }
     void Error(string msg);
     void Init(string host, int port, string path, map<string,string> par, SRT_EPOLL_OPT dir);
     void AddPoller(SRTSOCKET socket, int modes);
     virtual int ConfigurePost(SRTSOCKET sock);
     virtual int ConfigurePre(SRTSOCKET sock);
+    int ConfigurePre(SRTSOCKET sock, bool blocking);
 
     void OpenClient(string host, int port);
     void OpenGroupClient();
@@ -124,7 +131,7 @@ protected:
 
     SRTSOCKET OpenRendezvous(string adapter, string host, int port)
     {
-        SRTSOCKET sock = PrepareClient();
+        SRTSOCKET sock = PrepareClient(m_blocking_mode);
         SetupRendezvous(sock, adapter, port);
         ConnectClient(sock, host, port);
         m_links.push_back(sock);
@@ -255,10 +262,30 @@ public:
 class RTPTransportPacket: public TransportPacket
 {
     // 'payload' is derived, add RTP headers here:
+    int32_t seq = -1;
+    int32_t src = -1;
+
+    uint64_t timebase = 0;
+    uint32_t pkt_ts = 0;
+
+    static const uint16_t indata =
+        (2 << 6) /* version, other flags 0 */ << 8
+          | 96 /* RTP_PT_PRIVATE */;
+
+
+    static const size_t HDR_SIZE = 
+        2 + // initial fields (version, type, csrc len, marks)
+        2 + // sequence
+        4 + // timestamp
+        4;  // srcid
 
 public:
-    virtual void load(const char* p, size_t size) override;
-    virtual void save(char* out, size_t bufsize) override;
+
+    virtual void load(const bytevector&, size_t size = ~size_t()) override;
+    virtual void save(bytevector& out) override;
+
+    virtual int32_t& seqno() override { return seq; }
+    virtual int32_t& srcid() override { return src; }
 };
 
 

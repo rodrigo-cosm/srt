@@ -222,6 +222,32 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
                 Error("With //group, only type=redundancy is currently supported");
             }
 
+            string group_wrapper = par["wrapper"];
+            if (group_wrapper != "")
+            {
+                vector<string> wrpoptions;
+                Split(group_wrapper, '/', back_inserter(wrpoptions));
+                group_wrapper = wrpoptions[0];
+
+                // XXX Simple dispatcher, expand later
+                if (group_wrapper == "rtp")
+                    m_group_wrapper = new RTPTransportPacket();
+                else if (group_wrapper != "")
+                    Error("Unknown wrapper type");
+
+                // Might be that the wrapper name is empty,
+                // but the passthrough option is given. This means
+                // that the payload has to be used "as is" (we state
+                // that the input medium has already provided a
+                // protocol that the other side will understand).
+                if (wrpoptions.size() > 1)
+                {
+                    string op = wrpoptions[1];
+                    if (op[0] == 'p') // passthru
+                        m_wrapper_passthru = true;
+                }
+            }
+
             vector<string> nodes;
             Split(par["nodes"], ',', back_inserter(nodes));
 
@@ -757,8 +783,8 @@ void SrtCommon::OpenGroupClient()
         // Add this socket to poller as well, as we use non-blocking mode here.
         AddPoller(c.socket, SRT_EPOLL_OUT);
 
-        c.result = srt_connect(sock, psa, namelen);
-        c.errorcode = srt_getlasterror();
+        c.result = srt_connect(c.socket, psa, namelen);
+        c.errorcode = srt_getlasterror(0);
     }
 
     // Get current connection timeout from the first socket (all should have same).
@@ -770,7 +796,7 @@ void SrtCommon::OpenGroupClient()
     // Wait for at least one connection to be established.
 
     SrtPollState sready;
-    int nready = UDT::epoll_swait(srt_epoll, sready, conntimeo, false /* by retval - this ex isn't handled*/);
+    int nready = UDT::epoll_swait(srt_epoll, sready, conntimeo);
 
     if (nready == 0)
     {
@@ -1005,11 +1031,11 @@ bool SrtSource::GroupCheckPacketAhead(bytevector& output)
         // aren't going to read from it - we have the packet already.
         ReadPos& a = i->second;
 
-        int seqdiff = CSeqNo::seqcmp(a.sequence, m_group_seqno);
+        int seqdiff = CSeqNo::seqcmp(a.sequence, m_group_wrapper->seqno());
         if ( seqdiff == 1)
         {
             // The very next packet. Return it.
-            m_group_seqno = a.sequence;
+            m_group_wrapper->seqno() = a.sequence;
             Verb() << " (SRT group: ahead delivery %" << a.sequence << " from @" << i->first << ")";
             swap(output, a.packet);
             status = true;
@@ -1040,6 +1066,10 @@ static string DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::strin
 
 bytevector SrtSource::GroupRead(size_t chunk)
 {
+    // For group reading you need a wrapper.
+    if (!m_group_wrapper)
+        Error("GroupRead: No wrapper, for groups a wrapper protocol must be defined");
+
     // Read the current group status. m_links is here the group id.
     bytevector output;
 
@@ -1078,7 +1108,7 @@ RETRY_READING:
     }
 
     // Check first the ahead packets if you have any to deliver.
-    if (m_group_seqno != -1 && !m_group_positions.empty())
+    if (m_group_wrapper->seqno() != -1 && !m_group_positions.empty())
     {
         bytevector ahead_packet;
 
@@ -1131,7 +1161,7 @@ RETRY_READING:
     // will be delivered. All other link will be just ensured update
     // up to this sequence number, or at worst all available packets
     // will be read. In this case all kangaroos remain kangaroos,
-    // until the current delivery sequence m_group_seqno will be lifted
+    // until the current delivery sequence m_group_wrapper->seqno() will be lifted
     // to the sequence recorded for these links in m_group_positions,
     // during the next time ahead check, after which they will become
     // horses.
@@ -1260,7 +1290,7 @@ RETRY_READING:
     // The state of things whether we were able to extract the very next
     // sequence will be simply defined by the fact that `output` is nonempty.
 
-    int32_t next_seq = m_group_seqno;
+    int32_t next_seq = m_group_wrapper->seqno();
 
     // If this set is empty, it won't roll even once, therefore output
     // will be surely empty. This will be checked then same way as when
@@ -1281,7 +1311,7 @@ RETRY_READING:
             // x = 0: the socket should be ready to get the exactly next packet
             // x = 1: the case is already handled by GroupCheckPacketAhead.
             // x > 1: AHEAD. DO NOT READ.
-            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_seqno);
+            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_wrapper->seqno());
             if (seqdiff > 1)
             {
                 Verb() << "EPOLL: @" << id << " %" << p->sequence << " AHEAD, not reading.";
@@ -1308,7 +1338,7 @@ RETRY_READING:
                         if (p)
                         {
                             int32_t pktseq = p->sequence;
-                            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_seqno);
+                            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_wrapper->seqno());
                             Verb() << ". %" << pktseq << " " << seqdiff << ")";
                         }
                         else
@@ -1333,11 +1363,16 @@ RETRY_READING:
                 Error("Group not configured");
 
             m_group_wrapper->load(data, stat);
-            data = m_group_wrapper->payload;
+
+            // If PASSTHRU flag is set for a wrapper, the
+            // payload extracted and sent to the output is the
+            // original payload, that is, the wrapped one.
+            if (!m_wrapper_passthru)
+                data = m_group_wrapper->payload;
             pktseq = m_group_wrapper->seqno();
 
-            // NOTE: checks against m_group_seqno and decisions based on it
-            // must NOT be done if m_group_seqno is -1, which means that we
+            // NOTE: checks against m_group_wrapper->seqno() and decisions based on it
+            // must NOT be done if m_group_wrapper->seqno() is -1, which means that we
             // are about to deliver the very first packet and we take its
             // sequence number as a good deal.
 
@@ -1347,11 +1382,11 @@ RETRY_READING:
             // - check ordering.
             // The second one must be done always, but failed discrepancy
             // check should exclude the socket from any further checks.
-            // That's why the common check for m_group_seqno != -1 can't
+            // That's why the common check for m_group_wrapper->seqno() != -1 can't
             // embrace everything below.
 
             // We need to first qualify the sequence, just for a case
-            if (m_group_seqno != -1 && abs(m_group_seqno - pktseq) > CSeqNo::m_iSeqNoTH)
+            if (m_group_wrapper->seqno() != -1 && abs(m_group_wrapper->seqno() - pktseq) > CSeqNo::m_iSeqNoTH)
             {
                 // This error should be returned if the link turns out
                 // to be the only one, or set to the group data.
@@ -1361,7 +1396,7 @@ RETRY_READING:
                     Verb() << ".)";
                     fi = 1;
                 }
-                Verb() << "Error @" << id << ": SEQUENCE DISCREPANCY: base=%" << m_group_seqno << " vs pkt=%" << pktseq << ", setting ESECFAIL";
+                Verb() << "Error @" << id << ": SEQUENCE DISCREPANCY: base=%" << m_group_wrapper->seqno() << " vs pkt=%" << pktseq << ", setting ESECFAIL";
                 broken.insert(id);
                 break;
             }
@@ -1379,10 +1414,10 @@ RETRY_READING:
                 p->sequence = pktseq;
             }
 
-            if (m_group_seqno != -1)
+            if (m_group_wrapper->seqno() != -1)
             {
                 // Now we can safely check it.
-                int seqdiff = CSeqNo::seqcmp(pktseq, m_group_seqno);
+                int seqdiff = CSeqNo::seqcmp(pktseq, m_group_wrapper->seqno());
 
                 if (seqdiff <= 0)
                 {
@@ -1453,6 +1488,8 @@ RETRY_READING:
             Verb() << "BROKEN: " << Printable(broken) << " - removing";
         }
 
+        using namespace set_op;
+
         // Now remove all broken sockets from aheads, if any.
         // Even if they have already delivered a packet.
         for (auto& c: m_links)
@@ -1486,7 +1523,7 @@ RETRY_READING:
         {
             Error("IPE: next_seq not set after output extracted!");
         }
-        m_group_seqno = next_seq;
+        m_group_wrapper->seqno() = next_seq;
         return output;
     }
 
@@ -1520,9 +1557,9 @@ RETRY_READING:
 
         for (auto& sock_rp: m_group_positions)
         {
-            // NOTE that m_group_seqno in this place wasn't updated
+            // NOTE that m_group_wrapper->seqno() in this place wasn't updated
             // because we haven't successfully extracted anything.
-            int seqdiff = CSeqNo::seqcmp(sock_rp.second.sequence, m_group_seqno);
+            int seqdiff = CSeqNo::seqcmp(sock_rp.second.sequence, m_group_wrapper->seqno());
             if (seqdiff < 0)
             {
                 elephants.insert(sock_rp.first);
@@ -1557,8 +1594,8 @@ RETRY_READING:
             // As we already have the packet delivered by the slowest
             // kangaroo, we can simply return it.
 
-            m_group_seqno = slowest_kangaroo->second.sequence;
-            Verb() << "@" << slowest_kangaroo->first << " %" << m_group_seqno << " KANGAROO->HORSE";
+            m_group_wrapper->seqno() = slowest_kangaroo->second.sequence;
+            Verb() << "@" << slowest_kangaroo->first << " %" << m_group_wrapper->seqno() << " KANGAROO->HORSE";
             swap(output, slowest_kangaroo->second.packet);
             return output;
         }
@@ -1751,12 +1788,9 @@ void SrtTarget::GroupWrite(const bytevector& data)
     if (!m_group_wrapper)
         Error("Group not configured");
 
-    int32_t seqno = m_group_seqno;
-    ++m_group_seqno;
-
     bytevector packet;
     m_group_wrapper->payload = data;
-    m_group_wrapper->seqno() = seqno;
+    // sequence is internally managed
 
     // XXX Temporary; it should be set to some uniq id in the beginning.
     m_group_wrapper->srcid() = 0xCAFEB1BA;
@@ -1768,7 +1802,7 @@ void SrtTarget::GroupWrite(const bytevector& data)
     {
         // Send the same payload over all sockets
         SRT_MSGCTRL mctrl = srt_msgctrl_default;
-        c.result = srt_sendmsg2(c.socket, packet.packet(), packet.size(), &mctrl);
+        c.result = srt_sendmsg2(c.socket, packet.data(), packet.size(), &mctrl);
         c.status = srt_getsockstate(c.socket);
         if (c.result > 0 && c.status == SRTS_CONNECTED)
         {
@@ -2270,19 +2304,103 @@ std::unique_ptr<Target> Target::Create(const std::string& url)
 }
 
 // Parse the RTP packet and extract the header and payload
-void RTPTransportProtocol::load(const bytevector& data, size_t size)
+void RTPTransportPacket::load(const bytevector& data, size_t size)
 {
-    static const nosize = ~size_t();
+    static const auto nosize = ~size_t();
 
     if (size == nosize)
         size = data.size();
 
-    // Check the minimum RTP header size
+    if (size < HDR_SIZE + 1)
+        throw std::invalid_argument("RTPTransportPacket: load: too small for a header");
+
+    union Extractor
+    {
+        char begin;
+        uint16_t field16;
+        uint32_t field32;
+    };
+
+    Extractor* p = (Extractor*)data.data();
+
+    // Indata. Ignore
+    uint16_t xdata = ntohs(p->field16);
+
+    if (xdata != indata)
+        throw std::invalid_argument("RTPTransportPacket: load: incorrect header");
+
+    p = (Extractor*)(data.data() + 2);
+
+    seq = ntohs(p->field16);
+
+    p = (Extractor*)(data.data() + 4);
+    pkt_ts = ntohl(p->field32);
+
+    p = (Extractor*)(data.data() + 8);
+    src = ntohl(p->field32);
+
+    // Rest of the data is the payload
+    payload.clear();
+    payload.reserve(size);
+    payload.assign(data.begin() + 12, data.end());
 }
 
 // Write the RTP packet out of collected header and payload
-void RTPTransportProtocol::save(char* out, size_t bufsize)
+void RTPTransportPacket::save(bytevector& out)
 {
+    out.clear();
+    out.reserve(HDR_SIZE + payload.size() + 1);
+    // We need the time value anyway
+    timeval tv;
+    gettimeofday(&tv, 0);
+
+    if (seq == -1)
+    {
+        // Sequence not initialized. Initialize.
+        seq = tv.tv_usec & 0xFFFF; // 16-bit, even though externally it's 32-bit
+    }
+
+    char ii [2] = { char(uint8_t(indata >> 8)), indata & 0xFF };
+    copy(ii, ii + sizeof indata, back_inserter(out));
+
+    union
+    {
+        char begin;
+        uint16_t field16;
+        uint32_t field32;
+    };
+
+    // Sequence
+    field16 = htons(seq);
+    copy(&begin, &begin + sizeof(field16), back_inserter(out));
+
+    // Timestamp
+    uint32_t timestamp;
+    if (timebase == 0)
+    {
+        // Lazy initialization
+        timestamp = 0;
+        timebase = uint64_t(tv.tv_sec)*1000000 + uint64_t(tv.tv_usec);
+    }
+    else
+    {
+        int64_t now = int64_t(tv.tv_sec)*1000000 + int64_t(tv.tv_usec);
+        int64_t tb = timebase;
+        timestamp = (now - tb) & 0xFFFFFFFF; // ignore negatives
+    }
+
+    field32 = htonl(timestamp);
+    copy(&begin, &begin + sizeof(field32), back_inserter(out));
+
+    // Source ID. Just print whatever is set
+    field32 = htonl(src);
+    copy(&begin, &begin + sizeof(field32), back_inserter(out));
+
+    // And now the payload
+    out.insert(out.end(), payload.begin(), payload.end());
+
+    // After writing the data to the output, update the sequence number
+    ++seq;
 }
 
 
