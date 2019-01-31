@@ -20,7 +20,12 @@ int srt_msngr_connect(char *uri, size_t message_size)
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
     ut["blocking"]   = string("true");
-    ut["sndbuf"]     = to_string(3 * (message_size * 1472 / 1456 + 1472));
+
+    // If we have this parameter provided, probably someone knows better
+    if (!ut["sndbuf"].exists())
+    {
+        ut["sndbuf"] = to_string(3 * (message_size * 1472 / 1456 + 1472));
+    }
 
     s_snd_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
@@ -52,8 +57,12 @@ int srt_msngr_listen(char *uri, size_t message_size)
     {
         maxconn = std::stoi(ut.queryValue("maxconn"));
     }
-
-    ut["rcvbuf"]     = to_string(3 * (message_size * 1472 / 1456 + 1472));
+    
+    // If we have this parameter provided, probably someone knows better
+    if (!ut["rcvbuf"].exists())
+    {
+        ut["rcvbuf"] = to_string(3 * (message_size * 1472 / 1456 + 1472));
+    }
     s_rcv_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
     // Prepare a listener to accept up to 5 conections
