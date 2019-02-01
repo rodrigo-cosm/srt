@@ -100,9 +100,7 @@ int srt_msngr_send(const char *buffer, size_t buffer_len)
     if (!s_snd_srt_model)
         return -1;
 
-    cout << "Senging message\n";
     const int n = srt_send(s_snd_srt_model->Socket(), buffer, buffer_len);
-    cout << "Sent " << n << "\n";
     return n;
 }
 
@@ -116,9 +114,7 @@ int srt_msngr_recv(char *buffer, size_t buffer_len)
     {
         try
         {
-            cout << "Accepting client\n";
             s_rcv_srt_model->AcceptNewClient();
-            cout << "Accepted : " << s_rcv_srt_model->Socket() << endl;
         }
         catch (TransmissionError &err)
         {
@@ -127,7 +123,6 @@ int srt_msngr_recv(char *buffer, size_t buffer_len)
         }
     }
 
-    cout << "Receiving\n";
     const int n = srt_recv(s_rcv_srt_model->Socket(), buffer, buffer_len);
     return n;
 }
