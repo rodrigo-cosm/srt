@@ -32,7 +32,7 @@ written by
  *                      (e.g. "srt://192.168.0.12:4200")
  * @param messahe_size  payload size of one message to send
  */
-SRT_MSNGR_API extern int         srt_msngr_connect(char *uri, size_t message_size);
+SRT_MSNGR_API extern int         srt_msngr_connect(const char *uri, size_t message_size);
 
 
 /**
@@ -40,13 +40,13 @@ SRT_MSNGR_API extern int         srt_msngr_connect(char *uri, size_t message_siz
  * A non-blocking function.
  *
  * @param uri           a null terminated string representing local URI to listen on
- *                      (e.g. "srt://:4200")
+ *                      (e.g. "srt://:4200" or "srt://192.168.0.12:4200?maxconn=10")
  * @param message_size  payload size of one message to send
  *
  * @return               0 on success
  *                      -1 on error
  */
-SRT_MSNGR_API extern int         srt_msngr_listen (char *uri, size_t message_size);
+SRT_MSNGR_API extern int         srt_msngr_listen (const char *uri, size_t message_size);
 
 
 /**

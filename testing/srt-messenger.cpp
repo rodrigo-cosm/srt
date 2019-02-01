@@ -14,12 +14,20 @@ static int s_rcv_epoll_id;
 
 
 
-int srt_msngr_connect(char *uri, size_t message_size)
+int srt_msngr_connect(const char *uri, size_t message_size)
 {
     UriParser ut(uri);
+
+    if (ut.port().empty())
+    {
+        cerr << "ERROR! Check the URI provided: " << uri << endl;
+        return -1;
+    }
+
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
     ut["blocking"]   = string("true");
+    ut["mode"]       = string("caller");
 
     // If we have this parameter provided, probably someone knows better
     if (!ut["sndbuf"].exists())
@@ -36,7 +44,7 @@ int srt_msngr_connect(char *uri, size_t message_size)
     }
     catch (TransmissionError &err)
     {
-        cerr << "ERROR! While setting up a listener: " << err.what();
+        cerr << "ERROR! While setting up a listener: " << err.what() << endl;
         return -1;
     }
 
@@ -44,13 +52,20 @@ int srt_msngr_connect(char *uri, size_t message_size)
 }
 
 
-int srt_msngr_listen(char *uri, size_t message_size)
+int srt_msngr_listen(const char *uri, size_t message_size)
 {
-
     UriParser ut(uri);
+
+    if (ut.port().empty())
+    {
+        cerr << "ERROR! Check the URI provided: " << uri << endl;
+        return -1;
+    }
+
     ut["transtype"]  = string("file");
     ut["messageapi"] = string("true");
     ut["blocking"]   = string("true");
+    ut["mode"]       = string("listener");
 
     int maxconn = 5;
     if (ut["maxconn"].exists())
@@ -72,7 +87,7 @@ int srt_msngr_listen(char *uri, size_t message_size)
     }
     catch (TransmissionError &err)
     {
-        cerr << "ERROR! While setting up a listener: " << err.what();
+        cerr << "ERROR! While setting up a listener: " << err.what() << endl;
         return -1;
     }
 
@@ -85,7 +100,9 @@ int srt_msngr_send(const char *buffer, size_t buffer_len)
     if (!s_snd_srt_model)
         return -1;
 
+    cout << "Senging message\n";
     const int n = srt_send(s_snd_srt_model->Socket(), buffer, buffer_len);
+    cout << "Sent " << n << "\n";
     return n;
 }
 
@@ -99,15 +116,18 @@ int srt_msngr_recv(char *buffer, size_t buffer_len)
     {
         try
         {
+            cout << "Accepting client\n";
             s_rcv_srt_model->AcceptNewClient();
+            cout << "Accepted : " << s_rcv_srt_model->Socket() << endl;
         }
         catch (TransmissionError &err)
         {
-            cerr << "ERROR! While accepting a connection: " << err.what();
+            cerr << "ERROR! While accepting a connection: " << err.what() << endl;
             return -1;
         }
     }
 
+    cout << "Receiving\n";
     const int n = srt_recv(s_rcv_srt_model->Socket(), buffer, buffer_len);
     return n;
 }
