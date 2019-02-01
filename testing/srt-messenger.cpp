@@ -142,8 +142,8 @@ int srt_msngr_getlasterror(void)
 
 int srt_msngr_destroy()
 {
-    s_snd_srt_model.release();
-    s_rcv_srt_model.release();
+    s_snd_srt_model.reset();
+    s_rcv_srt_model.reset();
     return 0;
 }
 
