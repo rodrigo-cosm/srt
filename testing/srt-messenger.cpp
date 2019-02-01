@@ -1,4 +1,5 @@
 #include <list>
+#include <thread>
 #include "srt-messenger.h"
 #include "uriparser.hpp"
 #include "testmedia.hpp"
@@ -142,6 +143,21 @@ int srt_msngr_getlasterror(void)
 
 int srt_msngr_destroy()
 {
+    if (s_snd_srt_model)
+    {
+        // We have to check if the sending buffer is empty.
+        // Or we will loose this data.
+        const SRTSOCKET sock = s_snd_srt_model->Socket();
+        size_t blocks = 0;
+        do
+        {
+            if (SRT_ERROR == srt_getsndbuffer(sock, &blocks, nullptr))
+                break;
+
+            if (blocks)
+                this_thread::sleep_for(5ms);
+        } while (blocks != 0);
+    }
     s_snd_srt_model.reset();
     s_rcv_srt_model.reset();
     return 0;
