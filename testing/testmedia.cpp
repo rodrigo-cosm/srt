@@ -1114,6 +1114,34 @@ static string DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::strin
     return os.str();
 }
 
+static inline int SeqDiff(uint16_t left, uint16_t right)
+{
+    uint32_t extl = left, extr = right;
+
+    if ( left < right )
+    {
+        int32_t diff = right - left;
+        if ( diff >= 0x8000 )
+        {
+            // It means that left is less than right because it was overflown
+            // For example: left = 0x0005, right = 0xFFF0; diff = 0xFFEB > 0x8000
+            extl |= 0x00010000;  // left was really 0x00010005, just narrowed.
+            // Now the difference is 0x0015, not 0xFFFF0015
+        }
+    }
+    else
+    {
+        int32_t diff = left - right;
+        if ( diff >= 0x8000 )
+        {
+            extr |= 0x00010000;
+        }
+    }
+
+    return extl - extr;
+}
+
+
 bytevector SrtSource::GroupRead(size_t chunk)
 {
     // For group reading you need a wrapper.
@@ -1340,6 +1368,7 @@ RETRY_READING:
     // The state of things whether we were able to extract the very next
     // sequence will be simply defined by the fact that `output` is nonempty.
 
+    // Here it's using int32_t because we need a trap representation -1.
     int32_t next_seq = m_group_wrapper->seqno();
 
     // If this set is empty, it won't roll even once, therefore output
@@ -1361,7 +1390,7 @@ RETRY_READING:
             // x = 0: the socket should be ready to get the exactly next packet
             // x = 1: the case is already handled by GroupCheckPacketAhead.
             // x > 1: AHEAD. DO NOT READ.
-            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_wrapper->seqno());
+            int seqdiff = SeqDiff(p->sequence, m_group_wrapper->seqno());
             if (seqdiff > 1)
             {
                 Verb() << "EPOLL: @" << id << " %" << p->sequence << " AHEAD, not reading.";
@@ -1387,8 +1416,8 @@ RETRY_READING:
                     {
                         if (p)
                         {
-                            int32_t pktseq = p->sequence;
-                            int seqdiff = CSeqNo::seqcmp(p->sequence, m_group_wrapper->seqno());
+                            uint16_t pktseq = p->sequence;
+                            int seqdiff = SeqDiff(p->sequence, m_group_wrapper->seqno());
                             Verb() << ". %" << pktseq << " " << seqdiff << ")";
                         }
                         else
@@ -1408,7 +1437,7 @@ RETRY_READING:
                 broken.insert(id);
                 break;
             }
-            int32_t pktseq = 0;
+            uint16_t pktseq = 0;
             if (!m_group_wrapper)
                 Error("Group not configured");
 
@@ -1469,7 +1498,7 @@ RETRY_READING:
             if (m_group_wrapper->seqno() != -1)
             {
                 // Now we can safely check it.
-                int seqdiff = CSeqNo::seqcmp(pktseq, m_group_wrapper->seqno());
+                int seqdiff = SeqDiff(pktseq, m_group_wrapper->seqno());
 
                 if (seqdiff <= 0)
                 {
@@ -1605,7 +1634,7 @@ RETRY_READING:
         {
             // NOTE that m_group_wrapper->seqno() in this place wasn't updated
             // because we haven't successfully extracted anything.
-            int seqdiff = CSeqNo::seqcmp(sock_rp.second.sequence, m_group_wrapper->seqno());
+            int seqdiff = SeqDiff(sock_rp.second.sequence, m_group_wrapper->seqno());
             if (seqdiff < 0)
             {
                 elephants.insert(sock_rp.first);
@@ -1620,7 +1649,7 @@ RETRY_READING:
                 else
                 {
                     // Update to find the slowest kangaroo.
-                    int seqdiff = CSeqNo::seqcmp(slowest_kangaroo->second.sequence, sock_rp.second.sequence);
+                    int seqdiff = SeqDiff(slowest_kangaroo->second.sequence, sock_rp.second.sequence);
                     if (seqdiff > 0)
                     {
                         slowest_kangaroo = &sock_rp;
@@ -2401,10 +2430,15 @@ void RTPTransportPacket::save(bytevector& out)
     timeval tv;
     gettimeofday(&tv, 0);
 
+    uint16_t seqv;
     if (seq == -1)
     {
         // Sequence not initialized. Initialize.
-        seq = tv.tv_usec & 0xFFFF; // 16-bit, even though externally it's 32-bit
+        seqv = uint32_t(tv.tv_usec) & 0xFFFF; // 16-bit, even though externally it's 32-bit
+    }
+    else
+    {
+        seqv = seq;
     }
 
     char ii [2] = { char(uint8_t(indata >> 8)), indata & 0xFF };
@@ -2418,7 +2452,7 @@ void RTPTransportPacket::save(bytevector& out)
     };
 
     // Sequence
-    field16 = htons(seq);
+    field16 = htons(seqv);
     copy(&begin, &begin + sizeof(field16), back_inserter(out));
 
     // Timestamp
@@ -2447,7 +2481,10 @@ void RTPTransportPacket::save(bytevector& out)
     out.insert(out.end(), payload.begin(), payload.end());
 
     // After writing the data to the output, update the sequence number
-    ++seq;
+
+    // Note: seqv as uint16_t gets automatically overflown
+    ++seqv;
+    seq = seqv;
 }
 
 

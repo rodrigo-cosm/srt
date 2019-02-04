@@ -75,7 +75,7 @@ protected:
 
     struct ReadPos
     {
-        int32_t sequence;
+        uint16_t sequence;
         bytevector packet;
     };
     map<SRTSOCKET, ReadPos> m_group_positions;
