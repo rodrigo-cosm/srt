@@ -403,6 +403,19 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
 
             Verb() << "Group listener: wrapper: " << group_wrapper << " options: " << op;
             m_listener_group = true;
+
+            // With wrapper, you define a group, type must be also defined.
+
+            m_group_type = par["type"];
+            if (m_group_type == "")
+            {
+                Error("With //group, the group 'type' must be specified.");
+            }
+
+            if (m_group_type != "redundancy")
+            {
+                Error("With //group, only type=redundancy is currently supported");
+            }
         }
     }
 
@@ -1765,7 +1778,7 @@ bytevector SrtSource::Read(size_t chunk)
 {
     static size_t counter = 1;
 
-    bool have_group = !m_links.empty();
+    bool have_group = m_group_type != "";
 
     bytevector data(chunk);
     // EXPERIMENTAL
