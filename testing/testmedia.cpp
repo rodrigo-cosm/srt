@@ -1837,7 +1837,7 @@ int SrtTarget::ConfigurePre(SRTSOCKET sock)
 
 void SrtTarget::Write(const bytevector& data)
 {
-    bool have_group = !m_links.empty();
+    bool have_group = m_group_type != "";
 
     if (have_group || m_listener_group)
     {
