@@ -290,6 +290,7 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
 
             par.erase("type");
             par.erase("nodes");
+            par.erase("wrapper");
         }
     }
 
@@ -371,7 +372,7 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
         }
     }
 
-    if (m_mode != "listener")
+    if (m_mode == "listener")
     {
         // Group specifications
 
@@ -409,12 +410,12 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
             m_group_type = par["type"];
             if (m_group_type == "")
             {
-                Error("With //group, the group 'type' must be specified.");
+                m_group_type = "redundancy";
             }
 
             if (m_group_type != "redundancy")
             {
-                Error("With //group, only type=redundancy is currently supported");
+                Error("With group listener, only type=redundancy is currently supported");
             }
         }
     }
