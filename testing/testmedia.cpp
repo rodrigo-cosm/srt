@@ -1096,6 +1096,85 @@ SrtSource::SrtSource(string host, int port, std::string path, const map<string,s
     hostport_copy = os.str();
 }
 
+bytevector SrtSource::Read(size_t chunk)
+{
+    static size_t counter = 1;
+
+    bool have_group = m_group_type != "";
+
+    bytevector data(chunk);
+    // EXPERIMENTAL
+
+    if (have_group || m_listener_group)
+    {
+        data = GroupRead(chunk);
+
+        // This is to be done for caller mode only
+        if (!m_listener_group)
+            UpdateGroupConnections();
+
+        return data;
+    }
+
+    bool ready = true;
+    int stat;
+    do
+    {
+        ::transmit_throw_on_interrupt = true;
+        stat = srt_recvmsg(m_links[0].socket, data.data(), chunk);
+        ::transmit_throw_on_interrupt = false;
+        if ( stat == SRT_ERROR )
+        {
+            if ( !m_blocking_mode )
+            {
+                // EAGAIN for SRT READING
+                if ( srt_getlasterror(NULL) == SRT_EASYNCRCV )
+                {
+                    Verb() << "AGAIN: - waiting for data by epoll...";
+                    // Poll on this descriptor until reading is available, indefinitely.
+                    int len = 2;
+                    SRTSOCKET sready[2];
+                    if ( srt_epoll_wait(srt_epoll, sready, &len, 0, 0, -1, 0, 0, 0, 0) != -1 )
+                    {
+                        if ( Verbose::on )
+                        {
+                            Verb() << "... epoll reported ready " << len << " sockets";
+                        }
+                        continue;
+                    }
+                    // If was -1, then passthru.
+                }
+            }
+            Error(UDT::getlasterror(), "recvmsg");
+        }
+
+        if ( stat == 0 )
+        {
+            throw ReadEOF(hostport_copy);
+        }
+    }
+    while (!ready);
+
+    chunk = size_t(stat);
+    if ( chunk < data.size() )
+        data.resize(chunk);
+
+    CBytePerfMon perf;
+    srt_bstats(m_links[0].socket, &perf, true);
+    if ( transmit_bw_report && int(counter % transmit_bw_report) == transmit_bw_report - 1 )
+    {
+        Verb() << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth;
+    }
+
+    if ( transmit_stats_report && counter % transmit_stats_report == transmit_stats_report - 1)
+    {
+        PrintSrtStats(m_links[0].socket, perf);
+    }
+
+    ++counter;
+
+    return data;
+}
 
 // NOTE: 'output' is expected to be EMPTY here.
 bool SrtSource::GroupCheckPacketAhead(bytevector& output)
@@ -1773,43 +1852,6 @@ RETRY_READING:
     return output; // Just a marker - this above function throws an exception
 }
 
-
-bytevector SrtSource::Read(size_t chunk)
-{
-    static size_t counter = 1;
-
-    bool have_group = m_group_type != "";
-
-    bytevector data(chunk);
-    // EXPERIMENTAL
-
-    if (have_group || m_listener_group)
-    {
-        data = GroupRead(chunk);
-    }
-
-    if (have_group)
-    {
-        // This is to be done for caller mode only
-        UpdateGroupConnections();
-    }
-
-    CBytePerfMon perf;
-    srt_bstats(m_links[0].socket, &perf, true);
-    if ( transmit_bw_report && int(counter % transmit_bw_report) == transmit_bw_report - 1 )
-    {
-        Verb() << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth;
-    }
-
-    if ( transmit_stats_report && counter % transmit_stats_report == transmit_stats_report - 1)
-    {
-        PrintSrtStats(m_links[0].socket, perf);
-    }
-
-    ++counter;
-
-    return data;
-}
 
 SrtTarget::SrtTarget(std::string host, int port, std::string path, const std::map<std::string,std::string>& par)
 {
