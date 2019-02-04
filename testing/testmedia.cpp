@@ -393,13 +393,15 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
             // that the payload has to be used "as is" (we state
             // that the input medium has already provided a
             // protocol that the other side will understand).
+            string op;
             if (wrpoptions.size() > 1)
             {
-                string op = wrpoptions[1];
+                op = wrpoptions[1];
                 if (op[0] == 'p') // passthru
                     m_wrapper_passthru = true;
             }
 
+            Verb() << "Group listener: wrapper: " << group_wrapper << " options: " << op;
             m_listener_group = true;
         }
     }
