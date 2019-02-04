@@ -47,6 +47,19 @@ size_t transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
 
 logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-test");
 
+static string DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::string prefix)
+{
+    typedef set<SRTSOCKET> fset_t;
+    ostringstream os;
+    os << prefix << " ";
+    for (fset_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
+    {
+        os << "@" << *i << " ";
+    }
+
+    return os.str();
+}
+
 string DirectionName(SRT_EPOLL_OPT direction)
 {
     string dir_name;
@@ -831,10 +844,14 @@ void SrtCommon::OpenGroupClient()
     SrtPollState sready;
     int nready = UDT::epoll_swait(srt_epoll, sready, conntimeo);
 
-    if (nready == 0)
+    if (nready <= 0)
     {
         Error(m_links[0].errorcode, "srt_connect(group, none connected)");
     }
+
+    Verb() << "READY " << nready << " connections: "
+        << DisplayEpollResults(sready.wr(), "[CONN]")
+        << DisplayEpollResults(sready.ex(), "[ERROR]");
 
     // Configure only those that have connected. Others will have to wait
     // for the opportunity.
@@ -1099,19 +1116,6 @@ bool SrtSource::GroupCheckPacketAhead(bytevector& output)
     }
 
     return status;
-}
-
-static string DisplayEpollResults(const std::set<SRTSOCKET>& sockset, std::string prefix)
-{
-    typedef set<SRTSOCKET> fset_t;
-    ostringstream os;
-    os << prefix << " ";
-    for (fset_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
-    {
-        os << "@" << *i << " ";
-    }
-
-    return os.str();
 }
 
 static inline int SeqDiff(uint16_t left, uint16_t right)
