@@ -1,12 +1,21 @@
 #include <vector>
 #include <iostream>
 #include <thread>
+#include <signal.h>
 #include "srt_messaging.h"
 
 using namespace std;
 
 
 const size_t s_message_size = 8 * 1024 * 1024;
+
+volatile bool int_state = false;
+volatile bool timer_state = false;
+void OnINT_ForceExit(int)
+{
+    cerr << "\n-------- REQUESTED INTERRUPT!\n";
+    int_state = true;
+}
 
 
 void test_messaging_localhost()
@@ -88,18 +97,37 @@ void receive_message(const char *uri)
 
     vector<char> message_rcvd(message_size);
 
-    const int recv_res = srt_msgn_recv(message_rcvd.data(), message_rcvd.size());
-    if (recv_res <= 0)
-    {
-        cerr << "ERROR: Receiving message. Result: " << recv_res << "\n";
-        cerr << srt_msgn_getlasterror_str();
+    this_thread::sleep_for(5s);
 
-        srt_msgn_destroy();
-        return;
+    try
+    {
+        while (true)
+        {
+            const int recv_res = srt_msgn_recv(message_rcvd.data(), message_rcvd.size());
+            if (recv_res <= 0)
+            {
+                cerr << "ERROR: Receiving message. Result: " << recv_res << "\n";
+                cerr << srt_msgn_getlasterror_str();
+
+                srt_msgn_destroy();
+                return;
+            }
+
+            cout << "RECEIVED MESSAGE:\n";
+            cout << string(message_rcvd.data(), message_rcvd.size()).c_str() << endl;
+
+            if (int_state)
+            {
+                cerr << "\n (interrupted on request)\n";
+                break;
+            }
+        }
+    }
+    catch (std::exception &ex)
+    {
+        cout << ex.what() << endl;
     }
 
-    cout << "RECEIVED MESSAGE:\n";
-    cout << string(message_rcvd.data(), message_rcvd.size()).c_str() << endl;
     srt_msgn_destroy();
 }
 
@@ -126,6 +154,8 @@ void send_message(const char *uri, const char* message, size_t length)
 
     cout << "SENT MESSAGE:\n";
     cout << message << endl;
+
+    this_thread::sleep_for(10s);
     srt_msgn_destroy();
 }
 
@@ -157,6 +187,8 @@ void main(int argc, char** argv)
         return;
     }
 
+    signal(SIGINT, OnINT_ForceExit);
+    signal(SIGTERM, OnINT_ForceExit);
 
     if (argc == 2)
         return receive_message(argv[1]);

@@ -1,13 +1,14 @@
 #include <list>
 #include <thread>
 #include "srt_messaging.h"
+#include "srt_receiver.hpp"
 #include "uriparser.hpp"
 #include "testmedia.hpp"
 
 using namespace std;
 
-static unique_ptr<SrtModel> s_rcv_srt_model;
-static unique_ptr<SrtModel> s_snd_srt_model;
+static unique_ptr<SrtReceiver> s_rcv_srt_model;
+static unique_ptr<SrtModel>    s_snd_srt_model;
 
 static list<SRTSOCKET> s_rcv_sockets;
 static list<SRTSOCKET> s_snd_socket;
@@ -79,16 +80,17 @@ int srt_msgn_listen(const char *uri, size_t message_size)
     {
         ut["rcvbuf"] = to_string(3 * (message_size * 1472 / 1456 + 1472));
     }
-    s_rcv_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
+    s_rcv_srt_model = std::unique_ptr<SrtReceiver>(new SrtReceiver(ut.host(), ut.portno(), ut.parameters()));
 
-    // Prepare a listener to accept up to 5 conections
-    try
+    if (!s_rcv_srt_model)
     {
-        s_rcv_srt_model->PrepareListener(maxconn);
+        cerr << "ERROR! While creating a listener\n";
+        return -1;
     }
-    catch (TransmissionError &err)
+
+    if (s_rcv_srt_model->Listen(maxconn) != 0)
     {
-        cerr << "ERROR! While setting up a listener: " << err.what() << endl;
+        cerr << "ERROR! While setting up a listener: " <<srt_getlasterror_str() << endl;
         return -1;
     }
 
@@ -101,7 +103,7 @@ int srt_msgn_send(const char *buffer, size_t buffer_len)
     if (!s_snd_srt_model)
         return -1;
 
-    const int n = srt_send(s_snd_srt_model->Socket(), buffer, buffer_len);
+    const int n = srt_send(s_snd_srt_model->Socket(), buffer, (int) buffer_len);
     return n;
 }
 
@@ -111,21 +113,7 @@ int srt_msgn_recv(char *buffer, size_t buffer_len)
     if (!s_rcv_srt_model)
         return -1;
 
-    if (s_rcv_srt_model->Socket() == SRT_INVALID_SOCK)
-    {
-        try
-        {
-            s_rcv_srt_model->AcceptNewClient();
-        }
-        catch (TransmissionError &err)
-        {
-            cerr << "ERROR! While accepting a connection: " << err.what() << endl;
-            return -1;
-        }
-    }
-
-    const int n = srt_recv(s_rcv_srt_model->Socket(), buffer, buffer_len);
-    return n;
+    return s_rcv_srt_model->Receive(buffer, buffer_len);
 }
 
 

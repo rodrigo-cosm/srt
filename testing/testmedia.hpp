@@ -35,7 +35,7 @@ class SrtCommon
 {
     int srt_conn_epoll = -1;
 
-    void SpinWaitAsync();
+    //void SpinWaitAsync();
 
 protected:
 
