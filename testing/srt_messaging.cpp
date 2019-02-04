@@ -1,6 +1,6 @@
 #include <list>
 #include <thread>
-#include "srt-messenger.h"
+#include "srt_messaging.h"
 #include "uriparser.hpp"
 #include "testmedia.hpp"
 
@@ -15,7 +15,7 @@ static int s_rcv_epoll_id;
 
 
 
-int srt_msngr_connect(const char *uri, size_t message_size)
+int srt_msgn_connect(const char *uri, size_t message_size)
 {
     UriParser ut(uri);
 
@@ -53,7 +53,7 @@ int srt_msngr_connect(const char *uri, size_t message_size)
 }
 
 
-int srt_msngr_listen(const char *uri, size_t message_size)
+int srt_msgn_listen(const char *uri, size_t message_size)
 {
     UriParser ut(uri);
 
@@ -96,7 +96,7 @@ int srt_msngr_listen(const char *uri, size_t message_size)
 }
 
 
-int srt_msngr_send(const char *buffer, size_t buffer_len)
+int srt_msgn_send(const char *buffer, size_t buffer_len)
 {
     if (!s_snd_srt_model)
         return -1;
@@ -106,7 +106,7 @@ int srt_msngr_send(const char *buffer, size_t buffer_len)
 }
 
 
-int srt_msngr_recv(char *buffer, size_t buffer_len)
+int srt_msgn_recv(char *buffer, size_t buffer_len)
 {
     if (!s_rcv_srt_model)
         return -1;
@@ -129,19 +129,19 @@ int srt_msngr_recv(char *buffer, size_t buffer_len)
 }
 
 
-const char* srt_msngr_getlasterror_str(void)
+const char* srt_msgn_getlasterror_str(void)
 {
     return srt_getlasterror_str();
 }
 
 
-int srt_msngr_getlasterror(void)
+int srt_msgn_getlasterror(void)
 {
     return srt_getlasterror(NULL);
 }
 
 
-int srt_msngr_destroy()
+int srt_msgn_destroy()
 {
     if (s_snd_srt_model)
     {

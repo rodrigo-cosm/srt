@@ -784,13 +784,13 @@ if ( ENABLE_CXX11 )
 
 endif()
 
-if (ENABLE_MESSENGER_LIB)
+if (ENABLE_MESSAGING_LIB)
 
-	add_library(srt-messenger SHARED
-		${CMAKE_SOURCE_DIR}/testing/srt-receiver.hpp
-		${CMAKE_SOURCE_DIR}/testing/srt-receiver.cpp
-		${CMAKE_SOURCE_DIR}/testing/srt-messenger.h
-		${CMAKE_SOURCE_DIR}/testing/srt-messenger.cpp
+	add_library(srt_messaging SHARED
+		${CMAKE_SOURCE_DIR}/testing/srt_receiver.hpp
+		${CMAKE_SOURCE_DIR}/testing/srt_receiver.cpp
+		${CMAKE_SOURCE_DIR}/testing/srt_messaging.h
+		${CMAKE_SOURCE_DIR}/testing/srt_messaging.cpp
 		${CMAKE_SOURCE_DIR}/testing/testmedia.cpp
 		${CMAKE_SOURCE_DIR}/testing/testmedia.hpp
 		${CMAKE_SOURCE_DIR}/testing/testmediabase.hpp
@@ -802,16 +802,16 @@ if (ENABLE_MESSENGER_LIB)
 		${CMAKE_SOURCE_DIR}/apps/verbose.hpp
 	)
 
-	target_include_directories(srt-messenger PRIVATE common)
-	target_include_directories(srt-messenger PRIVATE apps)
-	target_link_libraries(srt-messenger ${srt_link_library})
+	target_include_directories(srt_messaging PRIVATE common)
+	target_include_directories(srt_messaging PRIVATE apps)
+	target_link_libraries(srt_messaging ${srt_link_library})
 
-	srt_add_testprogram(srt-test-messenger)
-	target_include_directories(srt-test-messenger PRIVATE common)
-	target_include_directories(srt-test-messenger PRIVATE apps)
+	srt_add_testprogram(srt-test-messaging)
+	target_include_directories(srt-test-messaging PRIVATE common)
+	target_include_directories(srt-test-messaging PRIVATE apps)
 
-	target_link_libraries(srt-test-messenger srt-messenger)
-	srt_make_application(srt-test-messenger)
+	target_link_libraries(srt-test-messaging srt_messaging)
+	srt_make_application(srt-test-messaging)
 
 endif()
 

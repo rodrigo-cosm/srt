@@ -19,9 +19,9 @@ written by
 
 
 #ifdef _WIN32
-#define SRT_MSNGR_API extern "C" __declspec(dllexport)
+#define SRT_MSGN_API extern "C" __declspec(dllexport)
 #else
-#define SRT_MSNGR_API __attribute__ ((visibility("default")))
+#define SRT_MSGN_API __attribute__ ((visibility("default")))
 #endif  // _WIN32
 
 
@@ -32,7 +32,7 @@ written by
  *                      (e.g. "srt://192.168.0.12:4200")
  * @param messahe_size  payload size of one message to send
  */
-SRT_MSNGR_API extern int         srt_msngr_connect(const char *uri, size_t message_size);
+SRT_MSGN_API extern int         srt_msgn_connect(const char *uri, size_t message_size);
 
 
 /**
@@ -46,7 +46,7 @@ SRT_MSNGR_API extern int         srt_msngr_connect(const char *uri, size_t messa
  * @return               0 on success
  *                      -1 on error
  */
-SRT_MSNGR_API extern int         srt_msngr_listen (const char *uri, size_t message_size);
+SRT_MSGN_API extern int         srt_msgn_listen (const char *uri, size_t message_size);
 
 
 /**
@@ -59,7 +59,7 @@ SRT_MSNGR_API extern int         srt_msngr_listen (const char *uri, size_t messa
  *                      -1 in case of error
  *                       0 in case all the connection are closed
  */
-SRT_MSNGR_API extern int         srt_msngr_send(const char *buffer, size_t buffer_len);
+SRT_MSGN_API extern int         srt_msgn_send(const char *buffer, size_t buffer_len);
 
 
 /**
@@ -72,17 +72,17 @@ SRT_MSNGR_API extern int         srt_msngr_send(const char *buffer, size_t buffe
  *                      -1 in case of error
  *                       0 in case all the connections are closed
  */
-SRT_MSNGR_API extern int         srt_msngr_recv(char *buffer, size_t buffer_len);
+SRT_MSGN_API extern int         srt_msgn_recv(char *buffer, size_t buffer_len);
 
 
 
-SRT_MSNGR_API extern const char* srt_msngr_getlasterror_str(void);
+SRT_MSGN_API extern const char* srt_msgn_getlasterror_str(void);
 
 
-SRT_MSNGR_API extern int         srt_msngr_getlasterror(void);
+SRT_MSGN_API extern int         srt_msgn_getlasterror(void);
 
 
-SRT_MSNGR_API extern int         srt_msngr_destroy();
+SRT_MSGN_API extern int         srt_msgn_destroy();
 
 
 #endif // INC__SRT_MESSENGER_H
