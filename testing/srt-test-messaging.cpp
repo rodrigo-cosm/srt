@@ -143,7 +143,7 @@ void send_message(const char *uri, const char* message, size_t length)
         return;
     }
 
-    const int sent_res = srt_msgn_send(message, length);
+    int sent_res = srt_msgn_send(message, length);
     if (sent_res != length)
     {
         cerr << "ERROR: Sending message " << length << ". Result: " << sent_res << "\n";
@@ -154,6 +154,24 @@ void send_message(const char *uri, const char* message, size_t length)
 
     cout << "SENT MESSAGE:\n";
     cout << message << endl;
+
+    sent_res = srt_msgn_send(message, length);
+    if (sent_res != length)
+    {
+        cerr << "ERROR: Sending message " << length << ". Result: " << sent_res << "\n";
+        cerr << srt_msgn_getlasterror_str();
+        srt_msgn_destroy();
+        return;
+    }
+
+    sent_res = srt_msgn_send(message, length);
+    if (sent_res != length)
+    {
+        cerr << "ERROR: Sending message " << length << ". Result: " << sent_res << "\n";
+        cerr << srt_msgn_getlasterror_str();
+        srt_msgn_destroy();
+        return;
+    }
 
     this_thread::sleep_for(10s);
     srt_msgn_destroy();
