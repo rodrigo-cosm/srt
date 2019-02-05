@@ -125,7 +125,9 @@ protected:
 
     void OpenServer(string host, int port)
     {
-        PrepareListener(host, port, 1);
+        // For group connections, use backlog = 10 because it will have
+        // to handle multiple connections.
+        PrepareListener(host, port, m_group_type == "" ? 1 : 10);
         AcceptNewClient();
     }
 

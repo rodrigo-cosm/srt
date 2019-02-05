@@ -438,6 +438,8 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
         // Extract the payload size from the wrapper default payload size.
         int def_plsize = m_group_wrapper->plsize();
 
+        Verb() << "WRAPPER's PAYLOADSIZE=" << def_plsize;
+
         if (par.count("payloadsize"))
         {
             // Check if this defined payload size isn't less than the
