@@ -34,6 +34,8 @@ private:
 
 private:
 
+    std::vector<SRTSOCKET>    m_epoll_read_fds;
+    std::vector<SRTSOCKET>    m_epoll_write_fds;
     std::list<SRTSOCKET>      m_accepted_sockets;
     SRTSOCKET                 m_bindsock      = SRT_INVALID_SOCK;
     int                       m_epoll_accept  = -1;

@@ -15,6 +15,7 @@ void OnINT_ForceExit(int)
 {
     cerr << "\n-------- REQUESTED INTERRUPT!\n";
     int_state = true;
+    srt_msgn_destroy();
 }
 
 
@@ -114,7 +115,7 @@ void receive_message(const char *uri)
             }
 
             cout << "RECEIVED MESSAGE:\n";
-            cout << string(message_rcvd.data(), message_rcvd.size()).c_str() << endl;
+            cout << string(message_rcvd.data(), recv_res).c_str() << endl;
 
             if (int_state)
             {

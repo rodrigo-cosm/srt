@@ -49,7 +49,7 @@ void SrtReceiver::AcceptingThread()
 
         if (epoll_res > 0)
         {
-            Verb() << "AcceptingThread: " << epoll_res << " rnum: " << rnum;
+            Verb() << "AcceptingThread: epoll res " << epoll_res << " rnum: " << rnum;
             const SRTSOCKET sock = AcceptNewClient();
             if (sock != SRT_INVALID_SOCK)
             {
@@ -76,7 +76,7 @@ SRTSOCKET SrtReceiver::AcceptNewClient()
         return socket;
     }
 
-    Verb() << " connected.";
+    Verb() << " connected " << socket;
     ::transmit_throw_on_interrupt = false;
 
     // ConfigurePre is done on bindsock, so any possible Pre flags
@@ -161,15 +161,15 @@ int SrtReceiver::Listen(int max_conn)
 
     sockaddr_in sa = CreateAddrInet(m_host, m_port);
     sockaddr* psa = (sockaddr*)&sa;
-    Verb() << "Binding a server on " << m_host << ":" << m_port << " ...";
+    Verb() << "Binding a server on " << m_host << ":" << m_port << VerbNoEOL;
     stat = srt_bind(m_bindsock, psa, sizeof sa);
     if (stat == SRT_ERROR)
     {
         srt_close(m_bindsock);
         return SRT_ERROR;
     }
+    Verb() << " listening";
 
-    Verb() << " listen... " << VerbNoEOL;
     stat = srt_listen(m_bindsock, max_conn);
     if (stat == SRT_ERROR)
     {
@@ -177,9 +177,10 @@ int SrtReceiver::Listen(int max_conn)
         return SRT_ERROR;
     }
 
-    m_accepting_thread = thread(&SrtReceiver::AcceptingThread, this);
+    m_epoll_read_fds .assign(max_conn, SRT_INVALID_SOCK);
+    m_epoll_write_fds.assign(max_conn, SRT_INVALID_SOCK);
 
-    ::transmit_throw_on_interrupt = true;
+    m_accepting_thread = thread(&SrtReceiver::AcceptingThread, this);
 
     return 0;
 }
@@ -187,28 +188,73 @@ int SrtReceiver::Listen(int max_conn)
 
 int SrtReceiver::Receive(char * buffer, size_t buffer_len)
 {
-
+    const int wait_ms = 3000;
     while (!m_stop_accept)
     {
-        int rnum = 2;
-        SRTSOCKET read_fds[2] = {};
-        int wnum = 2;
-        SRTSOCKET write_fds[2] = {};
+        fill(m_epoll_read_fds.begin(),  m_epoll_read_fds.end(),  SRT_INVALID_SOCK);
+        fill(m_epoll_write_fds.begin(), m_epoll_write_fds.end(), SRT_INVALID_SOCK);
+        int rnum = (int) m_epoll_read_fds .size();
+        int wnum = (int) m_epoll_write_fds.size();
 
         const int epoll_res = srt_epoll_wait(m_epoll_receive,
-            read_fds, &rnum, write_fds, &wnum, 3000,
-                   0,     0,         0,     0);
+            m_epoll_read_fds.data(),  &rnum,
+            m_epoll_write_fds.data(), &wnum,
+            wait_ms, 0, 0, 0, 0);
 
         if (epoll_res > 0)
         {
-            Verb() << "Received epoll_res " << epoll_res
-                   << " rnum " << rnum << " [0]: " << read_fds[0] << " [1]: " << read_fds[1]
-                   << " wnum " << wnum << " [0]: " << write_fds[0] << " [1]: " << write_fds[1];
+            {
+                // Verbose info:
+                Verb() << "Received epoll_res " << epoll_res;
+                Verb() << "   to read  " << rnum << ": " << VerbNoEOL;
+                copy(m_epoll_read_fds.begin(), next(m_epoll_read_fds.begin(), rnum),
+                    ostream_iterator<int>(*Verbose::cverb, ", "));
+                Verb();
+                Verb() << "   to write " << wnum << ": " << VerbNoEOL;
+                copy(m_epoll_write_fds.begin(), next(m_epoll_write_fds.begin(), wnum),
+                    ostream_iterator<int>(*Verbose::cverb, ", "));
+                Verb();
+            }
 
-            const SRTSOCKET sock = read_fds[0];
-            int res = srt_recvmsg2(sock, buffer, buffer_len, nullptr);
-            Verb() << "Received message result " << res ;
-            return res;
+            // First we need to check errors on the sockets
+            if (wnum > 0)
+            {
+                for (int i = 0; i < wnum; ++i)
+                {
+                    const SRTSOCKET socket = m_epoll_write_fds[i];
+                    auto read_sock = std::find(m_epoll_read_fds.begin(), m_epoll_read_fds.end(), socket);
+                    if (read_sock != m_epoll_read_fds.end())
+                        *read_sock = SRT_INVALID_SOCK;
+                    else
+                        Verb() << "Socket " << socket << " is not in writefds";
+
+                    const SRT_SOCKSTATUS status = srt_getsockstate(socket);
+
+                    switch (status)
+                    {
+                    case SRTS_BROKEN:
+                    case SRTS_NONEXIST:
+                    case SRTS_CLOSED:
+                        Verb() << "Socket " << socket << " status " << status << " is closing. Remove from epoll";
+                        srt_close(socket);
+                        break;
+                    default:
+                        Verb() << "Socket " << socket << " state " << status << " (don'tknow what to do)";
+                        break;
+                    }
+                }
+            }
+
+            const auto read_sock = std::find_if(m_epoll_read_fds.begin(), m_epoll_read_fds.end(),
+                [](const SRTSOCKET &sock) { return (sock != SRT_INVALID_SOCK); });
+
+            if (read_sock != m_epoll_read_fds.end())
+            {
+                const SRTSOCKET sock = *read_sock;
+                int res = srt_recvmsg2(sock, buffer, buffer_len, nullptr);
+                Verb() << "Received message result " << res;
+                return res;
+            }
         }
     }
     return 0;
