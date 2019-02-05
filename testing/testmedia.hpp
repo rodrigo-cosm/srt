@@ -79,6 +79,7 @@ protected:
         bytevector packet;
     };
     map<SRTSOCKET, ReadPos> m_group_positions;
+    int32_t m_group_rcvseq = -1;
     SRTSOCKET m_group_active; // The link from which the last packet was delivered
 
     SRTSOCKET m_listener = SRT_INVALID_SOCK;

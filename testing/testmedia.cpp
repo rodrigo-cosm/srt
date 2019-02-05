@@ -1515,7 +1515,7 @@ RETRY_READING:
     // sequence will be simply defined by the fact that `output` is nonempty.
 
     // Here it's using int32_t because we need a trap representation -1.
-    int32_t next_seq = m_group_wrapper->seqno();
+    int32_t next_seq = m_group_rcvseq;
 
     // If this set is empty, it won't roll even once, therefore output
     // will be surely empty. This will be checked then same way as when
@@ -1542,7 +1542,7 @@ RETRY_READING:
             // x = 0: the socket should be ready to get the exactly next packet
             // x = 1: the case is already handled by GroupCheckPacketAhead.
             // x > 1: AHEAD. DO NOT READ.
-            int seqdiff = SeqDiff(p->sequence, m_group_wrapper->seqno());
+            int seqdiff = SeqDiff(p->sequence, m_group_rcvseq);
             if (seqdiff > 1)
             {
                 Verb() << "EPOLL: @" << id << " %" << p->sequence << " AHEAD, not reading.";
@@ -1569,7 +1569,7 @@ RETRY_READING:
                         if (p)
                         {
                             uint16_t pktseq = p->sequence;
-                            int seqdiff = SeqDiff(p->sequence, m_group_wrapper->seqno());
+                            int seqdiff = SeqDiff(p->sequence, m_group_rcvseq);
                             Verb() << ". %" << pktseq << " " << seqdiff << ")";
                         }
                         else
@@ -1604,8 +1604,8 @@ RETRY_READING:
 
             Verb() << "[WRP seq=" << pktseq << " src=" << m_group_wrapper->srcid() << "] " << VerbNoEOL;
 
-            // NOTE: checks against m_group_wrapper->seqno() and decisions based on it
-            // must NOT be done if m_group_wrapper->seqno() is -1, which means that we
+            // NOTE: checks against m_group_rcvseq and decisions based on it
+            // must NOT be done if m_group_rcvseq is -1, which means that we
             // are about to deliver the very first packet and we take its
             // sequence number as a good deal.
 
@@ -1615,11 +1615,11 @@ RETRY_READING:
             // - check ordering.
             // The second one must be done always, but failed discrepancy
             // check should exclude the socket from any further checks.
-            // That's why the common check for m_group_wrapper->seqno() != -1 can't
+            // That's why the common check for m_group_rcvseq != -1 can't
             // embrace everything below.
 
             // We need to first qualify the sequence, just for a case
-            if (m_group_wrapper->seqno() != -1 && abs(m_group_wrapper->seqno() - pktseq) > CSeqNo::m_iSeqNoTH)
+            if (m_group_rcvseq != -1 && abs(m_group_rcvseq - pktseq) > CSeqNo::m_iSeqNoTH)
             {
                 // This error should be returned if the link turns out
                 // to be the only one, or set to the group data.
@@ -1629,7 +1629,7 @@ RETRY_READING:
                     Verb() << ".)";
                     fi = 1;
                 }
-                Verb() << "Error @" << id << ": SEQUENCE DISCREPANCY: base=%" << m_group_wrapper->seqno() << " vs pkt=%" << pktseq << ", setting ESECFAIL";
+                Verb() << "Error @" << id << ": SEQUENCE DISCREPANCY: base=%" << m_group_rcvseq << " vs pkt=%" << pktseq << ", setting ESECFAIL";
                 broken.insert(id);
                 break;
             }
@@ -1647,10 +1647,10 @@ RETRY_READING:
                 p->sequence = pktseq;
             }
 
-            if (m_group_wrapper->seqno() != -1)
+            if (m_group_rcvseq != -1)
             {
                 // Now we can safely check it.
-                int seqdiff = SeqDiff(pktseq, m_group_wrapper->seqno());
+                int seqdiff = SeqDiff(pktseq, m_group_rcvseq);
 
                 if (seqdiff <= 0)
                 {
@@ -1660,7 +1660,7 @@ RETRY_READING:
                         fi = 0;
                     }
 
-                    //Verb() << "." << VerbNoEOL;
+                    Verb() << "(past) " << VerbNoEOL;
 
                     // The sequence is recorded, the packet has to be discarded.
                     // That's all.
@@ -1750,7 +1750,7 @@ RETRY_READING:
         {
             Error("IPE: next_seq not set after output extracted!");
         }
-        m_group_wrapper->seqno() = next_seq;
+        m_group_rcvseq = next_seq;
         Verb() << ".";
         return output;
     }
@@ -1785,9 +1785,9 @@ RETRY_READING:
 
         for (auto& sock_rp: m_group_positions)
         {
-            // NOTE that m_group_wrapper->seqno() in this place wasn't updated
+            // NOTE that m_group_rcvseq in this place wasn't updated
             // because we haven't successfully extracted anything.
-            int seqdiff = SeqDiff(sock_rp.second.sequence, m_group_wrapper->seqno());
+            int seqdiff = SeqDiff(sock_rp.second.sequence, m_group_rcvseq);
             if (seqdiff < 0)
             {
                 elephants.insert(sock_rp.first);
@@ -1822,8 +1822,8 @@ RETRY_READING:
             // As we already have the packet delivered by the slowest
             // kangaroo, we can simply return it.
 
-            m_group_wrapper->seqno() = slowest_kangaroo->second.sequence;
-            Verb() << "@" << slowest_kangaroo->first << " %" << m_group_wrapper->seqno() << " KANGAROO->HORSE";
+            m_group_rcvseq = slowest_kangaroo->second.sequence;
+            Verb() << "@" << slowest_kangaroo->first << " %" << m_group_rcvseq << " KANGAROO->HORSE";
             swap(output, slowest_kangaroo->second.packet);
             return output;
         }
