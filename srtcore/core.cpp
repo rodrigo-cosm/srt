@@ -7087,6 +7087,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       // Signal the sender and recver if they are waiting for data.
       releaseSynch();
       // Unblock any call so they learn the connection_broken error
+      HLOGC(mglog.Debug, log << CONID() << "SHUTDOWN received - closing connection");
       s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_ERR, true);
 
       CTimer::triggerEvent();

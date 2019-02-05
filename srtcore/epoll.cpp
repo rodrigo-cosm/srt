@@ -785,6 +785,38 @@ Updated: ;
 Updated: ;
 #endif
 }
+
+string DirectionName(SRT_EPOLL_OPT direction)
+{
+    string dir_name;
+    if (direction & ~SRT_EPOLL_ERR)
+    {
+        if (direction & SRT_EPOLL_IN)
+        {
+            dir_name = "source";
+        }
+
+        if (direction & SRT_EPOLL_OUT)
+        {
+            if (!dir_name.empty())
+                dir_name = "relay";
+            else
+                dir_name = "target";
+        }
+
+        if (direction & SRT_EPOLL_ERR)
+        {
+            dir_name += "+error";
+        }
+    }
+    else
+    {
+        // stupid name for a case of IPE
+        dir_name = "stone";
+    }
+
+    return dir_name;
+}
 }  // namespace
 
 int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, int events, bool enable)
@@ -804,6 +836,8 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, int events,
       }
       else
       {
+          HLOGC(mglog.Debug, log << "epoll/update: EID:" << *i
+                  << " TYPE:" << DirectionName(SRT_EPOLL_OPT(events)) << " STATE:" << (enable?"ON":"OFF"));
           update_epoll_sets<SRT_EPOLL_IN >(*i, uid, p->second, events, enable);
           update_epoll_sets<SRT_EPOLL_OUT>(*i, uid, p->second, events, enable);
           update_epoll_sets<SRT_EPOLL_ERR>(*i, uid, p->second, events, enable);
