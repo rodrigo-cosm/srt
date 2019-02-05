@@ -1335,7 +1335,10 @@ RETRY_READING:
 
         // This function also updates the group sequence pointer.
         if (GroupCheckPacketAhead(ahead_packet))
+        {
+            Verb() << ".";
             return move(ahead_packet);
+        }
     }
 
     // LINK QUALIFICATION NAMES:
@@ -1657,7 +1660,7 @@ RETRY_READING:
                         fi = 0;
                     }
 
-                    Verb() << "." << VerbNoEOL;
+                    //Verb() << "." << VerbNoEOL;
 
                     // The sequence is recorded, the packet has to be discarded.
                     // That's all.
@@ -1748,6 +1751,7 @@ RETRY_READING:
             Error("IPE: next_seq not set after output extracted!");
         }
         m_group_wrapper->seqno() = next_seq;
+        Verb() << ".";
         return output;
     }
 
