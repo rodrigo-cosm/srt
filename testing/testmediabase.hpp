@@ -83,6 +83,8 @@ struct TransportPacket
     virtual int32_t& seqno() = 0;
     virtual int32_t& srcid() = 0;
 
+    virtual int plsize() = 0;
+
     virtual ~TransportPacket() {}
 
     static TransportPacket* create(const std::string& name)

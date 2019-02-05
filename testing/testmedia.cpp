@@ -242,23 +242,25 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
                 Split(group_wrapper, '/', back_inserter(wrpoptions));
                 group_wrapper = wrpoptions[0];
 
-                // XXX Simple dispatcher, expand later
-                if (group_wrapper == "rtp")
-                    m_group_wrapper = new RTPTransportPacket();
-                else if (group_wrapper != "")
-                    Error("Unknown wrapper type");
-
                 // Might be that the wrapper name is empty,
                 // but the passthrough option is given. This means
                 // that the payload has to be used "as is" (we state
                 // that the input medium has already provided a
                 // protocol that the other side will understand).
+                string options;
                 if (wrpoptions.size() > 1)
                 {
-                    string op = wrpoptions[1];
-                    if (op[0] == 'p') // passthru
+                    options = wrpoptions[1];
+                    if (options[0] == 'p') // passthru
                         m_wrapper_passthru = true;
                 }
+
+                // XXX Simple dispatcher, expand later
+                if (group_wrapper == "rtp")
+                    m_group_wrapper = new RTPTransportPacket(options);
+                else if (group_wrapper != "")
+                    Error("Unknown wrapper type");
+
             }
 
             vector<string> nodes;
@@ -362,6 +364,16 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
     // Default mode is live, so check if the file mode was enforced
     if (par.count("transtype") == 0 || par["transtype"] != "file")
     {
+        if (par.count("payloadsize"))
+        {
+            size_t s = stoi(par["payloadsize"]);
+            if (s != transmit_chunk_size)
+            {
+                cerr << "WARNING: Option -chunk specifies different size than 'payloadsize' parameter in SRT URI\n";
+            }
+            transmit_chunk_size = s;
+        }
+
         // If the Live chunk size was nondefault, enforce the size.
         if (transmit_chunk_size != SRT_LIVE_DEF_PLSIZE)
         {
@@ -383,9 +395,17 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
             Split(group_wrapper, '/', back_inserter(wrpoptions));
             group_wrapper = wrpoptions[0];
 
+            string options;
+            if (wrpoptions.size() > 1)
+            {
+                options = wrpoptions[1];
+                if (options[0] == 'p') // passthru
+                    m_wrapper_passthru = true;
+            }
+
             // XXX Simple dispatcher, expand later
             if (group_wrapper == "rtp")
-                m_group_wrapper = new RTPTransportPacket();
+                m_group_wrapper = new RTPTransportPacket(options);
             else if (group_wrapper != "")
                 throw std::runtime_error("Unknown wrapper type");
 
@@ -394,15 +414,8 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
             // that the payload has to be used "as is" (we state
             // that the input medium has already provided a
             // protocol that the other side will understand).
-            string op;
-            if (wrpoptions.size() > 1)
-            {
-                op = wrpoptions[1];
-                if (op[0] == 'p') // passthru
-                    m_wrapper_passthru = true;
-            }
 
-            Verb() << "Group listener: wrapper: " << group_wrapper << " options: " << op;
+            Verb() << "Group listener: wrapper: " << group_wrapper << " options: " << options;
             m_listener_group = true;
 
             // With wrapper, you define a group, type must be also defined.
@@ -417,6 +430,28 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
             {
                 Error("With group listener, only type=redundancy is currently supported");
             }
+        }
+    }
+
+    if (m_group_wrapper)
+    {
+        // Extract the payload size from the wrapper default payload size.
+        int def_plsize = m_group_wrapper->plsize();
+
+        if (par.count("payloadsize"))
+        {
+            // Check if this defined payload size isn't less than the
+            // minimum required by the wrapper.
+            int s = stoi(par["payloadsize"]);
+            if (s < def_plsize)
+            {
+                Error("The 'payloadsize' parameter in SRT URI provides less size than minimum required by the 'wrapper'");
+            }
+        }
+        else if (def_plsize > SRT_LIVE_DEF_PLSIZE)
+        {
+            par["payloadsize"] = Sprint(def_plsize);
+            Verb() << "Specified payload size=" << def_plsize << " as required by the wrapper";
         }
     }
 

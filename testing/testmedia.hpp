@@ -268,6 +268,8 @@ class RTPTransportPacket: public TransportPacket
     uint64_t timebase = 0;
     uint32_t pkt_ts = 0;
 
+    int header_size = 0;
+
     static const uint16_t indata =
         (2 << 6) /* version, other flags 0 */ << 8
           | 96 /* RTP_PT_PRIVATE */;
@@ -280,6 +282,24 @@ class RTPTransportPacket: public TransportPacket
         4;  // srcid
 
 public:
+
+    RTPTransportPacket(const std::string& )
+    {
+        // Parse options later, currently define the size normally
+        // as without any contributing sources provided.
+
+        // This is the basic size of an RTP packet, this can be
+        // followed by a defined number of contributing sources,
+        // each one getting 4 bytes. Bits 4-7 of the RTP header
+        // contains the number of contributing sources. Currently
+        // we state this number is 0.
+        header_size = 12;
+    }
+
+    virtual int plsize() override
+    {
+        return header_size + SRT_LIVE_DEF_PLSIZE;
+    }
 
     virtual void load(const bytevector&, size_t size = ~size_t()) override;
     virtual void save(bytevector& out) override;
