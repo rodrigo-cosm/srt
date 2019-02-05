@@ -614,7 +614,7 @@ int main( int argc, char** argv )
                 alarm(timeout);
             }
             Verb() << " << ... " << VerbNoEOL;
-            const bytevector& data = src->Read(chunk);
+            const bytevector& data = src->Read(transmit_chunk_size);
             Verb() << " << " << data.size() << "  ->  " << VerbNoEOL;
             if ( data.empty() && src->End() )
             {
@@ -641,7 +641,7 @@ int main( int argc, char** argv )
                 break;
             }
 
-            bw.Checkpoint(chunk, transmit_bw_report);
+            bw.Checkpoint(transmit_chunk_size, transmit_bw_report);
 
             if (stoptime != 0)
             {
