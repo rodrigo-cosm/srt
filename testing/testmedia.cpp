@@ -450,8 +450,9 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
                 Error("The 'payloadsize' parameter in SRT URI provides less size than minimum required by the 'wrapper'");
             }
         }
-        else if (def_plsize > SRT_LIVE_DEF_PLSIZE)
+        else if (def_plsize > int(transmit_chunk_size))
         {
+            transmit_chunk_size = def_plsize;
             par["payloadsize"] = Sprint(def_plsize);
             Verb() << "Specified payload size=" << def_plsize << " as required by the wrapper";
         }
