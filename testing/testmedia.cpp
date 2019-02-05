@@ -542,7 +542,6 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
         Error(UDT::getlasterror(), "srt_accept");
     }
 
-    Verb() << " connected.";
     ::transmit_throw_on_interrupt = false;
 
     // ConfigurePre is done on bindsock, so any possible Pre flags
@@ -558,6 +557,8 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
     m_links.push_back(Connection(sock));
     Connection& c = m_links.back();
     memcpy(&c.peeraddr, &scl, sclen);
+    Verb() << " connected: " << SockaddrToString((sockaddr*)&c.peeraddr);
+
     return c;
 }
 
@@ -1065,7 +1066,7 @@ void SrtCommon::Close()
     bool yes = true;
     for (auto& l: m_links)
     {
-        Verb() << "SrtCommon: DESTROYING CONNECTION, closing l.socketet (rt%" << l.socket << ")...";
+        Verb() << "SrtCommon: DESTROYING CONNECTION, closing socket (rt%" << l.socket << ")...";
         srt_setsockflag(l.socket, SRTO_SNDSYN, &yes, sizeof yes);
         srt_close(l.socket);
         any = true;
@@ -1101,8 +1102,8 @@ void SrtCommon::UpdateGroupConnections()
         UDT::epoll_swait(srt_epoll, sready, 0);
         if (sready.rd().count(m_listener))
         {
-            AcceptNewClient();
             Verb() << "NEW CONNECTION COMING IN";
+            AcceptNewClient();
         }
 
         return;
@@ -1153,9 +1154,7 @@ bytevector SrtSource::Read(size_t chunk)
     {
         data = GroupRead(chunk);
 
-        // This is to be done for caller mode only
-        if (!m_listener_group)
-            UpdateGroupConnections();
+        UpdateGroupConnections();
 
         return data;
     }
@@ -1520,6 +1519,12 @@ RETRY_READING:
     // reading from every socket resulted in error.
     for (fset_t::const_iterator i = sready.rd().begin(); i != sready.rd().end(); ++i)
     {
+        // Listener socket is among those subscribed for READ-readiness.
+        // Simply ignore it; this will be checked again without waiting
+        // in UpdateGroupConnections().
+        if (*i == m_listener)
+            continue;
+
         // Check if this socket is in aheads
         // If so, don't read from it, wait until the ahead is flushed.
 
@@ -1551,7 +1556,6 @@ RETRY_READING:
         for (;;)
         {
             bytevector data(chunk);
-            Verb() << "RD:@" << id << ": ";
             int stat = srt_recvmsg(id, data.data(), chunk);
             if (stat == SRT_ERROR)
             {
@@ -1977,7 +1981,7 @@ void SrtTarget::GroupWrite(const bytevector& data)
 
     // XXX Temporary; it should be set to some uniq id in the beginning.
     m_group_wrapper->srcid() = 0xCAFEB1BA;
-    Verb() << "[WRP seq=" << m_group_wrapper->seqno() << " src=" << m_group_wrapper->srcid() <<  "] " << VerbNoEOL;
+    Verb() << "[WRP seq=" << m_group_wrapper->seqno() << " size=" << packet.size() << "] " << VerbNoEOL;
     m_group_wrapper->save(packet);
 
     bool ok = false;
@@ -1986,6 +1990,7 @@ void SrtTarget::GroupWrite(const bytevector& data)
     {
         // Send the same payload over all sockets
         SRT_MSGCTRL mctrl = srt_msgctrl_default;
+        Verb() << "@" << c.socket << " " << VerbNoEOL;
         c.result = srt_sendmsg2(c.socket, packet.data(), packet.size(), &mctrl);
         c.status = srt_getsockstate(c.socket);
         if (c.result > 0 && c.status == SRTS_CONNECTED)
