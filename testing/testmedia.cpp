@@ -1289,6 +1289,8 @@ bytevector SrtSource::GroupRead(size_t chunk)
     if (!m_group_wrapper)
         Error("GroupRead: No wrapper, for groups a wrapper protocol must be defined");
 
+    Verb() << "GroupRead: chunk=" << chunk;
+
     // Read the current group status. m_links is here the group id.
     bytevector output;
 
