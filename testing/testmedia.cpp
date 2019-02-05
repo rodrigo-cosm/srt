@@ -658,14 +658,19 @@ void SrtCommon::Init(string host, int port, string path, map<string,string> par,
         for (auto s: m_links)
             AddPoller(s.socket, dir);
     }
-    else
+    else if (m_group_wrapper && (m_listener_group || dir != SRT_EPOLL_OUT))
     {
-        // Remove connected sockets from polling.
+        // Change connected sockets' epoll subscription
+        // to the one of direction. This happens in the
+        // following situations:
+        // - caller & reader, so the connecting socket was subscribed to OUT, change to IN
+        // - listener, so the first accepted socket was not yet added to epoll, add it now.
+        // Note that the status of a fresh accepted socket is always CONNECTED.
         for (auto& c: m_links)
         {
             c.status = srt_getsockstate(c.socket);
             if (c.status == SRTS_CONNECTED)
-                srt_epoll_remove_usock(srt_epoll, c.socket);
+                AddPoller(c.socket, dir);
         }
     }
 }
@@ -1471,7 +1476,7 @@ RETRY_READING:
             << DisplayEpollResults(sready.rd(), "[R]")
             << DisplayEpollResults(sready.wr(), "[W]")
             << DisplayEpollResults(sready.ex(), "[E]")
-            << "} " << VerbNoEOL;
+            << "}";
 
     }
 
@@ -1543,6 +1548,7 @@ RETRY_READING:
         for (;;)
         {
             bytevector data(chunk);
+            Verb() << "RD:@" << id << ": ";
             int stat = srt_recvmsg(id, data.data(), chunk);
             if (stat == SRT_ERROR)
             {
