@@ -174,7 +174,7 @@ void send_message(const char *uri, const char* message, size_t length)
         return;
     }
 
-    this_thread::sleep_for(10s);
+    //this_thread::sleep_for(10s);
     srt_msgn_destroy();
 }
 

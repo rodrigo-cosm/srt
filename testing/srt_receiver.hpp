@@ -1,5 +1,6 @@
 #include <thread>
 #include <list>
+#include <queue>
 #include <atomic>
 #include "srt.h"
 #include "uriparser.hpp"
@@ -32,7 +33,14 @@ private:
     int ConfigureAcceptedSocket(SRTSOCKET sock);
 
 
+private:    // Reading manipulation helper functions
+
+    void UpdateReadFIFO(int rnum, int wnum);
+
+
 private:
+
+    std::list<SRTSOCKET>      m_read_fifo;
 
     std::vector<SRTSOCKET>    m_epoll_read_fds;
     std::vector<SRTSOCKET>    m_epoll_write_fds;
