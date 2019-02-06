@@ -389,8 +389,8 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
         // Set listener socket nonblocking mode; now that the
         // transmission is about to run, accepting will be only
         // done in a gap between two consecutive packets.
-        int yes = 1;
-        srt_setsockflag(m_listener, SRTO_RCVSYN, &yes, sizeof yes);
+        int no = 0;
+        srt_setsockflag(m_listener, SRTO_RCVSYN, &no, sizeof no);
 
         // Group specifications
 
