@@ -390,6 +390,7 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
         // transmission is about to run, accepting will be only
         // done in a gap between two consecutive packets.
         int no = 0;
+        Verb() << "LISTENER: setting nonblocking for listener socket anyway";
         srt_setsockflag(m_listener, SRTO_RCVSYN, &no, sizeof no);
 
         // Group specifications
@@ -1135,11 +1136,27 @@ void SrtCommon::UpdateGroupConnections()
     {
         // Check which nodes are no longer active and activate them.
         if (n.socket != SRT_INVALID_SOCK)
-            continue;
+        {
+            // We still have a socket, check if running
+            if (n.status == SRTS_CONNECTED)
+            {
+                // This link is working properly, leave it.
+                continue;
+            }
+
+            if (n.status == SRTS_CONNECTING)
+            {
+                // Check if it didn't fail last time
+                if (n.result != SRT_ERROR)
+                    continue;
+            }
+        }
 
         sockaddr_in sa = CreateAddrInet(n.host, n.port);
         sockaddr* psa = (sockaddr*)&sa;
-        Verb() << "[" << i << "] RECONNECTING to node " << n.host << ":" << n.port << " ... " << VerbNoEOL;
+        Verb() << "[" << i << "] st=" << SockStatusStr(n.status)
+            << " re=" << n.result << " RECONNECTING to node "
+            << n.host << ":" << n.port << " ... " << VerbNoEOL;
         ++i;
         int insock = srt_socket(AF_INET, SOCK_DGRAM, 0);
         if (insock == SRT_INVALID_SOCK || srt_connect(insock, psa, sizeof sa) == SRT_INVALID_SOCK)
