@@ -550,6 +550,7 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
         m_listener = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "srt_accept");
     }
+    Verb() << " connected: " << SockaddrToString((sockaddr*)&scl);
 
     ::transmit_throw_on_interrupt = false;
 
@@ -566,7 +567,6 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
     m_links.push_back(Connection(sock));
     Connection& c = m_links.back();
     memcpy(&c.peeraddr, &scl, sclen);
-    Verb() << " connected: " << SockaddrToString((sockaddr*)&c.peeraddr);
 
     return c;
 }
@@ -730,23 +730,15 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
             return result;
     }
 
-    SrtConfigurePost(sock, m_options);
+    vector<string> failures;
+    SrtConfigurePost(sock, m_options, &failures);
 
-    for (auto o: srt_options)
+    if (Verbose::on)
     {
-        if ( o.binding == SocketOption::POST && m_options.count(o.name) )
+        string dir_name = DirectionName(m_direction);
+        for (auto f: failures)
         {
-            string value = m_options.at(o.name);
-            bool ok = o.apply<SocketOption::SRT>(sock, value);
-            if (Verbose::on)
-            {
-                string dir_name = DirectionName(m_direction);
-
-                if ( !ok )
-                    Verb() << "WARNING: failed to set '" << o.name << "' (post, " << dir_name << ") to " << value;
-                else
-                    Verb() << "NOTE: SRT/post::" << o.name << "=" << value;
-            }
+            Verb() << "WARNING: SRT OPTION FAILED (post, " << dir_name << "): '" << f << "' = " << m_options[f];
         }
     }
 
