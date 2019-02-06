@@ -1555,9 +1555,12 @@ RETRY_READING:
         // - reading is no longer possible (AGAIN)
         // - the sequence difference is >= 1
 
+        int take = 1;
         int fi = 1; // marker for Verb to display flushing
         for (;;)
         {
+            Verb() << " <@" << id << " Tk" << take << VerbNoEOL;
+            ++take;
             bytevector data(chunk);
             int stat = srt_recvmsg(id, data.data(), chunk);
             if (stat == SRT_ERROR)
@@ -1582,6 +1585,7 @@ RETRY_READING:
                 int err = srt_getlasterror(0);
                 if (err == SRT_EASYNCRCV)
                 {
+                    Verb() << "<SP>";
                     // Do not treat this as spurious, just stop reading.
                     break;
                 }
