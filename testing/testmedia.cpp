@@ -386,6 +386,12 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
 
     if (m_mode == "listener")
     {
+        // Set listener socket nonblocking mode; now that the
+        // transmission is about to run, accepting will be only
+        // done in a gap between two consecutive packets.
+        int yes = 1;
+        srt_setsockflag(m_listener, SRTO_RCVSYN, &yes, sizeof yes);
+
         // Group specifications
 
         if (par.count("wrapper"))
@@ -475,6 +481,9 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
 
     if ( !m_blocking_mode || m_listener_group)
     {
+        // Note: m_listener will be added to srt_listener_epoll!
+        // Note2: We don't set the listener nonblocking mode YET.
+        //        First we need the first connection established.
         AddPoller(m_listener, SRT_EPOLL_IN);
     }
 
@@ -679,15 +688,16 @@ void SrtCommon::Init(string host, int port, string path, map<string,string> par,
 
 void SrtCommon::AddPoller(SRTSOCKET socket, int modes)
 {
-    if (srt_epoll == -1)
+    int& eid = socket == m_listener ? srt_listener_epoll : srt_epoll;
+    if (eid == -1)
     {
-        srt_epoll = srt_epoll_create();
-        if ( srt_epoll == -1 )
+        eid = srt_epoll_create();
+        if ( eid == -1 )
             throw std::runtime_error("Can't create epoll in nonblocking mode");
     }
-    Verb() << "EPOLL: creating eid=" << srt_epoll << " and adding @" << socket
+    Verb() << "EPOLL: creating eid=" << eid << " and adding @" << socket
         << " in " << DirectionName(SRT_EPOLL_OPT(modes)) << " mode";
-    srt_epoll_add_usock(srt_epoll, socket, &modes);
+    srt_epoll_add_usock(eid, socket, &modes);
 }
 
 int SrtCommon::ConfigurePost(SRTSOCKET sock)
@@ -1099,7 +1109,7 @@ void SrtCommon::UpdateGroupConnections()
         // Just check once, without waiting.
 
         SrtPollState sready;
-        UDT::epoll_swait(srt_epoll, sready, 0);
+        UDT::epoll_swait(srt_listener_epoll, sready, 0);
         if (sready.rd().count(m_listener))
         {
             Verb() << "NEW CONNECTION COMING IN";
@@ -1526,7 +1536,7 @@ RETRY_READING:
         // Simply ignore it; this will be checked again without waiting
         // in UpdateGroupConnections().
         if (*i == m_listener)
-            continue;
+            Error("INTERNAL ERROR: listener socket shouldn't be among data sockets!");
 
         // Check if this socket is in aheads
         // If so, don't read from it, wait until the ahead is flushed.
