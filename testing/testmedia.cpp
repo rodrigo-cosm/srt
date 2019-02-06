@@ -559,7 +559,7 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
     int stat = ConfigurePost(sock);
     if ( stat == SRT_ERROR )
     {
-        srt_close(m_listener);
+        srt_close(sock);
         m_listener = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "ConfigurePost");
     }
@@ -684,6 +684,11 @@ void SrtCommon::Init(string host, int port, string path, map<string,string> par,
                 AddPoller(c.socket, dir);
         }
     }
+
+    // Set nonblocking in case of group because group reading/writing functions
+    // are non-blocking only.
+    if (m_group_wrapper)
+        m_blocking_mode = false;
 }
 
 void SrtCommon::AddPoller(SRTSOCKET socket, int modes)
@@ -722,12 +727,19 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
         Verb() << "Setting RCV blocking mode: " << boolalpha << yes << " timeout=" << m_timeout;
         result = srt_setsockopt(sock, 0, SRTO_RCVSYN, &yes, sizeof yes);
         if ( result == -1 )
-            return result;
+        {
+            Verb() << "BLOCKING: failure";
+            abort();
+            //return result;
+        }
 
         if ( m_timeout )
             result = srt_setsockopt(sock, 0, SRTO_RCVTIMEO, &m_timeout, sizeof m_timeout);
         if ( result == -1 )
+        {
+            Verb() << "TIMEOUT: failure";
             return result;
+        }
     }
 
     vector<string> failures;
@@ -742,7 +754,7 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
         }
     }
 
-    return 0;
+    return failures.empty() ? 0 : SRT_ERROR;
 }
 
 int SrtCommon::ConfigurePre(SRTSOCKET sock)
