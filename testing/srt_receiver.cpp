@@ -299,11 +299,16 @@ int SrtReceiver::Receive(char * buffer, size_t buffer_len)
                     const auto read_sock_it = std::find(m_epoll_read_fds.begin(), m_epoll_read_fds.end(), sock);
                     if (read_sock_it != m_epoll_read_fds.end())
                     {
-                        m_read_fifo.erase(sock_it);
                         // Check if there is something to read
                         {
                             const int recv_res = srt_recvmsg2(sock, buffer, buffer_len, nullptr);
                             Verb() << "Trying to read from socket " << sock << " result " << recv_res;
+                            if (recv_res < 0)
+                            {
+                                Verb() << "ERROR: " << srt_getlasterror_str();
+                                continue;
+                            }
+                            m_read_fifo.erase(sock_it);
                             return recv_res;
                         }
                     }
