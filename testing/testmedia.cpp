@@ -493,6 +493,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
     stat = srt_bind(m_listener, psa, sizeof sa);
     if ( stat == SRT_ERROR )
     {
+        LOGP(applog.Error, "CLOSING: srt_bind failed");
         srt_close(m_listener);
         Error(UDT::getlasterror(), "srt_bind");
     }
@@ -501,6 +502,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
     stat = srt_listen(m_listener, backlog);
     if ( stat == SRT_ERROR )
     {
+        LOGP(applog.Error, "CLOSING: srt_listen failed");
         srt_close(m_listener);
         Error(UDT::getlasterror(), "srt_listen");
     }
@@ -546,6 +548,7 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
     int sock = srt_accept(m_listener, (sockaddr*)&scl, &sclen);
     if ( sock == SRT_INVALID_SOCK )
     {
+        LOGP(applog.Error, "CLOSING listener: srt_accept failed");
         srt_close(m_listener);
         m_listener = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "srt_accept");
@@ -560,6 +563,7 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
     int stat = ConfigurePost(sock);
     if ( stat == SRT_ERROR )
     {
+        LOGP(applog.Error, "CLOSING accepted: srt_setsockflag failed");
         srt_close(sock);
         m_listener = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "ConfigurePost");
@@ -1004,6 +1008,7 @@ void SrtCommon::ConnectClient(SRTSOCKET sock, string host, int port)
     int stat = srt_connect(sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
     {
+        LOGP(applog.Error, "CLOSING connector: srt_connect failed");
         srt_close(sock);
         Error(UDT::getlasterror(), "UDT::connect");
     }
@@ -1070,6 +1075,7 @@ void SrtCommon::SetupRendezvous(SRTSOCKET sock, string adapter, int port)
     int stat = srt_bind(sock, plsa, sizeof localsa);
     if ( stat == SRT_ERROR )
     {
+        LOGP(applog.Error, "CLOSING rendezvous: srt_bind failed");
         srt_close(sock);
         Error(UDT::getlasterror(), "srt_bind");
     }
@@ -1138,8 +1144,9 @@ void SrtCommon::UpdateGroupConnections()
         int insock = srt_socket(AF_INET, SOCK_DGRAM, 0);
         if (insock == SRT_INVALID_SOCK || srt_connect(insock, psa, sizeof sa) == SRT_INVALID_SOCK)
         {
+            LOGP(applog.Error, "CLOSING (re)connector: srt_connect failed");
             srt_close(insock);
-            Verb() << "FAILED: ";
+            Verb() << "FAILED: @" << insock;
             continue;
         }
 
@@ -1751,6 +1758,7 @@ RETRY_READING:
 
             // This loops rolls over only broken sockets
             m_group_positions.erase(c.socket);
+            LOGP(applog.Error, "CLOSING group socket: reading failed");
             srt_close(c.socket);
             c.socket = -1;
         }
@@ -2004,26 +2012,40 @@ void SrtTarget::GroupWrite(const bytevector& data)
 
     // XXX Temporary; it should be set to some uniq id in the beginning.
     m_group_wrapper->srcid() = 0xCAFEB1BA;
-    Verb() << "[WRP seq=" << m_group_wrapper->seqno() << " size=" << packet.size() << "] " << VerbNoEOL;
     m_group_wrapper->save(packet);
+    Verb() << "[WRP seq=" << m_group_wrapper->seqno() << " size=" << packet.size() << "] " << VerbNoEOL;
 
     bool ok = false;
 
     for (auto c: m_links)
     {
-        // Send the same payload over all sockets
-        SRT_MSGCTRL mctrl = srt_msgctrl_default;
-        Verb() << "@" << c.socket << " " << VerbNoEOL;
-        c.result = srt_sendmsg2(c.socket, packet.data(), packet.size(), &mctrl);
         c.status = srt_getsockstate(c.socket);
-        if (c.result > 0 && c.status == SRTS_CONNECTED)
+        if (c.status == SRTS_CONNECTED)
         {
-            c.errorcode = SRT_SUCCESS;
-            ok = true;
+            // Send the same payload over all sockets
+            SRT_MSGCTRL mctrl = srt_msgctrl_default;
+            Verb() << "@" << c.socket << "[W] " << VerbNoEOL;
+            c.result = srt_sendmsg2(c.socket, packet.data(), packet.size(), &mctrl);
+            if (c.result > 0 && c.status == SRTS_CONNECTED)
+            {
+                c.errorcode = SRT_SUCCESS;
+                ok = true;
+            }
+            else
+            {
+                c.status = srt_getsockstate(c.socket);
+            }
         }
         else
         {
+            Verb() << "@" << c.socket << "<P> " << VerbNoEOL;
+        }
+
+        if (c.result <= 0 || c.status >= SRTS_BROKEN)
+        {
+            Verb() << "FAILED!" << VerbNoEOL;
             c.errorcode = srt_getlasterror(nullptr);
+            LOGP(applog.Error, "CLOSING group socket: writing failed");
             srt_close(c.socket);
             c.socket = SRT_INVALID_SOCK;
             // The socket will be reconnected soon
