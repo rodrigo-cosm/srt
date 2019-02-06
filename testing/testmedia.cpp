@@ -508,7 +508,6 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
         Error(UDT::getlasterror(), "srt_listen");
     }
 
-    Verb() << " accept... " << VerbNoEOL;
     ::transmit_throw_on_interrupt = true;
 
     if ( !m_blocking_mode )
@@ -2047,6 +2046,7 @@ void SrtTarget::GroupWrite(const bytevector& data)
             {
                 c.errorcode = SRT_SUCCESS;
                 ok = true;
+                Verb() << ". ";
             }
             else
             {
