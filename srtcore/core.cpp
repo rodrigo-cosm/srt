@@ -367,7 +367,10 @@ static bool bool_int_value(const void* optval, int optlen)
 void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
 {
     if (m_bBroken || m_bClosing)
+    {
+        LOGC(mglog.Error, log << "setOpt: " << CONID() << " SOCKET BROKEN/CLOSING");
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
+    }
 
     CGuard cg(m_ConnectionLock);
     CGuard sendguard(m_SendLock);

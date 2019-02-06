@@ -550,7 +550,8 @@ SrtCommon::Connection& SrtCommon::AcceptNewClient()
         m_listener = SRT_INVALID_SOCK;
         Error(UDT::getlasterror(), "srt_accept");
     }
-    Verb() << " connected: " << SockaddrToString((sockaddr*)&scl);
+    Verb() << " connected: " << SockaddrToString((sockaddr*)&scl)
+        << " @" << sock << " STATE:" << SockStatusStr(srt_getsockstate(sock));
 
     ::transmit_throw_on_interrupt = false;
 
