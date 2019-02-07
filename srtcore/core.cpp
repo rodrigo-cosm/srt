@@ -6357,7 +6357,9 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                  pthread_mutex_unlock(&m_RecvDataLock);
              }
              // acknowledge any waiting epolls to read
-             s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_IN, true);
+
+             if (!m_bMessageAPI || m_pRcvBuffer->isRcvDataReady(true))
+                s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_IN, true);
          }
          CGuard::enterCS(m_AckLock);
       }

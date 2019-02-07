@@ -304,15 +304,6 @@ int SrtReceiver::Receive(char * buffer, size_t buffer_len)
                             const int recv_res = srt_recvmsg2(sock, buffer, buffer_len, nullptr);
                             Verb() << "Trying to read from socket " << sock << " result " << recv_res;
 
-                            if (recv_res < 0)
-                            {
-                                const int srt_err = srt_getlasterror(nullptr);
-                                Verb() << "ERROR: " << srt_err << " " << srt_getlasterror_str();
-
-                                // Waiting for end of the message
-                                if (srt_err == SRT_EASYNCRCV)
-                                    continue;
-                            }
                             m_read_fifo.erase(sock_it);
                             return recv_res;
                         }
