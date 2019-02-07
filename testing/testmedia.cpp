@@ -928,9 +928,9 @@ void SrtCommon::OpenGroupClient()
         Error(m_links[0].errorcode, "srt_connect(group, none connected)");
     }
 
-    Verb() << "READY " << nready << " connections: "
-        << DisplayEpollResults(sready.wr(), "[CONN]")
-        << DisplayEpollResults(sready.ex(), "[ERROR]");
+    Verb() << "READY " << nready << " connections: {"
+        << DisplayEpollResults(sready.wr(), "[CONN]") << "} {"
+        << DisplayEpollResults(sready.ex(), "[ERROR]") << "}";
 
     // Configure only those that have connected. Others will have to wait
     // for the opportunity.
@@ -1111,10 +1111,38 @@ SrtCommon::~SrtCommon()
     Close();
 }
 
+void SrtCommon::RefreshGroupStatus()
+{
+    // Update status on all sockets in the group
+    bool connected = false;
+    for (auto& d: m_links)
+    {
+        d.status = srt_getsockstate(d.socket);
+        if (d.status == SRTS_CONNECTED)
+        {
+            connected = true;
+            break;
+        }
+    }
+    if (!connected)
+    {
+        Error("All sockets in the group disconnected");
+    }
+}
+
 void SrtCommon::UpdateGroupConnections()
 {
     if (m_listener_group)
     {
+        // Check if there are any broken links. In listener
+        // mode they reflect a remote connector that has
+        // disappeared, so the link should be deleted from
+        // the container or otherwise it would stay here forever
+        // (new connection will simply add a new item to the container)
+        auto re_end = remove_if(m_links.begin(), m_links.end(),
+                [] (Connection& link) { return link.socket == SRT_INVALID_SOCK; });
+        m_links.erase(re_end, m_links.end());
+
         // Check if a new conenction is pending for accept.
         // If so, accept a new connection.
         // Just check once, without waiting.
@@ -1130,37 +1158,58 @@ void SrtCommon::UpdateGroupConnections()
         return;
     }
 
+    string reason;
+
+    Verb() << "\nXK: " << VerbNoEOL;
+
     int i = 1; // Verb only
     for (auto& n: m_links)
     {
         // Check which nodes are no longer active and activate them.
         if (n.socket != SRT_INVALID_SOCK)
         {
+            n.status = srt_getsockstate(n.socket);
             // We still have a socket, check if running
             if (n.status == SRTS_CONNECTED)
             {
+                Verb() << "@" << n.socket << "[C] " << VerbNoEOL;
                 // This link is working properly, leave it.
                 continue;
             }
+
+            reason = "NOCONN";
 
             if (n.status == SRTS_CONNECTING)
             {
                 // Check if it didn't fail last time
                 if (n.result != SRT_ERROR)
+                {
+                    Verb() << "@" << n.socket << "[P] " << VerbNoEOL;
                     continue;
+                }
+
+                reason = "CONNFAIL";
             }
         }
 
         sockaddr_in sa = CreateAddrInet(n.host, n.port);
         sockaddr* psa = (sockaddr*)&sa;
-        Verb() << "[" << i << "] st=" << SockStatusStr(n.status)
+        Verb() << "\n[" << i << "] @" << n.socket << " st=" << SockStatusStr(n.status)
             << " re=" << n.result << " RECONNECTING to node "
             << n.host << ":" << n.port << " ... " << VerbNoEOL;
         ++i;
         int insock = srt_socket(AF_INET, SOCK_DGRAM, 0);
-        if (insock == SRT_INVALID_SOCK || srt_connect(insock, psa, sizeof sa) == SRT_INVALID_SOCK)
+        if (insock == SRT_INVALID_SOCK)
         {
-            LOGP(applog.Error, "CLOSING (re)connector: srt_connect failed");
+            // Break the whole application when this happens.
+            Error(UDT::getlasterror(), "srt_socket");
+        }
+
+        int stat = ConfigurePre(insock, false);
+        if ( stat == SRT_ERROR || srt_connect(insock, psa, sizeof sa) == SRT_ERROR)
+        {
+            LOGC(applog.Error, log << "CLOSING (re)connector: srt_socket or srt_connect failed:"
+                    << srt_getlasterror_str());
             srt_close(insock);
             Verb() << "FAILED: @" << insock;
             continue;
@@ -1168,6 +1217,7 @@ void SrtCommon::UpdateGroupConnections()
 
         // Have socket, store it into the group socket array.
         n.socket = insock;
+        n.result = 0; // define this as idle state.
     }
 }
 
@@ -1338,22 +1388,7 @@ bytevector SrtSource::GroupRead(size_t chunk)
     set<SRTSOCKET> broken; // Same as sets in epoll
 
 RETRY_READING:
-
-    // Update status on all sockets in the group
-    bool connected = false;
-    for (auto& d: m_links)
-    {
-        d.status = srt_getsockstate(d.socket);
-        if (d.status == SRTS_CONNECTED)
-        {
-            connected = true;
-            break;
-        }
-    }
-    if (!connected)
-    {
-        Error("All sockets in the group disconnected");
-    }
+    RefreshGroupStatus();
 
     if (Verbose::on)
     {
@@ -2011,16 +2046,29 @@ void SrtTarget::Write(const bytevector& data)
 
 void SrtTarget::GroupWrite(const bytevector& data)
 {
-    if ( !m_blocking_mode )
-    {
-        int ready[2];
-        int len = 2;
-        if ( srt_epoll_wait(srt_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) == SRT_ERROR )
-            Error(UDT::getlasterror(), "srt_epoll_wait(srt_epoll)");
-    }
-
     if (!m_group_wrapper)
         Error("Group not configured");
+
+    RefreshGroupStatus();
+
+    SrtPollState sready;
+    for (;;)
+    {
+        int nready = UDT::epoll_swait(srt_epoll, sready, 500);
+        if (nready > 0)
+            break; // continue with reading
+        UpdateGroupConnections();
+    }
+
+    if (Verbose::on)
+    {
+        Verb() << "\n .. RDY: {"
+            << DisplayEpollResults(sready.rd(), "[R]")
+            << DisplayEpollResults(sready.wr(), "[W]")
+            << DisplayEpollResults(sready.ex(), "[E]")
+            << "} " << VerbNoEOL;
+
+    }
 
     bytevector packet;
     m_group_wrapper->payload = data;
@@ -2035,34 +2083,34 @@ void SrtTarget::GroupWrite(const bytevector& data)
 
     for (auto c: m_links)
     {
-        c.status = srt_getsockstate(c.socket);
-        if (c.status == SRTS_CONNECTED)
+        if (!sready.wr().count(c.socket))
         {
-            // Send the same payload over all sockets
-            SRT_MSGCTRL mctrl = srt_msgctrl_default;
-            Verb() << "@" << c.socket << "[W] " << VerbNoEOL;
-            c.result = srt_sendmsg2(c.socket, packet.data(), packet.size(), &mctrl);
-            if (c.result > 0 && c.status == SRTS_CONNECTED)
-            {
-                c.errorcode = SRT_SUCCESS;
-                ok = true;
-                Verb() << ". ";
-            }
-            else
-            {
-                c.status = srt_getsockstate(c.socket);
-            }
+            Verb() << "@" << c.socket << "<P> " << VerbNoEOL;
+            continue; // Not ready to accept packet, skip it.
+        }
+
+        // Send the same payload over all sockets
+        SRT_MSGCTRL mctrl = srt_msgctrl_default;
+        Verb() << "@" << c.socket << "[W] " << VerbNoEOL;
+        c.result = srt_sendmsg2(c.socket, packet.data(), packet.size(), &mctrl);
+        if (c.result > 0)
+        {
+            c.errorcode = SRT_SUCCESS;
+            ok = true;
+            Verb() << "(=" << c.result << ") " << VerbNoEOL;
         }
         else
         {
-            Verb() << "@" << c.socket << "<P> " << VerbNoEOL;
+            c.status = srt_getsockstate(c.socket);
         }
 
-        if (c.result <= 0 || c.status >= SRTS_BROKEN)
+        if (c.result == -1 || c.status >= SRTS_BROKEN)
         {
             Verb() << "FAILED!" << VerbNoEOL;
             c.errorcode = srt_getlasterror(nullptr);
-            LOGP(applog.Error, "CLOSING group socket: writing failed");
+            LOGC(applog.Error, log << "CLOSING group socket: writing failed: " << srt_getlasterror_str()
+                    << " result=" << c.result << " status=" << SockStatusStr(c.status));
+
             srt_close(c.socket);
             c.socket = SRT_INVALID_SOCK;
             // The socket will be reconnected soon

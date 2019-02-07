@@ -79,7 +79,11 @@ public:
         m_iMinNakInterval_us = 20000;   //Minimum NAK Report Period (usec)
         m_iNakReportAccel = 2;       //Default NAK Report Period (RTT) accelerator
 
-        HLOGC(mglog.Debug, log << "Creating LiveSmoother: bw=" << m_llSndMaxBW << " avgplsize=" << m_iSndAvgPayloadSize);
+        HLOGC(mglog.Debug, log << "Creating LiveSmoother: bw=" << m_llSndMaxBW
+                << " avgplsize=" << m_iSndAvgPayloadSize
+                << " (by opt=" << parent->OPT_PayloadSize()
+                << " max=" << parent->maxPayloadSize() << ")"
+                );
 
         updatePktSndPeriod();
 
