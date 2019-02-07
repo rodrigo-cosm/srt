@@ -410,6 +410,10 @@ private:
 
 class CRcvQueue
 {
+#if ENABLE_LOGGING
+    static int counter;
+#endif
+
 friend class CUDT;
 friend class CUDTUnited;
 

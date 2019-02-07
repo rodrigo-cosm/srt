@@ -1050,6 +1050,10 @@ CRcvQueue::~CRcvQueue()
     }
 }
 
+#if ENABLE_LOGGING
+int CRcvQueue::counter = 0;
+#endif
+
 void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel* cc, CTimer* t)
 {
     m_iPayloadSize = payload;
@@ -1065,7 +1069,13 @@ void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel* c
     m_pRcvUList = new CRcvUList;
     m_pRendezvousQueue = new CRendezvousQueue;
 
+#if ENABLE_LOGGING
+    ++counter;
+    string thrname = "SRT:RcvQ:w" + Sprint(counter);
+    ThreadName tn(thrname.c_str());
+#else
     ThreadName tn("SRT:RcvQ:worker");
+#endif
     if (0 != pthread_create(&m_WorkerThread, NULL, CRcvQueue::worker, this))
     {
 		m_WorkerThread = pthread_t();
