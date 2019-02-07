@@ -836,8 +836,6 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, int events,
       }
       else
       {
-          HLOGC(mglog.Debug, log << "epoll/update: EID:" << *i
-                  << " TYPE:" << DirectionName(SRT_EPOLL_OPT(events)) << " STATE:" << (enable?"ON":"OFF"));
           update_epoll_sets<SRT_EPOLL_IN >(*i, uid, p->second, events, enable);
           update_epoll_sets<SRT_EPOLL_OUT>(*i, uid, p->second, events, enable);
           update_epoll_sets<SRT_EPOLL_ERR>(*i, uid, p->second, events, enable);
