@@ -1,3 +1,7 @@
+#ifndef _DEBUG
+#define NDEBUG
+#endif
+#include <assert.h>
 #include <iostream>
 #include <iterator>
 #include "apputil.hpp"  // CreateAddrInet
@@ -53,7 +57,6 @@ void SrtReceiver::AcceptingThread()
             const SRTSOCKET sock = AcceptNewClient();
             if (sock != SRT_INVALID_SOCK)
             {
-                m_accepted_sockets.push_back(sock);
                 const int events = SRT_EPOLL_IN | SRT_EPOLL_ERR;
                 srt_epoll_add_usock(m_epoll_receive, sock, &events);
             }
@@ -77,7 +80,6 @@ SRTSOCKET SrtReceiver::AcceptNewClient()
     }
 
     Verb() << " connected " << socket;
-    ::transmit_throw_on_interrupt = false;
 
     // ConfigurePre is done on bindsock, so any possible Pre flags
     // are DERIVED by sock. ConfigurePost is done exclusively on sock.
@@ -186,7 +188,7 @@ int SrtReceiver::Listen(int max_conn)
 }
 
 
-void SrtReceiver::UpdateReadFIFO(int rnum, int wnum)
+void SrtReceiver::UpdateReadFIFO(const int rnum, const int wnum)
 {
     if (rnum == 0 && wnum == 0)
     {
@@ -196,10 +198,22 @@ void SrtReceiver::UpdateReadFIFO(int rnum, int wnum)
 
     if (m_read_fifo.empty())
     {
-        // Add sockets to FIFO
         m_read_fifo.insert(m_read_fifo.end(), m_epoll_read_fds.begin(), next(m_epoll_read_fds.begin(), rnum));
+        return;
+    }
+
+    for (auto sock_id : m_epoll_read_fds)
+    {
+        if (sock_id == SRT_INVALID_SOCK)
+            break;
+
+        if (m_read_fifo.end() != std::find(m_read_fifo.begin(), m_read_fifo.end(), sock_id))
+            continue;
+
+        m_read_fifo.push_back(sock_id);
     }
 }
+
 
 
 int SrtReceiver::Receive(char * buffer, size_t buffer_len)
@@ -217,103 +231,57 @@ int SrtReceiver::Receive(char * buffer, size_t buffer_len)
             m_epoll_write_fds.data(), &wnum,
             wait_ms, 0, 0, 0, 0);
 
-        if (epoll_res > 0)
+        if (epoll_res <= 0)    // Wait timeout
+            continue;
+
+        assert(rnum > 0);
+        assert(wnum <= rnum);
+
+        if (Verbose::on)
         {
-            if (Verbose::on)
+            // Verbose info:
+            Verb() << "Received epoll_res " << epoll_res;
+            Verb() << "   to read  " << rnum << ": " << VerbNoEOL;
+            copy(m_epoll_read_fds.begin(), next(m_epoll_read_fds.begin(), rnum),
+                ostream_iterator<int>(*Verbose::cverb, ", "));
+            Verb();
+            Verb() << "   to write " << wnum << ": " << VerbNoEOL;
+            copy(m_epoll_write_fds.begin(), next(m_epoll_write_fds.begin(), wnum),
+                ostream_iterator<int>(*Verbose::cverb, ", "));
+            Verb();
+        }
+
+        // If this is tru, it is really unexpected.
+        if (rnum <= 0 && wnum <= 0)
+            return -2;
+
+        // Update m_read_fifo based on sockets in m_epoll_read_fds
+        UpdateReadFIFO(rnum, wnum);
+
+        auto sock_it = m_read_fifo.begin();
+        while (sock_it != m_read_fifo.end())
+        {
+            const SRTSOCKET sock = *sock_it;
+            m_read_fifo.erase(sock_it++);
+
+            const int recv_res = srt_recvmsg2(sock, buffer, (int)buffer_len, nullptr);
+            Verb() << "Read from socket " << sock << " resulted with " << recv_res;
+
+            if (recv_res > 0)
+                return recv_res;
+
+            const int srt_err = srt_getlasterror(nullptr);
+            if (srt_err == SRT_ECONNLOST)
             {
-                // Verbose info:
-                Verb() << "Received epoll_res " << epoll_res;
-                Verb() << "   to read  " << rnum << ": " << VerbNoEOL;
-                copy(m_epoll_read_fds.begin(), next(m_epoll_read_fds.begin(), rnum),
-                    ostream_iterator<int>(*Verbose::cverb, ", "));
-                Verb();
-                Verb() << "   to write " << wnum << ": " << VerbNoEOL;
-                copy(m_epoll_write_fds.begin(), next(m_epoll_write_fds.begin(), wnum),
-                    ostream_iterator<int>(*Verbose::cverb, ", "));
-                Verb();
+                Verb() << "Socket " << sock << " lost connection. Remove from epoll.";
+                srt_close(sock);
+                continue;
             }
 
-            UpdateReadFIFO(rnum, wnum);
-
-            auto prev_sock_it = m_read_fifo.end();
-            for (auto sock_it = m_read_fifo.begin(); sock_it != m_read_fifo.end(); ++sock_it)
-            {
-                if (prev_sock_it != m_read_fifo.end())
-                    m_read_fifo.erase(prev_sock_it);
-                prev_sock_it = sock_it;
-
-                const SRTSOCKET sock = *sock_it;
-                if (wnum > 0)
-                {
-                    const auto write_sock_it = std::find(m_epoll_write_fds.begin(), m_epoll_write_fds.end(), sock);
-                    if (write_sock_it != m_epoll_write_fds.end())
-                    {
-                        // Check if there is something to read
-                        {
-                            const int recv_res = srt_recvmsg2(sock, buffer, buffer_len, nullptr);
-                            Verb() << "Trying to read from socket " << sock << " result " << recv_res;
-                            if (recv_res > 0)
-                            {
-                                m_read_fifo.erase(sock_it);
-                                return recv_res;
-                            }
-                            else
-                            {
-                                const int srt_err = srt_getlasterror(nullptr);
-                                if (srt_err == SRT_ECONNLOST)
-                                {
-                                    Verb() << "Socket " << sock << " list connection. Remove from epoll.";
-                                    srt_close(sock);
-                                    continue;
-                                }
-                            }
-                        }
-
-                        // Nothing read. Probably just close the socket.
-                        // This should have been handled with SRT_ECONNLOST,
-                        // so will probably be simplified further on.
-                        const SRT_SOCKSTATUS status = srt_getsockstate(sock);
-
-                        switch (status)
-                        {
-                        case SRTS_NONEXIST:
-                        case SRTS_CLOSED:
-                            Verb() << "Unexpected socket " << sock << " status " << status << ". Remove from epoll.";
-                            srt_epoll_remove_usock(m_epoll_receive, sock);
-                            continue;
-                            break;
-                        case SRTS_BROKEN:
-                            Verb() << "Socket " << sock << " status " << status << " is closing. Remove from epoll.";
-                            srt_close(sock);
-                            continue;
-                            break;
-                        default:
-                            Verb() << "Socket " << sock << " state " << status << " (don'tknow what to do).";
-                            break;
-                        }
-                    }
-                }
-
-                if (rnum > 0)
-                {
-                    const auto read_sock_it = std::find(m_epoll_read_fds.begin(), m_epoll_read_fds.end(), sock);
-                    if (read_sock_it != m_epoll_read_fds.end())
-                    {
-                        // Check if there is something to read
-                        {
-                            const int recv_res = srt_recvmsg2(sock, buffer, buffer_len, nullptr);
-                            Verb() << "Trying to read from socket " << sock << " result " << recv_res;
-
-                            m_read_fifo.erase(sock_it);
-                            return recv_res;
-                        }
-                    }
-                }
-            }
-
-            if (prev_sock_it != m_read_fifo.end())
-                m_read_fifo.erase(prev_sock_it);
+            // An error happened. Notify the caller of the function.
+            return recv_res;
         }
     }
+
     return 0;
 }

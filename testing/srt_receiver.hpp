@@ -20,6 +20,10 @@ public:
 
     int Listen(int max_conn);
 
+    // Receive data
+    // return     -2 unexpected error
+    //            -1 SRT error
+    //
     int Receive(char *buffer, size_t buffer_len);
 
 
@@ -35,8 +39,7 @@ private:
 
 private:    // Reading manipulation helper functions
 
-    void UpdateReadFIFO(int rnum, int wnum);
-
+    void UpdateReadFIFO(const int rnum, const int wnum);
 
 private:
 
@@ -44,7 +47,6 @@ private:
 
     std::vector<SRTSOCKET>    m_epoll_read_fds;
     std::vector<SRTSOCKET>    m_epoll_write_fds;
-    std::list<SRTSOCKET>      m_accepted_sockets;
     SRTSOCKET                 m_bindsock      = SRT_INVALID_SOCK;
     int                       m_epoll_accept  = -1;
     int                       m_epoll_receive = -1;
