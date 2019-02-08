@@ -12,8 +12,6 @@ static unique_ptr<SrtModel>    s_snd_srt_model;
 
 static list<SRTSOCKET> s_rcv_sockets;
 static list<SRTSOCKET> s_snd_socket;
-static int s_rcv_epoll_id;
-
 
 
 int srt_msgn_connect(const char *uri, size_t message_size)
@@ -37,7 +35,7 @@ int srt_msgn_connect(const char *uri, size_t message_size)
         ut["sndbuf"] = to_string(3 * (message_size * 1472 / 1456 + 1472));
     }
 
-    s_snd_srt_model = std::make_unique<SrtModel>(SrtModel(ut.host(), ut.portno(), ut.parameters()));
+    s_snd_srt_model = unique_ptr<SrtModel>(new SrtModel(ut.host(), ut.portno(), ut.parameters()));
 
     try
     {
@@ -143,7 +141,7 @@ int srt_msgn_destroy()
                 break;
 
             if (blocks)
-                this_thread::sleep_for(5ms);
+                this_thread::sleep_for(chrono::milliseconds(5));
         } while (blocks != 0);
     }
     s_snd_srt_model.reset();

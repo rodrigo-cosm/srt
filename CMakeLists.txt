@@ -784,7 +784,7 @@ if ( ENABLE_CXX11 )
 
 endif()
 
-if (ENABLE_MESSAGING_LIB)
+if (ENABLE_MESSAGING_LIB AND ENABLE_CXX11)
 
 	add_library(srt_messaging SHARED
 		${CMAKE_SOURCE_DIR}/testing/srt_receiver.hpp
@@ -802,6 +802,7 @@ if (ENABLE_MESSAGING_LIB)
 		${CMAKE_SOURCE_DIR}/apps/verbose.hpp
 	)
 
+	target_compile_options(srt_messaging PRIVATE ${CFLAGS_CXX_STANDARD})
 	target_include_directories(srt_messaging PRIVATE common)
 	target_include_directories(srt_messaging PRIVATE apps)
 	target_link_libraries(srt_messaging ${srt_link_library})

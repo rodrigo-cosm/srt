@@ -265,7 +265,7 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
 
 void SrtModel::PrepareListener(int backlog)
 {
-    SrtCommon::PrepareListener(m_adapter, m_port, 5);
+    SrtCommon::PrepareListener(m_adapter, m_port, backlog);
 }
 
 

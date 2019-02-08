@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <string.h>
 #include <vector>
 #include <iostream>
 #include <thread>
@@ -30,7 +32,7 @@ void test_messaging_localhost()
     auto rcv_thread = std::thread([&message_rcvd, &rcv_error, &message_size]
     {
         const int recv_res = srt_msgn_recv(message_rcvd.data(), message_rcvd.size());
-        if (recv_res != message_size)
+        if (recv_res != (int) message_size)
         {
             cerr << "ERROR: Receiving " << message_size << ", received " << recv_res << "\n";
             cerr << srt_msgn_getlasterror_str();
@@ -50,7 +52,7 @@ void test_messaging_localhost()
     }
 
     const int sent_res = srt_msgn_send(message_sent.data(), message_sent.size());
-    if (sent_res != message_size)
+    if (sent_res != (int) message_size)
     {
         cerr << "ERROR: Sending " << message_size << ", sent " << sent_res << "\n";
         return;
@@ -98,7 +100,7 @@ void receive_message(const char *uri)
 
     vector<char> message_rcvd(message_size);
 
-    this_thread::sleep_for(5s);
+    this_thread::sleep_for(chrono::seconds(5));
 
     try
     {
@@ -145,7 +147,7 @@ void send_message(const char *uri, const char* message, size_t length)
     }
 
     int sent_res = srt_msgn_send(message, length);
-    if (sent_res != length)
+    if (sent_res != (int) length)
     {
         cerr << "ERROR: Sending message " << length << ". Result: " << sent_res << "\n";
         cerr << srt_msgn_getlasterror_str();
@@ -157,7 +159,7 @@ void send_message(const char *uri, const char* message, size_t length)
     cout << message << endl;
 
     sent_res = srt_msgn_send(message, length);
-    if (sent_res != length)
+    if (sent_res != (int) length)
     {
         cerr << "ERROR: Sending message " << length << ". Result: " << sent_res << "\n";
         cerr << srt_msgn_getlasterror_str();
@@ -166,7 +168,7 @@ void send_message(const char *uri, const char* message, size_t length)
     }
 
     sent_res = srt_msgn_send(message, length);
-    if (sent_res != length)
+    if (sent_res != (int) length)
     {
         cerr << "ERROR: Sending message " << length << ". Result: " << sent_res << "\n";
         cerr << srt_msgn_getlasterror_str();
@@ -189,31 +191,37 @@ void print_help()
 }
 
 
-void main(int argc, char** argv)
+int main(int argc, char** argv)
 {
     if (argc == 1)
-        return test_messaging_localhost();
+    {
+        test_messaging_localhost();
+        return 0;
+    }
 
     // The message part can contain 'help' substring,
     // but it is expected to be in argv[2].
     // So just search for a substring.
     if (nullptr != strstr(argv[1], "help"))
-        return print_help();
+    {
+        print_help();
+        return 0;
+    }
 
     if (argc > 3)
     {
         print_help();
-        return;
+        return 0;
     }
 
     signal(SIGINT, OnINT_ForceExit);
     signal(SIGTERM, OnINT_ForceExit);
 
     if (argc == 2)
-        return receive_message(argv[1]);
+        receive_message(argv[1]);
+    else
+        send_message(argv[1], argv[2], strnlen(argv[2], s_message_size));
 
-    return send_message(argv[1], argv[2], strnlen(argv[2], s_message_size));
-
-    return;
+    return 0;
 }
 
