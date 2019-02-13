@@ -116,8 +116,11 @@ void receive_message(const char *uri)
                 return;
             }
 
-            cout << "RECEIVED MESSAGE:\n";
-            cout << string(message_rcvd.data(), recv_res).c_str() << endl;
+            if (recv_res < 50)
+            {
+                cout << "RECEIVED MESSAGE:\n";
+                cout << string(message_rcvd.data(), recv_res).c_str() << endl;
+            }
 
             if (int_state)
             {
