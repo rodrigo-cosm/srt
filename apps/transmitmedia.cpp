@@ -57,7 +57,7 @@ public:
             throw std::runtime_error(path + ": Can't open file for reading");
     }
 
-    bool Read(size_t chunk, bytevector& data) override
+    bool Read(size_t chunk, bytevector& data, ostream &out_stats = cout) override
     {
         if (data.size() < chunk)
             data.resize(chunk);
@@ -93,7 +93,7 @@ public:
         return !(ofile.bad());
     }
 
-    int Write(const char* data, size_t size) override
+    int Write(const char* data, size_t size, ostream &out_stats = cout) override
     {
         ofile.write(data, size);
         return !(ofile.bad()) ? size : false;
@@ -113,7 +113,7 @@ template <class Iface>
 Iface* CreateFile(const string& name) { return new typename File<Iface>::type (name); }
 
 
-static void PrintSrtStats(int sid, const CBytePerfMon& mon)
+static void PrintSrtStats(int sid, const CBytePerfMon& mon, ostream &out)
 {
     std::ostringstream output;
 
@@ -209,7 +209,7 @@ static void PrintSrtStats(int sid, const CBytePerfMon& mon)
         output << "BUFFERLEFT:  SND: " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
     }
 
-    cerr << output.str() << std::flush;
+    out << output.str() << std::flush;
 }
 
 static void PrintSrtBandwidth(double mbpsBandwidth)
@@ -626,7 +626,7 @@ SrtSource::SrtSource(string host, int port, const map<string,string>& par)
     hostport_copy = os.str();
 }
 
-bool SrtSource::Read(size_t chunk, bytevector& data)
+bool SrtSource::Read(size_t chunk, bytevector& data, ostream &out_stats)
 {
     static unsigned long counter = 1;
 
@@ -669,7 +669,7 @@ bool SrtSource::Read(size_t chunk, bytevector& data)
     }
     if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
     {
-        PrintSrtStats(m_sock, perf);
+        PrintSrtStats(m_sock, perf, out_stats);
         clear_stats = !transmit_total_stats;
     }
 
@@ -696,7 +696,7 @@ int SrtTarget::ConfigurePre(SRTSOCKET sock)
     return 0;
 }
 
-int SrtTarget::Write(const char* data, size_t size)
+int SrtTarget::Write(const char* data, size_t size, ostream &out_stats)
 {
     static unsigned long counter = 1;
 
@@ -715,7 +715,7 @@ int SrtTarget::Write(const char* data, size_t size)
     }
     if (transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
     {
-        PrintSrtStats(m_sock, perf);
+        PrintSrtStats(m_sock, perf, out_stats);
         clear_stats = !transmit_total_stats;
     }
 
@@ -829,7 +829,7 @@ public:
 #endif
     }
 
-    bool Read(size_t chunk, bytevector& data) override
+    bool Read(size_t chunk, bytevector& data, ostream &out_stats = cout) override
     {
         if (data.size() < chunk)
             data.resize(chunk);
@@ -868,7 +868,7 @@ public:
 #endif
     }
 
-    int Write(const char* data, size_t len) override
+    int Write(const char* data, size_t len, ostream &out_stats = cout) override
     {
         cout.write(data, len);
         return len;
@@ -1098,7 +1098,7 @@ public:
         eof = false;
     }
 
-    bool Read(size_t chunk, bytevector& data) override
+    bool Read(size_t chunk, bytevector& data, ostream &out_stats = cout) override
     {
         if (data.size() < chunk)
             data.resize(chunk);
@@ -1135,7 +1135,7 @@ public:
         Setup(host, port, attr);
     }
 
-    int Write(const char* data, size_t len) override
+    int Write(const char* data, size_t len, ostream &out_stats = cout) override
     {
         int stat = sendto(m_sock, data, len, 0, (sockaddr*)&sadr, sizeof sadr);
         if ( stat == -1 )

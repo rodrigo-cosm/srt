@@ -41,7 +41,7 @@ public:
 class Source: public Location
 {
 public:
-    virtual bool Read(size_t chunk, bytevector& data) = 0;
+    virtual bool Read(size_t chunk, bytevector& data, std::ostream &out_stats = std::cout) = 0;
     virtual bool IsOpen() = 0;
     virtual bool End() = 0;
     static std::unique_ptr<Source> Create(const std::string& url);
@@ -64,7 +64,7 @@ public:
 class Target: public Location
 {
 public:
-    virtual int Write(const char* data, size_t size) = 0;
+    virtual int Write(const char* data, size_t size, std::ostream &out_stats = std::cout) = 0;
     virtual bool Write(const bytevector& portion) = 0;
     virtual bool IsOpen() = 0;
     virtual bool Broken() = 0;
