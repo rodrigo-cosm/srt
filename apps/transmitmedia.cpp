@@ -40,7 +40,10 @@ bool clear_stats = false;
 unsigned long transmit_bw_report = 0;
 unsigned long transmit_stats_report = 0;
 unsigned long transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
-bool printformat_json = false;
+
+ PrintFormat printformat = PRINT_FORMAT_2COLS;
+ bool first_line_printed = false;
+
 
 class FileSource: public Source
 {
@@ -110,12 +113,11 @@ template <class Iface>
 Iface* CreateFile(const string& name) { return new typename File<Iface>::type (name); }
 
 
-template <class PerfMonType>
-static void PrintSrtStats(int sid, const PerfMonType& mon)
+static void PrintSrtStats(int sid, const CBytePerfMon& mon)
 {
     std::ostringstream output;
 
-    if (printformat_json)
+    if (printformat == PRINT_FORMAT_JSON)
     {
         output << "{";
         output << "\"sid\":" << sid << ",";
@@ -152,6 +154,46 @@ static void PrintSrtStats(int sid, const PerfMonType& mon)
         output << "}";
         output << "}" << endl;
     }
+    else if (printformat == PRINT_FORMAT_CSV)
+    {
+        if (!first_line_printed)
+        {
+            output << "Time,SocketID,pktFlowWindow,pktCongestionWindow,pktFlightSize,";
+            output << "msRTT,mbpsBandwidth,mbpsMaxBW,pktSent,pktSndLoss,pktSndDrop,";
+            output << "pktRetrans,byteSent,byteSndDrop,mbpsSendRate,usPktSndPeriod,";
+            output << "pktRecv,pktRcvLoss,pktRcvDrop,pktRcvRetrans,pktRcvBelated,";
+            output << "byteRecv,byteRcvLoss,byteRcvDrop,mbpsRecvRate";
+            output << endl;
+            first_line_printed = true;
+        }
+
+        output << mon.msTimeStamp << ",";
+        output << sid << ",";
+        output << mon.pktFlowWindow << ",";
+        output << mon.pktCongestionWindow << ",";
+        output << mon.pktFlightSize << ",";
+        output << mon.msRTT << ",";
+        output << mon.mbpsBandwidth << ",";
+        output << mon.mbpsMaxBW << ",";
+        output << mon.pktSent << ",";
+        output << mon.pktSndLoss << ",";
+        output << mon.pktSndDrop << ",";
+        output << mon.pktRetrans << ",";
+        output << mon.byteSent << ",";
+        output << mon.byteSndDrop << ",";
+        output << mon.mbpsSendRate << ",";
+        output << mon.usPktSndPeriod << ",";
+        output << mon.pktRecv << ",";
+        output << mon.pktRcvLoss << ",";
+        output << mon.pktRcvDrop << ",";
+        output << mon.pktRcvRetrans << ",";
+        output << mon.pktRcvBelated << ",";
+        output << mon.byteRecv << ",";
+        output << mon.byteRcvLoss << ",";
+        output << mon.byteRcvDrop << ",";
+        output << mon.mbpsRecvRate;
+        output << endl;
+    }
     else
     {
         output << "======= SRT STATS: sid=" << sid << endl;
@@ -174,7 +216,7 @@ static void PrintSrtBandwidth(double mbpsBandwidth)
 {
     std::ostringstream output;
 
-    if (printformat_json) {
+    if (printformat == PRINT_FORMAT_JSON) {
         output << "{\"bandwidth\":" << mbpsBandwidth << '}' << endl;
     } else {
         output << "+++/+++SRT BANDWIDTH: " << mbpsBandwidth << endl;

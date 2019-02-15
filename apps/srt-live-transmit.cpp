@@ -210,10 +210,14 @@ int main( int argc, char** argv )
     transmit_total_stats = Option("no", "f", "fullstats") != "no";
     
     // Print format
-    string pf = Option("default", "pf", "printformat");
+    const string pf = Option("default", "pf", "printformat");
     if (pf == "json")
     {
-        printformat_json = true;
+        printformat = PRINT_FORMAT_JSON;
+    }
+    if (pf == "csv")
+    {
+        printformat = PRINT_FORMAT_CSV;
     }
     else if (pf != "default")
     {
