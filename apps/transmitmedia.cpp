@@ -162,10 +162,13 @@ static void PrintSrtStats(int sid, const CBytePerfMon& mon, ostream &out)
             output << "msRTT,mbpsBandwidth,mbpsMaxBW,pktSent,pktSndLoss,pktSndDrop,";
             output << "pktRetrans,byteSent,byteSndDrop,mbpsSendRate,usPktSndPeriod,";
             output << "pktRecv,pktRcvLoss,pktRcvDrop,pktRcvRetrans,pktRcvBelated,";
-            output << "byteRecv,byteRcvLoss,byteRcvDrop,mbpsRecvRate";
+            output << "byteRecv,byteRcvLoss,byteRcvDrop,mbpsRecvRate,RCVLATENCYms";
             output << endl;
             first_line_printed = true;
         }
+        int rcv_latency = 0;
+        int int_len = sizeof rcv_latency;
+        srt_getsockopt(sid, 0, SRTO_RCVLATENCY, &rcv_latency, &int_len);
 
         output << mon.msTimeStamp << ",";
         output << sid << ",";
@@ -191,7 +194,8 @@ static void PrintSrtStats(int sid, const CBytePerfMon& mon, ostream &out)
         output << mon.byteRecv << ",";
         output << mon.byteRcvLoss << ",";
         output << mon.byteRcvDrop << ",";
-        output << mon.mbpsRecvRate;
+        output << mon.mbpsRecvRate << ",";
+        output << rcv_latency;
         output << endl;
     }
     else
