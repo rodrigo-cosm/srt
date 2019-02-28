@@ -203,6 +203,7 @@ const SocketOption srt_options [] {
     { "fc", 0, SRTO_FC, SocketOption::PRE, SocketOption::INT, nullptr},
     { "sndbuf", 0, SRTO_SNDBUF, SocketOption::PRE, SocketOption::INT, nullptr},
     { "rcvbuf", 0, SRTO_RCVBUF, SocketOption::PRE, SocketOption::INT, nullptr},
+    //{ "linger", 0, SRTO_LINGER, SocketOption::PRE, SocketOption::INT, nullptr},
     { "ipttl", 0, SRTO_IPTTL, SocketOption::PRE, SocketOption::INT, nullptr},
     { "iptos", 0, SRTO_IPTOS, SocketOption::PRE, SocketOption::INT, nullptr},
     { "inputbw", 0, SRTO_INPUTBW, SocketOption::POST, SocketOption::INT64, nullptr},
