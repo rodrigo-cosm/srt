@@ -76,7 +76,7 @@ int SocketOption::setso<SocketOption::SYSTEM>(int socket, int proto, int sym, co
 }
 
 template<> inline
-inline bool SocketOption::extract<SocketOption::STRING>(std::string value, OptionValue& o) const
+bool SocketOption::extract<SocketOption::STRING>(std::string value, OptionValue& o) const
 {
     o.s = value;
     o.value = o.s.data();
@@ -84,8 +84,8 @@ inline bool SocketOption::extract<SocketOption::STRING>(std::string value, Optio
     return true;
 }
 
-template<>
-inline bool SocketOption::extract<SocketOption::INT>(std::string value, OptionValue& o) const
+template<> inline
+bool SocketOption::extract<SocketOption::INT>(std::string value, OptionValue& o) const
 {
     try
     {
@@ -101,8 +101,8 @@ inline bool SocketOption::extract<SocketOption::INT>(std::string value, OptionVa
     return false;
 }
 
-template<>
-inline bool SocketOption::extract<SocketOption::INT64>(std::string value, OptionValue& o) const
+template<> inline
+bool SocketOption::extract<SocketOption::INT64>(std::string value, OptionValue& o) const
 {
     try
     {
@@ -119,8 +119,8 @@ inline bool SocketOption::extract<SocketOption::INT64>(std::string value, Option
     return false;
 }
 
-template<>
-inline bool SocketOption::extract<SocketOption::BOOL>(std::string value, OptionValue& o) const
+template<> inline
+bool SocketOption::extract<SocketOption::BOOL>(std::string value, OptionValue& o) const
 {
     bool val;
     if ( false_names.count(value) )
@@ -136,8 +136,8 @@ inline bool SocketOption::extract<SocketOption::BOOL>(std::string value, OptionV
     return true;
 }
 
-template<>
-inline bool SocketOption::extract<SocketOption::ENUM>(std::string value, OptionValue& o) const
+template<> inline
+bool SocketOption::extract<SocketOption::ENUM>(std::string value, OptionValue& o) const
 {
     if (valmap)
     {
