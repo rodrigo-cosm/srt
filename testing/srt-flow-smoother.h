@@ -6,6 +6,8 @@
 #include <cmath>
 #include <map>
 
+using namespace srt_logging;
+
 class FlowSmoother: public SmootherBase
 {
     // Fields from CUDTCC
@@ -419,7 +421,7 @@ private:
         }
     }
 
-    void setCooldown(bool spike, const char* hdr)
+    void setCooldown(bool spike, const char* hdr SRT_ATR_UNUSED)
     {
         // If we have reached the top window, set the speed
         // to the receiver speed, then keep it for the next 16 probes.
@@ -567,7 +569,7 @@ private:
         uint64_t ack_period = currtime - m_LastAckTime;
         if (ack_period == 0)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: IPE: impossible same-time ACK as previous @ " << logging::FormatTime(m_LastAckTime));
+            HLOGC(mglog.Debug, log << "FlowSmoother: IPE: impossible same-time ACK as previous @ " << FormatTime(m_LastAckTime));
             // Some mistake, would make it div/0. Ignore the event.
             return;
         }
@@ -1189,7 +1191,7 @@ private:
         // Analyze the ack-uack rate
         pair<size_t, size_t> ack_extremum;
         int ack_median, ack_variance;
-        size_t ack_extrval;
+        size_t ack_extrval = 0;
         HLOGC(mglog.Debug, log << "FlowSmoother: Analyzing ACK RATE tendency");
         int ack_tend = arrayTendency(ackavg, &ack_extremum, &ack_extrval, &ack_median, &ack_variance);
 

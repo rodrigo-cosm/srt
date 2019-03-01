@@ -213,7 +213,7 @@ int srt_epoll_add_ssock(int eid, SYSSOCKET s, const int * events)
 	} else {
         flag = SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR;
     }
-#elif defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
+#elif defined(BSD) || defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
     if (events) {
         flag = *events;
 	} else {
@@ -253,7 +253,7 @@ int srt_epoll_update_ssock(int eid, SYSSOCKET s, const int * events)
 	} else {
         flag = SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR;
     }
-#elif defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
+#elif defined(BSD) || defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
     if (events) {
         flag = *events;
 	} else {
@@ -284,17 +284,17 @@ int srt_epoll_release(int eid) { return CUDT::epoll_release(eid); }
 
 void srt_setloglevel(int ll)
 {
-    UDT::setloglevel(logging::LogLevel::type(ll));
+    UDT::setloglevel(srt_logging::LogLevel::type(ll));
 }
 
 void srt_addlogfa(int fa)
 {
-    UDT::addlogfa(logging::LogFA(fa));
+    UDT::addlogfa(srt_logging::LogFA(fa));
 }
 
 void srt_dellogfa(int fa)
 {
-    UDT::dellogfa(logging::LogFA(fa));
+    UDT::dellogfa(srt_logging::LogFA(fa));
 }
 
 void srt_resetlogfa(const int* fara, size_t fara_size)

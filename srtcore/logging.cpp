@@ -20,7 +20,7 @@ written by
 using namespace std;
 
 
-namespace logging
+namespace srt_logging
 {
 
 // Note: advise() and prevent() functions are being called
@@ -81,6 +81,7 @@ void LogDispatcher::SendLogLine(const char* file, int line, const std::string& a
     else if ( src_config->log_stream )
     {
         (*src_config->log_stream) << msg;
+        (*src_config->log_stream).flush();
     }
     src_config->unlock();
 }
@@ -109,7 +110,7 @@ std::string FormatTime(uint64_t time)
 // Some logging imps
 #if ENABLE_LOGGING
 
-logging::LogDispatcher::Proxy::Proxy(LogDispatcher& guy) : that(guy), that_enabled(that.CheckEnabled())
+LogDispatcher::Proxy::Proxy(LogDispatcher& guy) : that(guy), that_enabled(that.CheckEnabled())
 {
 	if (that_enabled)
 	{
@@ -121,12 +122,12 @@ logging::LogDispatcher::Proxy::Proxy(LogDispatcher& guy) : that(guy), that_enabl
 	}
 }
 
-logging::LogDispatcher::Proxy logging::LogDispatcher::operator()()
+LogDispatcher::Proxy LogDispatcher::operator()()
 {
 	return Proxy(*this);
 }
 
-void logging::LogDispatcher::CreateLogLinePrefix(std::ostringstream& serr)
+void LogDispatcher::CreateLogLinePrefix(std::ostringstream& serr)
 {
     using namespace std;
 
@@ -172,7 +173,7 @@ void logging::LogDispatcher::CreateLogLinePrefix(std::ostringstream& serr)
     }
 }
 
-std::string logging::LogDispatcher::Proxy::ExtractName(std::string pretty_function)
+std::string LogDispatcher::Proxy::ExtractName(std::string pretty_function)
 {
     if ( pretty_function == "" )
         return "";

@@ -17,7 +17,7 @@
 #include <vector>
 #include "../srtcore/srt.h" // Devel path
 
-#ifdef WIN32
+#ifdef _WIN32
 #include "winsock2.h"
 #endif
 
@@ -216,6 +216,7 @@ const SocketOption srt_options [] {
     { "oheadbw", 0, SRTO_OHEADBW, SocketOption::POST, SocketOption::INT, nullptr},
     { "latency", 0, SRTO_LATENCY, SocketOption::PRE, SocketOption::INT, nullptr},
     { "tlpktdrop", 0, SRTO_TLPKTDROP, SocketOption::PRE, SocketOption::BOOL, nullptr},
+    { "snddropdelay", 0, SRTO_SNDDROPDELAY, SocketOption::POST, SocketOption::INT, nullptr},
     { "nakreport", 0, SRTO_NAKREPORT, SocketOption::PRE, SocketOption::BOOL, nullptr},
     { "conntimeo", 0, SRTO_CONNTIMEO, SocketOption::PRE, SocketOption::INT, nullptr},
     { "lossmaxttl", 0, SRTO_LOSSMAXTTL, SocketOption::PRE, SocketOption::INT, nullptr},
@@ -227,7 +228,8 @@ const SocketOption srt_options [] {
     { "messageapi", 0, SRTO_MESSAGEAPI, SocketOption::PRE, SocketOption::BOOL, nullptr},
     { "payloadsize", 0, SRTO_PAYLOADSIZE, SocketOption::PRE, SocketOption::INT, nullptr},
     { "kmrefreshrate", 0, SRTO_KMREFRESHRATE, SocketOption::PRE, SocketOption::INT, nullptr },
-    { "kmpreannounce", 0, SRTO_KMPREANNOUNCE, SocketOption::PRE, SocketOption::INT, nullptr }
+    { "kmpreannounce", 0, SRTO_KMPREANNOUNCE, SocketOption::PRE, SocketOption::INT, nullptr },
+    { "strictenc", 0, SRTO_STRICTENC, SocketOption::PRE, SocketOption::BOOL, nullptr }
 };
 }
 
