@@ -21,6 +21,50 @@ extern const std::map<std::string, int> enummap_transtype = {
     { "file", SRTT_FILE }
 };
 
+
+bool set_opt_transtype(int socket, int proto, int sym, const std::string &value)
+{
+    const std::map<std::string, int> enummap_transtype = {
+        { "live", SRTT_LIVE },
+        { "file", SRTT_FILE }
+    };
+
+    auto p = enummap_transtype.find(value);
+    if (p != enummap_transtype.end())
+    {
+        const int set_res
+            = srt_setsockopt(socket, proto, SRT_SOCKOPT(sym), &p->second, sizeof(p->second));
+        return set_res != SRT_ERROR;
+    }
+    return false;
+}
+
+
+bool set_opt_linger(int socket, int proto, int sym, const std::string &value)
+{
+    int int_val = 0;
+    try
+    {
+        int_val = stoi(value);
+    }
+    catch (const std::invalid_argument& ia)
+    {
+        return false;
+    }
+    catch (const std::out_of_range& oor)
+    {
+        return false;
+    }
+
+    linger lin;
+    lin.l_linger = int_val;
+    lin.l_onoff  = lin.l_linger > 0 ? 1 : 0;
+    const int set_res
+        = srt_setsockopt(socket, proto, SRT_SOCKOPT(sym), &lin, sizeof(linger));
+    return set_res != SRT_ERROR;
+}
+
+
 SocketOption::Mode SrtConfigurePre(SRTSOCKET socket, string host, map<string, string> options, vector<string>* failures)
 {
     vector<string> dummy;

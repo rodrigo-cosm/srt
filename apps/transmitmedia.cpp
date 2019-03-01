@@ -395,7 +395,7 @@ void SrtCommon::Init(string host, int port, map<string,string> par, bool dir_out
     InitParameters(host, par);
 
     Verb() << "Opening SRT " << (dir_output ? "target" : "source") << " " << m_mode
-        << " on " << host << ":" << port << "\n";
+        << " on " << host << ":" << port;
 
     if ( m_mode == "caller" )
         OpenClient(host, port);
@@ -443,9 +443,9 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
             if ( !ok )
                 Verb() << "WARNING: failed to set '" << o.name << "' (post, "
                     << (m_output_direction? "target":"source") << ") to "
-                    << value << "\n";
+                    << value;
             else
-                Verb() << "NOTE: SRT/post::" << o.name << "=" << value << "\n";
+                Verb() << "NOTE: SRT/post::" << o.name << "=" << value;
         }
     }
 
@@ -532,7 +532,7 @@ void SrtCommon::ConnectClient(string host, int port)
     sockaddr_in sa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&sa;
 
-    Verb() << "Connecting to " << host << ":" << port << "\n";
+    Verb() << "Connecting to " << host << ":" << port;
 
     int stat = srt_connect(m_sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
@@ -550,7 +550,7 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src)
 {
     int udtResult = udtError.getErrorCode();
     string message = udtError.getErrorMessage();
-    Verb() << "\nERROR #" << udtResult << ": " << message << "\n";
+    Verb() << "\nERROR #" << udtResult << ": " << message;
 
     udtError.clear();
     throw TransmissionError("error: " + src + ": " + message);
@@ -572,7 +572,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
     sockaddr_in localsa = CreateAddrInet(adapter, port);
     sockaddr* plsa = (sockaddr*)&localsa;
 
-    Verb() << "Binding a server on " << adapter << ":" << port << "\n";
+    Verb() << "Binding a server on " << adapter << ":" << port;
 
     stat = srt_bind(m_sock, plsa, sizeof localsa);
     if ( stat == SRT_ERROR )
@@ -583,7 +583,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 
     sockaddr_in sa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&sa;
-    Verb() << "Connecting to " << host << ":" << port << "\n";
+    Verb() << "Connecting to " << host << ":" << port;
 
     stat = srt_connect(m_sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
@@ -599,7 +599,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 
 void SrtCommon::Close()
 {
-    Verb() << "SrtCommon: DESTROYING CONNECTION, closing sockets (rt%" << m_sock << " ls%" << m_bindsock << ")...\n";
+    Verb() << "SrtCommon: DESTROYING CONNECTION, closing sockets (rt%" << m_sock << " ls%" << m_bindsock << ")...";
 
     if ( m_sock != SRT_INVALID_SOCK )
     {
@@ -613,7 +613,7 @@ void SrtCommon::Close()
         m_bindsock = SRT_INVALID_SOCK ;
     }
 
-    Verb() << "SrtCommon: ... done.\n";
+    Verb() << "SrtCommon: ... done.";
 }
 
 SrtCommon::~SrtCommon()
