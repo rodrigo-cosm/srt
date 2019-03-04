@@ -709,30 +709,27 @@ private: // Generation and processing of packets
     int32_t bake(const sockaddr* addr, int32_t previous_cookie = 0, int correction = 0);
 
 private: // Trace
-
-    struct CoreStats
-    {
-        uint64_t m_StartTime;                        // timestamp when the UDT entity is started
-        int64_t m_llSentTotal;                       // total number of sent data packets, including retransmissions
-        int64_t m_llRecvTotal;                       // total number of received packets
-        int m_iSndLossTotal;                         // total number of lost packets (sender side)
-        int m_iRcvLossTotal;                         // total number of lost packets (receiver side)
-        int m_iRetransTotal;                         // total number of retransmitted packets
-        int m_iSentACKTotal;                         // total number of sent ACK packets
-        int m_iRecvACKTotal;                         // total number of received ACK packets
-        int m_iSentNAKTotal;                         // total number of sent NAK packets
-        int m_iRecvNAKTotal;                         // total number of received NAK packets
-        int m_iSndDropTotal;
-        int m_iRcvDropTotal;
-        uint64_t m_ullBytesSentTotal;                // total number of bytes sent,  including retransmissions
-        uint64_t m_ullBytesRecvTotal;                // total number of received bytes
-        uint64_t m_ullRcvBytesLossTotal;             // total number of loss bytes (estimate)
-        uint64_t m_ullBytesRetransTotal;             // total number of retransmitted bytes
-        uint64_t m_ullSndBytesDropTotal;
-        uint64_t m_ullRcvBytesDropTotal;
-        int m_iRcvUndecryptTotal;
-        uint64_t m_ullRcvBytesUndecryptTotal;
-        int64_t m_llSndDurationTotal;		// total real time for sending
+    uint64_t m_StartTime;                        // timestamp when the UDT entity is started
+    int64_t m_llSentTotal;                       // total number of sent data packets, including retransmissions
+    int64_t m_llRecvTotal;                       // total number of received packets
+    int m_iSndLossTotal;                         // total number of lost packets (sender side)
+    int m_iRcvLossTotal;                         // total number of lost packets (receiver side)
+    int m_iRetransTotal;                         // total number of retransmitted packets
+    int m_iSentACKTotal;                         // total number of sent ACK packets
+    int m_iRecvACKTotal;                         // total number of received ACK packets
+    int m_iSentNAKTotal;                         // total number of sent NAK packets
+    int m_iRecvNAKTotal;                         // total number of received NAK packets
+    int m_iSndDropTotal;
+    int m_iRcvDropTotal;
+    uint64_t m_ullBytesSentTotal;                // total number of bytes sent,  including retransmissions
+    uint64_t m_ullBytesRecvTotal;                // total number of received bytes
+    uint64_t m_ullRcvBytesLossTotal;             // total number of loss bytes (estimate)
+    uint64_t m_ullBytesRetransTotal;             // total number of retransmitted bytes
+    uint64_t m_ullSndBytesDropTotal;
+    uint64_t m_ullRcvBytesDropTotal;
+    int m_iRcvUndecryptTotal;
+    uint64_t m_ullRcvBytesUndecryptTotal;
+    int64_t m_llSndDurationTotal;                // total real time for sending
 
         uint64_t m_LastSampleTime;                   // last performance sample time
         int64_t m_llTraceSent;                       // number of packets sent in the last trace interval

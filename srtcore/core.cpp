@@ -6294,10 +6294,10 @@ static void DebugAck(string hdr, int prev, int ack)
     }
 
     prev = CSeqNo::incseq(prev);
-    int diff = CSeqNo::seqcmp(ack, prev);
+    int diff = CSeqNo::seqoff(prev, ack);
     if ( diff < 0 )
     {
-        HLOGC(mglog.Debug, log << hdr << "ACK ERROR: " << prev << "-" << ack << "(diff " << CSeqNo::seqcmp(ack, prev) << ")");
+        HLOGC(mglog.Debug, log << hdr << "ACK ERROR: " << prev << "-" << ack << "(diff " << diff << ")");
         return;
     }
 
@@ -6697,12 +6697,12 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       CGuard::enterCS(m_AckLock);
 
       // check the validation of the ack
-      int seqdiff = CSeqNo::seqcmp(ack, CSeqNo::incseq(m_iSndCurrSeqNo));
-      if (seqdiff> 0)
+      if (CSeqNo::seqcmp(ack, CSeqNo::incseq(m_iSndCurrSeqNo)) > 0)
       {
          CGuard::leaveCS(m_AckLock);
          //this should not happen: attack or bug
-         LOGC(glog.Error, log << CONID() << "ATTACK/IPE: incoming ack seq " << ack << " exceeds current " << m_iSndCurrSeqNo << " by " << seqdiff << "!");
+         LOGC(glog.Error, log << CONID() << "ATTACK/IPE: incoming ack seq " << ack << " exceeds current "
+                 << m_iSndCurrSeqNo << " by " << (CSeqNo::seqoff(m_iSndCurrSeqNo, ack)-1) << "!");
          m_bBroken = true;
          m_iBrokenCounter = 0;
          break;
@@ -6962,7 +6962,8 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
             // <lo, hi> specification means that the consecutive cell has been already interpreted.
             ++ i;
 
-            HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...", losslist_lo, losslist_hi, CSeqNo::seqcmp(losslist_hi, losslist_lo)+1);
+            HLOGF(mglog.Debug, "received UMSG_LOSSREPORT: %d-%d (%d packets)...",
+                    losslist_lo, losslist_hi, CSeqNo::seqoff(losslist_lo, losslist_hi)+1);
 
             if ((CSeqNo::seqcmp(losslist_lo, losslist_hi) > 0) || (CSeqNo::seqcmp(losslist_hi, m_iSndCurrSeqNo) > 0))
             {
@@ -7703,7 +7704,7 @@ int CUDT::processData(CUnit* unit)
           m_stats.m_iTraceRcvBelated++;
           uint64_t tsbpdtime = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp());
           uint64_t bltime = CountIIR(
-              uint64_t(m_stats.m_fTraceBelatedTime) * 1000,
+                  uint64_t(m_stats.m_fTraceBelatedTime) * 1000,
                   CTimer::getTime() - tsbpdtime, 0.2);
           m_stats.m_fTraceBelatedTime = double(bltime)/1000.0;
           CGuard::leaveCS(m_StatsLock);
@@ -7839,7 +7840,8 @@ int CUDT::processData(CUnit* unit)
                // pack loss list for (possibly belated) NAK
                // The LOSSREPORT will be sent in a while.
                m_FreshLoss.push_back(CRcvFreshLoss(seqlo, seqhi, initial_loss_ttl));
-               HLOGF(mglog.Debug, "added loss sequence %d-%d (%d) with tolerance %d", seqlo, seqhi, 1+CSeqNo::seqcmp(seqhi, seqlo), initial_loss_ttl);
+               HLOGF(mglog.Debug, "added loss sequence %d-%d (%d) with tolerance %d", seqlo, seqhi,
+                       1+CSeqNo::seqoff(seqlo, seqhi), initial_loss_ttl);
            }
            else
            {
@@ -7853,7 +7855,7 @@ int CUDT::processData(CUnit* unit)
                    seq[0] |= LOSSDATA_SEQNO_RANGE_FIRST;
                    sendCtrl(UMSG_LOSSREPORT, NULL, seq, 2);
                }
-               HLOGF(mglog.Debug, "lost packets %d-%d (%d packets): sending LOSSREPORT", seqlo, seqhi, 1+CSeqNo::seqcmp(seqhi, seqlo));
+               HLOGF(mglog.Debug, "lost packets %d-%d (%d packets): sending LOSSREPORT", seqlo, seqhi, 1+CSeqNo::seqoff(seqlo, seqhi));
            }
 
            CGuard::enterCS(m_StatsLock);
@@ -7909,7 +7911,7 @@ int CUDT::processData(CUnit* unit)
            for( ; i != m_FreshLoss.end() && i->ttl <= 0; ++i )
            {
                HLOGF(mglog.Debug, "Packet seq %d-%d (%d packets) considered lost - sending LOSSREPORT",
-                                      i->seq[0], i->seq[1], CSeqNo::seqcmp(i->seq[1], i->seq[0])+1);
+                                      i->seq[0], i->seq[1], CSeqNo::seqoff(i->seq[0], i->seq[1])+1);
                addLossRecord(lossdata, i->seq[0], i->seq[1]);
            }
 
@@ -7927,7 +7929,7 @@ int CUDT::processData(CUnit* unit)
            else
            {
                HLOGF(mglog.Debug, "STILL %" PRIzu " FRESH LOSS RECORDS, FIRST: %d-%d (%d) TTL: %d", m_FreshLoss.size(),
-                       i->seq[0], i->seq[1], 1+CSeqNo::seqcmp(i->seq[1], i->seq[0]),
+                       i->seq[0], i->seq[1], 1+CSeqNo::seqoff(i->seq[0], i->seq[1]),
                        i->ttl);
            }
 
@@ -8654,7 +8656,7 @@ void CUDT::checkTimers()
                         CGuard::leaveCS(m_StatsLock);
 
                         HLOGC(mglog.Debug, log << CONID() << "ENFORCED LATEREXMIT by ACK-TMOUT (scheduling): " << CSeqNo::incseq(m_iSndLastAck) << "-" << csn
-                            << " (" << CSeqNo::seqcmp(csn, m_iSndLastAck) << " packets)");
+                            << " (" << CSeqNo::seqoff(m_iSndLastAck, csn) << " packets)");
                     }
                 }
                 // protect packet retransmission
@@ -8713,7 +8715,7 @@ void CUDT::checkTimers()
                 int32_t csn = m_iSndCurrSeqNo;
                 int num = m_pSndLossList->insert(m_iSndLastAck, csn);
                 HLOGC(mglog.Debug, log << CONID() << "ENFORCED FASTREXMIT by ACK-TMOUT PREPARED: " << m_iSndLastAck << "-" << csn
-                    << " (" << CSeqNo::seqcmp(csn, m_iSndLastAck) << " packets)");
+                    << " (" << CSeqNo::seqoff(m_iSndLastAck, csn) << " packets)");
 
                 HLOGC(mglog.Debug, log << "timeout lost: pkts=" <<  num << " rtt+4*var=" <<
                         m_iRTT + 4 * m_iRTTVar << " cnt=" <<  m_iReXmitCount << " diff="

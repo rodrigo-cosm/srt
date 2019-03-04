@@ -36,7 +36,6 @@
 using namespace std;
 
 bool transmit_total_stats = false;
-bool clear_stats = false;
 unsigned long transmit_bw_report = 0;
 unsigned long transmit_stats_report = 0;
 unsigned long transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
@@ -334,7 +333,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
         Error(UDT::getlasterror(), "srt_bind");
     }
 
-    Verb() << " listen...\n";
+    Verb() << " listen...";
 
     stat = srt_listen(m_bindsock, backlog);
     if ( stat == SRT_ERROR )
@@ -378,7 +377,7 @@ bool SrtCommon::AcceptNewClient()
     srt_close(m_bindsock);
     m_bindsock = SRT_INVALID_SOCK;
 
-    Verb() << " connected.\n";
+    Verb() << " connected.";
 
     // ConfigurePre is done on bindsock, so any possible Pre flags
     // are DERIVED by sock. ConfigurePost is done exclusively on sock.
@@ -670,16 +669,14 @@ bool SrtSource::Read(size_t chunk, bytevector& data, ostream &out_stats)
     if (need_bw_report || need_stats_report)
     {
         CBytePerfMon perf;
-        srt_bstats(m_sock, &perf, clear_stats);
-        clear_stats = false;
+        srt_bstats(m_sock, &perf, need_stats_report && !transmit_total_stats);
         if (need_bw_report)
         {
             PrintSrtBandwidth(perf.mbpsBandwidth);
         }
         if (need_stats_report)
         {
-            PrintSrtStats(m_sock, perf, out_stats);
-            clear_stats = !transmit_total_stats;
+            PrintSrtStats(m_sock, perf);
         }
     }
 
@@ -722,16 +719,14 @@ int SrtTarget::Write(const char* data, size_t size, ostream &out_stats)
     if (need_bw_report || need_stats_report)
     {
         CBytePerfMon perf;
-        srt_bstats(m_sock, &perf, clear_stats);
-        clear_stats = false;
+        srt_bstats(m_sock, &perf, need_stats_report && !transmit_total_stats);
         if (need_bw_report)
         {
             PrintSrtBandwidth(perf.mbpsBandwidth);
         }
         if (need_stats_report)
         {
-            PrintSrtStats(m_sock, perf, out_stats);
-            clear_stats = !transmit_total_stats;
+            PrintSrtStats(m_sock, perf);
         }
     }
 
@@ -1051,10 +1046,10 @@ protected:
             int ttl = stoi(attr.at("ttl"));
             int res = setsockopt(m_sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                Verb() << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl << "\n";
+                Verb() << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl;
             res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                Verb() << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl << "\n";
+                Verb() << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl;
 
             attr.erase("ttl");
         }
@@ -1069,7 +1064,7 @@ protected:
                 string value = m_options.at(o.name);
                 bool ok = o.apply<SocketOption::SYSTEM>(m_sock, value);
                 if ( !ok )
-                    Verb() << "WARNING: failed to set '" << o.name << "' to " << value << "\n";
+                    Verb() << "WARNING: failed to set '" << o.name << "' to " << value;
             }
         }
     }
