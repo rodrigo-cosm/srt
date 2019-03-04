@@ -676,7 +676,7 @@ bool SrtSource::Read(size_t chunk, bytevector& data, ostream &out_stats)
         }
         if (need_stats_report)
         {
-            PrintSrtStats(m_sock, perf);
+            PrintSrtStats(m_sock, perf, out_stats);
         }
     }
 
@@ -726,7 +726,7 @@ int SrtTarget::Write(const char* data, size_t size, ostream &out_stats)
         }
         if (need_stats_report)
         {
-            PrintSrtStats(m_sock, perf);
+            PrintSrtStats(m_sock, perf, out_stats);
         }
     }
 
