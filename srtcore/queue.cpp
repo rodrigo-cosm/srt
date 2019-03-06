@@ -1527,7 +1527,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
       if (i == m_mBuffer.end())
       {
           // XXX Probably a constant is required
-         packet.setLength(0);
+         packet.setLength(-1);
          return -1;
       }
    }
@@ -1538,7 +1538,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
    if (packet.getLength() < newpkt->getLength())
    {
       // XXX Probably a constant is required
-      packet.setLength(0);
+      packet.setLength(-1);
       return -1;
    }
 
