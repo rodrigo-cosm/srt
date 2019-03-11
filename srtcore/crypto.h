@@ -155,17 +155,15 @@ public:
     ///                during transmission (otherwise it's during the handshake)
     void getKmMsg_markSent(size_t ki, bool runtime)
     {
-        using srt_logging::mglog;
-
         m_SndKmLastTime = CTimer::getTime();
         if (runtime)
         {
             m_SndKmMsg[ki].iPeerRetry--;
-            HLOGC(mglog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " retry=" << m_SndKmMsg[ki].iPeerRetry);
+            HLOGC(srt_logging::mglog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " retry=" << m_SndKmMsg[ki].iPeerRetry);
         }
         else
         {
-            HLOGC(mglog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " STILL IN USE.");
+            HLOGC(srt_logging::mglog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " STILL IN USE.");
         }
     }
 

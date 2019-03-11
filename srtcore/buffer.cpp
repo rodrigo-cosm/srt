@@ -1114,7 +1114,8 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
 * used in the code (core.cpp) is expensive in TsbPD mode, hence this simpler function
 * that only check if first packet in queue is ready.
 */
-bool CRcvBuffer::isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq)
+bool CRcvBuffer::isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq,
+    bool ismessageapi)
 {
    *tsbpdtime = 0;
 
@@ -1136,6 +1137,13 @@ bool CRcvBuffer::isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
        return false;
    }
 
+   if (ismessageapi)
+   {
+       int32_t q, p;
+       bool passack;
+       return scanMsg(Ref(p), Ref(q), Ref(passack));
+   }
+
    return isRcvDataAvailable();
 }
 
@@ -1155,12 +1163,12 @@ CPacket* CRcvBuffer::getRcvReadyPacket()
     return 0;
 }
 
-bool CRcvBuffer::isRcvDataReady()
+bool CRcvBuffer::isRcvDataReady(bool ismessageapi)
 {
    uint64_t tsbpdtime;
    int32_t seq;
 
-   return isRcvDataReady(Ref(tsbpdtime), Ref(seq));
+   return isRcvDataReady(Ref(tsbpdtime), Ref(seq), ismessageapi);
 }
 
 int CRcvBuffer::getAvailBufSize() const

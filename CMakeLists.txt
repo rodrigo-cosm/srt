@@ -458,6 +458,7 @@ MafReadDir(srtcore filelist.maf
 	SOURCES SOURCES_srt
 	PUBLIC_HEADERS HEADERS_srt
 	PROTECTED_HEADERS HEADERS_srt
+	PRIVATE_HEADERS HEADERS_srt
 )
 
 # Auto generated version file and add it to the HEADERS_srt list.
@@ -735,7 +736,7 @@ if (ENABLE_APPS)
 		# FIXME: with MINGW, it fails to build apps that require C++11
 		# https://github.com/Haivision/srt/issues/177
 		message(WARNING "On MinGW, some C++11 apps are blocked due to lacking proper C++11 headers for <thread>. FIX IF POSSIBLE.")
-   else()
+	else()
 		srt_add_application(srt-multiplex ${VIRTUAL_srtsupport})
 	endif()
 
@@ -771,10 +772,63 @@ if (ENABLE_APPS)
 		srt_add_testprogram(srt-test-file)
 		srt_make_application(srt-test-file)
 
+		srt_add_testprogram(srt-test-folder)
+		target_include_directories(srt-test-folder PRIVATE
+			"${CMAKE_SOURCE_DIR}/submodules/json/single_include/"
+			"${CMAKE_SOURCE_DIR}/submodules/date/include/"
+		)
+		srt_make_application(srt-test-folder)
+
 		srt_add_testprogram(srt-test-relay)
 		srt_make_application(srt-test-relay)
 		target_compile_definitions(srt-test-relay PUBLIC -DSRT_ENABLE_VERBOSE_LOCK)
 	endif()
+
+endif()
+
+if (ENABLE_MESSAGING_LIB AND ENABLE_CXX11)
+
+	add_library(srt_messaging SHARED
+		${CMAKE_SOURCE_DIR}/testing/srt_receiver.hpp
+		${CMAKE_SOURCE_DIR}/testing/srt_receiver.cpp
+		${CMAKE_SOURCE_DIR}/testing/srt_messaging.h
+		${CMAKE_SOURCE_DIR}/testing/srt_messaging.cpp
+		${CMAKE_SOURCE_DIR}/testing/testmedia.cpp
+		${CMAKE_SOURCE_DIR}/testing/testmedia.hpp
+		${CMAKE_SOURCE_DIR}/testing/testmediabase.hpp
+		${CMAKE_SOURCE_DIR}/apps/uriparser.cpp
+		${CMAKE_SOURCE_DIR}/apps/uriparser.hpp
+		${CMAKE_SOURCE_DIR}/apps/socketoptions.cpp
+		${CMAKE_SOURCE_DIR}/apps/socketoptions.hpp
+		${CMAKE_SOURCE_DIR}/apps/verbose.cpp
+		${CMAKE_SOURCE_DIR}/apps/verbose.hpp
+	)
+
+	macro(srt_add_testprogram name)
+		# Variables in macros are not local. Clear them forcefully.
+		set (SOURCES_app_indir "")
+		set (SOURCES_app "")
+		# Unlike Silvercat, in cmake you must know the full list
+		# of source files at the moment when defining the target
+		# and it can't be altered later.
+		#
+		# For testing applications, every application has its exclusive
+		# list of source files in its own Manifest file.
+		MafReadDir(testing ${name}.maf SOURCES SOURCES_app)
+		srt_add_program(${name} ${SOURCES_app})
+	endmacro()
+
+	target_compile_options(srt_messaging PRIVATE ${CFLAGS_CXX_STANDARD})
+	target_include_directories(srt_messaging PRIVATE common)
+	target_include_directories(srt_messaging PRIVATE apps)
+	target_link_libraries(srt_messaging ${srt_link_library})
+
+	srt_add_testprogram(srt-test-messaging)
+	target_include_directories(srt-test-messaging PRIVATE common)
+	target_include_directories(srt-test-messaging PRIVATE apps)
+
+	target_link_libraries(srt-test-messaging srt_messaging)
+	srt_make_application(srt-test-messaging)
 
 endif()
 
@@ -815,6 +869,7 @@ if (ENABLE_UNITTESTS AND ENABLE_CXX11)
 	MafReadDir(test filelist.maf
 		SOURCES SOURCES_unittests
 	)
+
 
 	srt_add_program(test_srt ${SOURCES_unittests})
 	srt_make_application(test_srt)

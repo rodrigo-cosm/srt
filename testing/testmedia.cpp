@@ -266,6 +266,13 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
     m_options = par;
 }
 
+
+void SrtModel::PrepareListener(int backlog)
+{
+    SrtCommon::PrepareListener(m_adapter, m_port, backlog);
+}
+
+
 void SrtCommon::PrepareListener(string host, int port, int backlog)
 {
     m_bindsock = srt_socket(AF_INET, SOCK_DGRAM, 0);
@@ -878,7 +885,7 @@ void SrtModel::Establish(ref_t<std::string> name)
         if (Listener() == SRT_INVALID_SOCK)
         {
             Verb() << "Setting up listener: port=" << m_port << " backlog=5";
-            PrepareListener(m_adapter, m_port, 5);
+            SrtCommon::PrepareListener(m_adapter, m_port, 5);
         }
 
         Verb() << "Accepting a client...";
