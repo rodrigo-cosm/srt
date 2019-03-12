@@ -165,7 +165,8 @@ static void PrintSrtStats(int sid, const CBytePerfMon& mon, ostream &out)
             output << "msRTT,mbpsBandwidth,mbpsMaxBW,pktSent,pktSndLoss,pktSndDrop,";
             output << "pktRetrans,byteSent,byteSndDrop,mbpsSendRate,usPktSndPeriod,";
             output << "pktRecv,pktRcvLoss,pktRcvDrop,pktRcvRetrans,pktRcvBelated,";
-            output << "byteRecv,byteRcvLoss,byteRcvDrop,mbpsRecvRate,RCVLATENCYms";
+            output << "byteRecv,byteRcvLoss,byteRcvDrop,mbpsRecvRate,RCVLATENCYms,";
+			output << "pktSndFilterExtra,pktRcvFilterExtra,pktRcvFilterSupply,pktRcvFilterLoss";
             output << endl;
             first_line_printed = true;
         }
@@ -178,27 +179,37 @@ static void PrintSrtStats(int sid, const CBytePerfMon& mon, ostream &out)
         output << mon.pktFlowWindow << ",";
         output << mon.pktCongestionWindow << ",";
         output << mon.pktFlightSize << ",";
+
         output << mon.msRTT << ",";
         output << mon.mbpsBandwidth << ",";
         output << mon.mbpsMaxBW << ",";
         output << mon.pktSent << ",";
         output << mon.pktSndLoss << ",";
         output << mon.pktSndDrop << ",";
+
         output << mon.pktRetrans << ",";
         output << mon.byteSent << ",";
         output << mon.byteSndDrop << ",";
         output << mon.mbpsSendRate << ",";
         output << mon.usPktSndPeriod << ",";
+
         output << mon.pktRecv << ",";
         output << mon.pktRcvLoss << ",";
         output << mon.pktRcvDrop << ",";
         output << mon.pktRcvRetrans << ",";
         output << mon.pktRcvBelated << ",";
+
         output << mon.byteRecv << ",";
         output << mon.byteRcvLoss << ",";
         output << mon.byteRcvDrop << ",";
         output << mon.mbpsRecvRate << ",";
-        output << rcv_latency;
+        output << rcv_latency << ",";
+
+        output << mon.pktSndFilterExtra << ",";
+        output << mon.pktRcvFilterExtra << ",";
+        output << mon.pktRcvFilterSupply << ",";
+        output << mon.pktRcvFilterLoss;
+
         output << endl;
     }
     else
