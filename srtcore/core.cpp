@@ -6337,6 +6337,11 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear, bool instantaneous)
       m_stats.m_ullTraceRcvBytesLoss = 0;
 #endif
       m_stats.m_LastSampleTime = currtime;
+
+	  m_stats.m_iSndFilterExtra = 0;
+	  m_stats.m_iRcvFilterExtra = 0;
+	  m_stats.m_iRcvFilterSupply = 0;
+	  m_stats.m_iRcvFilterLoss = 0;
    }
 }
 
