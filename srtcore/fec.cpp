@@ -19,8 +19,7 @@
 #include "packet.h"
 #include "logging.h"
 
-// Defines DefaultCorrector
-#include "packetfilter_builtin.h"
+#include "fec.h"
 
 using namespace std;
 using namespace srt_logging;
@@ -113,7 +112,7 @@ FECFilterBuiltin::FECFilterBuiltin(const SrtFilterInitializer &init, std::vector
     // Setup the bit matrix, initialize everything with false.
 
     // Vertical size (y)
-    rcv.cells.resize(sizeCol() * sizeRow());
+    rcv.cells.resize(sizeCol() * sizeRow(), false);
 
     // These sequence numbers are both the value of ISN-1 at the moment
     // when the handshake is done. The sender ISN is generated here, the
@@ -585,6 +584,14 @@ bool FECFilterBuiltin::receive(const CPacket& rpkt, loss_seqs_t& loss_seqs)
         signed char colx;
     } isfec = { false, false, -1 };
 
+	// The sequence number must be checked prematurely, or it can otherwise
+	// cause large resource allocation. This might be even survived, provided
+	// that this will make the packet seen as exceeding the series 0 matrix,
+	// so all matrices in previous series should be dismissed thereafter. But
+	// this short living resource spike may be destructive, so let's do
+	// matrix dismissal FIRST before this packet is going to be handled.
+	CheckLargeDrop(rpkt.getSeqNo());
+
     if (rpkt.getMsgSeq() == 0)
     {
         // Interpret the first byte of the contents.
@@ -616,7 +623,7 @@ bool FECFilterBuiltin::receive(const CPacket& rpkt, loss_seqs_t& loss_seqs)
             HLOGC(mglog.Debug, log << "FEC: packet %" << rpkt.getSeqNo() << " "
                     << (past ? "in the PAST" : "already known") << ", IGNORING.");
 
-            return false;
+            return true;
         }
 
         want_packet = true;
@@ -695,6 +702,69 @@ bool FECFilterBuiltin::receive(const CPacket& rpkt, loss_seqs_t& loss_seqs)
     // - others: return false and return nothing in loss_seqs
 }
 
+void FECFilterBuiltin::CheckLargeDrop(int32_t seqno)
+{
+	// Ok, first try to pick up the column and series
+
+    int offset = CSeqNo::seqoff(rcv.colq[0].base, seqno);
+    if (offset < 0)
+    {
+        return;
+    }
+
+	// Number of column - regardless of series.
+	int colx = offset % numberCols();
+
+	// Base sequence from the group series 0 in this column
+
+	// [[assert rcv.colq.size() >= numberCols()]];
+    int32_t colbase = rcv.colq[colx].base;
+
+	// Offset between this base and seqno
+    int coloff = CSeqNo::seqoff(colbase, seqno);
+
+	// Might be that it's in the row above the column,
+	// still it's not a large-drop
+	if (coloff < 0)
+	{
+		return;
+	}
+
+	size_t matrix = numberRows() * numberCols();
+
+	int colseries = coloff / matrix;
+
+	if (colseries > 2)
+	{
+		// Ok, now define the new ABSOLUTE BASE. This is the base of the column 0
+		// column group from the series previous towards this one.
+		int32_t oldbase = rcv.colq[0].base;
+		int32_t newbase = CSeqNo::incseq(oldbase, (colseries-1) * matrix);
+
+		LOGC(mglog.Warn, log << "FEC: LARGE DROP detected! Resetting all groups. Base: %" << oldbase
+				<< " -> %" << newbase << "(shift by " << CSeqNo::seqoff(oldbase, newbase) << ")");
+
+		rcv.rowq.clear();
+		rcv.colq.clear();
+		rcv.cells.clear();
+
+		rcv.rowq.resize(1);
+		HLOGP(mglog.Debug, "FEC: RE-INIT: receiver first row");
+		ConfigureGroup(rcv.rowq[0], newbase, 1, sizeRow());
+
+		if (sizeCol() > 1)
+		{
+			// Size: cols
+			// Step: rows (the next packet in the group is one row later)
+			// Slip: rows+1 (the first packet in the next group is later by 1 column + one whole row down)
+			HLOGP(mglog.Debug, "FEC: RE-INIT: receiver first N columns");
+			ConfigureColumns(rcv.colq, numberCols(), sizeCol(), m_number_rows+1, newbase);
+		}
+
+		rcv.cell_base = newbase;
+	}
+}
+
 void FECFilterBuiltin::CollectIrrecoverRow(RcvGroup& g, loss_seqs_t& irrecover)
 {
     if (g.dismissed)
@@ -706,7 +776,7 @@ void FECFilterBuiltin::CollectIrrecoverRow(RcvGroup& g, loss_seqs_t& irrecover)
     int offset = CSeqNo::seqoff(base, g.base);
     if (offset < 0)
     {
-        LOGC(mglog.Error, log << "!!!");
+        LOGC(mglog.Error, log << "FEC: IPE: row base %" << g.base << " is PAST to cell base %" << base);
         return;
     }
 
@@ -714,7 +784,9 @@ void FECFilterBuiltin::CollectIrrecoverRow(RcvGroup& g, loss_seqs_t& irrecover)
     // Sanity check, if all cells are really filled.
     if (maxoff > rcv.cells.size())
     {
-        LOGC(mglog.Error, log << "!!!");
+        LOGC(mglog.Error, log << "FEC: IPE: Collecting loss from row %"
+				<< g.base << "+" << m_number_cols << " while cells <= %"
+				<< CSeqNo::seqoff(rcv.cell_base, rcv.cells.size()-1));
         return;
     }
 
@@ -749,6 +821,48 @@ void FECFilterBuiltin::CollectIrrecoverRow(RcvGroup& g, loss_seqs_t& irrecover)
     g.dismissed = true;
 }
 
+static inline char CellMark(const std::deque<bool>& cells, int index)
+{
+	if (index >= int(cells.size()))
+		return '/';
+
+	return cells[index] ? '#' : '.';
+}
+
+#if ENABLE_HEAVY_LOGGING
+static void DebugPrintCells(int32_t base, const std::deque<bool>& cells, int row_size)
+{
+	int i = 0;
+	// Shift to the first empty cell
+	for ( ; i < int(cells.size()); ++i)
+		if (cells[i] == false)
+			break;
+
+	if (i == int(cells.size()))
+	{
+		LOGC(mglog.Debug, log << "FEC: ... cell[0-" << (cells.size()-1) << "]: ALL CELLS EXIST");
+		return;
+	}
+
+	// Ok, we have some empty cells, so just adjust to the start of a row.
+	i -= i % row_size;
+	if (i < 0)
+		i = 0; // you never know...
+
+	for ( ; i < int(cells.size()); i += row_size )
+	{
+		std::ostringstream os;
+		os << "cell[" << i << "-" << (i+row_size-1) << "] %" << CSeqNo::incseq(base, i) << ":";
+		for (int y = 0; y < row_size; ++y)
+		{
+			os << " " << CellMark(cells, i+y);
+		}
+		LOGP(mglog.Debug, os.str());
+	}
+}
+#else
+static void DebugPrintCells(int32_t base, const std::deque<bool>& cells, int row_size) {}
+#endif
 
 bool FECFilterBuiltin::HangHorizontal(const CPacket& rpkt, bool isfec, loss_seqs_t& irrecover)
 {
@@ -810,46 +924,100 @@ bool FECFilterBuiltin::HangHorizontal(const CPacket& rpkt, bool isfec, loss_seqs
     // collected at least 1 packet in the next group. Do not dismiss
     // any groups here otherwise - all will be decided during column
     // processing.
-    if (m_number_rows == 1 || m_fallback_level == SRT_ARQ_ONREQ)
-    {
-        // The conditional row dismissal in row-only configuration.
-        // In this configuration, cells and rows go hand-in-hand,
-        // so you dismiss a row and then the row-length of cells to
-        // make them both base sequence number in sync.
-        //
-        // The condition that should trigger a row dismissal is the following:
-        // - there is more than one row right now, and EITHER:
-        //   - there are more than two rows
-        //   - the second row collected at least half of the size
 
-        if (rcv.rowq.size() > 2
-                || (rcv.rowq.size() > 1 && rcv.rowq[1].collected > m_number_cols/2))
-        {
-            // This procedure is a row-only row dismissal.
-            // When columns are used, rows will be dismissed only together
-            // with the last column supporting it.
+	bool want_collect_irrecover = false;
+	bool want_remove_cells = false;
 
-            CollectIrrecoverRow(rowg, irrecover);
+	if (rcv.rowq.size() > 1)
+	{
+		if (m_number_rows == 1)
+		{
+			want_remove_cells = true;
+			want_collect_irrecover = true;
+		}
+		else if (m_fallback_level == SRT_ARQ_ONREQ)
+		{
+			want_collect_irrecover = true;
+		}
+	}
 
-            // Collect irrecoverable with EARLY setting, but still do not
-            // remove the row until the crossing it column is alive.
-            if (m_number_rows == 1)
-            {
-                HLOGC(mglog.Debug, log << "FEC/H: Dismissing one row, starting at %" << rcv.rowq[0].base);
-                // Take the oldest row group, and:
-                // - delete it
-                // - delete from rcv.cells the size of one dow (m_number_cols)
+	if (want_collect_irrecover)
+	{
+		int current = rcv.rowq.size() - 2;
+		// We know we have at least 2 rows.
+		// This value is then 0 or more.
+		int past = current - 1;
 
-                rcv.rowq.pop_front();
+		// To trigger irrecoverable collection, the current sequence
+		// must be further than 1/3 of the row size to start from
+		// the previous row. Otherwise, start with the past-previous
+		// one, as long as it still exists.
 
-                // When columns are not used, also dismiss that number of bits.
-                // Use safe version
-                size_t ersize = min(m_number_cols, rcv.cells.size());
-                rcv.cells.erase(rcv.cells.begin(), rcv.cells.begin() + ersize);
-                rcv.cell_base = CSeqNo::incseq(rcv.cell_base, m_number_cols);
-            }
-        }
-    }
+		bool early SRT_ATR_UNUSED = false;
+		if (past > 0)
+		{
+			// If you already have at least 3 rows, sweep starting from
+			// the before-previous one (this will become 0 when the number
+			// of rows is exactly 3).
+			--past;
+		}
+		else
+		{
+			// If you have 2 rows, then in the current row (1) there must
+			// be the sequence passing already the 1/3 of the size. Otherwise
+			// decrease past to make it -1 and not pass the next test.
+			if (CSeqNo::seqoff(rcv.rowq[1].base, seq) <= int(m_number_cols/3))
+			{
+				--past;
+			}
+			else
+			{
+				early = true;
+			}
+		}
+
+		if (past >= 0)
+		{
+			// Collect irrecoverable since the 'past' index up to 0.
+			// If want_remove_cells, also remove these rows and corresponding cells.
+
+			int nrowremove = 1 + past;
+			HLOGC(mglog.Debug, log << "Collecting irrecoverable packets from " << nrowremove << " ROWS per offset "
+					<< CSeqNo::seqoff(rcv.rowq[1].base, seq) << " vs. " << m_number_cols << "/3");
+
+			for (int i = 0; i <= past; ++i)
+			{
+				CollectIrrecoverRow(rcv.rowq[i], irrecover);
+			}
+
+			if (want_remove_cells)
+			{
+				size_t npktremove = sizeRow() * nrowremove;
+				size_t ersize = min(npktremove, rcv.cells.size());
+
+				HLOGC(mglog.Debug, log << "FEC/H: Dismissing rows n=" << nrowremove
+						<< ", starting at %" << rcv.rowq[0].base
+						<< " AND " << npktremove << " CELLS, base switch %"
+						<< rcv.cell_base << " -> %" << rcv.rowq[past].base);
+
+				rcv.rowq.erase(rcv.rowq.begin(), rcv.rowq.begin() + 1 + past);
+				rcv.cells.erase(rcv.cells.begin(), rcv.cells.begin() + ersize);
+
+				// We state that we have removed as many cells as for the removed
+				// rows. In case when the number of cells proved to be less than that,
+				// it will simply remove all cells. So now set the cell base to be
+				// in sync with the row base.
+				rcv.cell_base = rcv.rowq[0].base;
+				DebugPrintCells(rcv.cell_base, rcv.cells, sizeRow());
+			}
+		}
+		else
+		{
+			HLOGC(mglog.Debug, log << "FEC: NOT collecting irrecover from rows: distance="
+					<< CSeqNo::seqoff(rcv.rowq[0].base, seq));
+		}
+
+	}
 
     return true;
 }
@@ -873,17 +1041,31 @@ int32_t FECFilterBuiltin::RcvGetLossSeqHoriz(Group& g)
         if (!rcv.CellAt(cix))
         {
             offset = cix;
+#if ENABLE_HEAVY_LOGGING
+			// For heavy logging case, show all cells in the range
+			LOGC(mglog.Debug, log << "FEC/H: cell %" << CSeqNo::incseq(rcv.cell_base, cix)
+					<< " (+" << cix << "): MISSING");
+
+#else
 
             // Find just one. No more that just one shall be found
             // because it was checked earlier that we have collected
             // all but just one packet.
             break;
+#endif
         }
+#if ENABLE_HEAVY_LOGGING
+		else
+		{
+			LOGC(mglog.Debug, log << "FEC/H: cell %" << CSeqNo::incseq(rcv.cell_base, cix)
+					<< " (+" << cix << "): exists");
+		}
+#endif
     }
 
     if (offset == -1)
     {
-        LOGC(mglog.Fatal, log << "FEC: IPE: rebuilding attempt, but no lost packet found");
+        LOGC(mglog.Fatal, log << "FEC/H: IPE: rebuilding attempt, but no lost packet found");
         return -1; // sanity, shouldn't happen
     }
 
@@ -912,17 +1094,31 @@ int32_t FECFilterBuiltin::RcvGetLossSeqVert(Group& g)
         if (!rcv.CellAt(cix))
         {
             offset = cix;
+#if ENABLE_HEAVY_LOGGING
+			// For heavy logging case, show all cells in the range
+			LOGC(mglog.Debug, log << "FEC/V: cell %" << CSeqNo::incseq(rcv.cell_base, cix)
+					<< " (+" << cix << "): MISSING");
+
+#else
 
             // Find just one. No more that just one shall be found
             // because it was checked earlier that we have collected
             // all but just one packet.
             break;
+#endif
         }
+#if ENABLE_HEAVY_LOGGING
+		else
+		{
+			LOGC(mglog.Debug, log << "FEC/V: cell %" << CSeqNo::incseq(rcv.cell_base, cix)
+					<< " (+" << cix << "): exists");
+		}
+#endif
     }
 
     if (offset == -1)
     {
-        LOGC(mglog.Fatal, log << "FEC: IPE: rebuilding attempt, but no lost packet found");
+        LOGC(mglog.Fatal, log << "FEC/V: IPE: rebuilding attempt, but no lost packet found");
         return -1; // sanity, shouldn't happen
     }
 
@@ -1081,20 +1277,25 @@ int FECFilterBuiltin::ExtendRows(int rowx)
     // index is > 2*m_number_cols. If so, shrink
     // the container first.
 
-    if (rowx > int(m_number_cols*2))
-    {
-        LOGC(mglog.Error, log << "FEC/H: OFFSET=" << rowx << " exceeds maximum row container size, SHRINKING");
-
-        rcv.rowq.erase(rcv.rowq.begin(), rcv.rowq.begin() + m_number_cols);
-        rowx -= m_number_cols;
-    }
-
 #if ENABLE_HEAVY_LOGGING
     LOGC(mglog.Debug, log << "FEC: ROW STATS BEFORE: n=" << rcv.rowq.size());
 
     for (size_t i = 0; i < rcv.rowq.size(); ++i)
         LOGC(mglog.Debug, log << "... [" << i << "] " << rcv.rowq[i].DisplayStats());
 #endif
+
+    if (rowx > int(m_number_cols*3))
+    {
+        LOGC(mglog.Error, log << "FEC/H: OFFSET=" << rowx << " exceeds maximum row container size, SHRINKING rows and cells");
+
+        rcv.rowq.erase(rcv.rowq.begin(), rcv.rowq.begin() + m_number_cols);
+        rowx -= m_number_cols;
+
+		// With rows, delete also an appropriate number of cells.
+		int nerase = min(int(rcv.cells.size()), CSeqNo::seqoff(rcv.cell_base, rcv.rowq[0].base));
+		rcv.cells.erase(rcv.cells.begin(), rcv.cells.begin() + nerase);
+		rcv.cell_base = rcv.rowq[0].base;
+    }
 
     // Create and configure next groups.
     size_t old = rcv.rowq.size();
@@ -1136,11 +1337,18 @@ int FECFilterBuiltin::RcvGetRowGroupIndex(int32_t seq)
 
     // Hang in the receiver group first.
     size_t rowx = offset / m_number_cols;
+
+	/*
+	   Don't.
+	   Leaving this code for future if needed, but this check should not be done.
+	   The resource management for "crazy" sequence numbers is done in the beginning,
+	   so simply TRUST THIS SEQUENCE, no matter what. After the check it won't do any harm.
     if (rowx > numberRows()*2) // past twice the matrix
     {
         LOGC(mglog.Error, log << "FEC/H: Packet %" << seq << " is in the far future, ignoring");
         return -1;
     }
+	*/
 
     // The packet might have come completely out of the blue.
     // The row group container must be prepared to extend
@@ -1161,15 +1369,22 @@ void FECFilterBuiltin::MarkCellReceived(int32_t seq)
     // determine, which exactly packet is lost and needs rebuilding.
     int cellsize = rcv.cells.size();
     int cell_offset = CSeqNo::seqoff(rcv.cell_base, seq);
+	bool resized SRT_ATR_UNUSED = false;
     if (cell_offset >= cellsize)
     {
         // Expand the cell container with zeros, excluding the 'cell_offset'.
         // Resize normally up to the required size, just set the lastmost
         // item to true.
+		resized = true;
         rcv.cells.resize(cell_offset+1, false);
     }
     rcv.cells[cell_offset] = true;
-    HLOGC(mglog.Debug, log << "FEC: MARK CELL RECEIVED: %" << seq << " - cell base=%" << rcv.cell_base << "+" << rcv.cells.size());
+
+	HLOGC(mglog.Debug, log << "FEC: MARK CELL RECEIVED: %" << seq << " - cells base=%"
+			<< rcv.cell_base << "[" << cell_offset << "]+" << rcv.cells.size()
+			<< (resized ? "(resized)":"") << " :");
+
+	DebugPrintCells(rcv.cell_base, rcv.cells, sizeRow());
 }
 
 bool FECFilterBuiltin::IsLost(int32_t seq)
@@ -1300,7 +1515,7 @@ void FECFilterBuiltin::RcvCheckDismissColumn(int32_t seq, int colgx, loss_seqs_t
     {
         int32_t lastbase = rcv.colq[lastx].base;
 
-        // Compare this seqwuence with the sequence that caused the update
+        // Compare the base sequence with the sequence that caused the update
         int dist = CSeqNo::seqoff(lastbase, seq);
 
         // Shift this distance by the distance between the first and last
@@ -1332,12 +1547,13 @@ void FECFilterBuiltin::RcvCheckDismissColumn(int32_t seq, int colgx, loss_seqs_t
             // Do some sanity checks first.
 
             size_t nrowrem = 0;
+			int32_t oldrowbase = rcv.rowq[0].base; // before it gets deleted
             if (rcv.rowq.size() > numberRows())
             {
                 int32_t newrowbase = rcv.rowq[numberRows()].base;
                 if (newbase != newrowbase)
                 {
-                    LOGC(mglog.Error, log << "ROW/COL base DISCREPANCY! Looking up lineraly for the right row.");
+                    LOGC(mglog.Error, log << "FEC: IPE: ROW/COL base DISCREPANCY:  Looking up lineraly for the right row.");
 
                     // Fallback implementation in order not to break everything
                     for (size_t r = 0; r < rcv.rowq.size(); ++r)
@@ -1360,16 +1576,20 @@ void FECFilterBuiltin::RcvCheckDismissColumn(int32_t seq, int colgx, loss_seqs_t
             // If rows were removed, so remove also cells
             if (nrowrem > 0)
             {
-                int nrem;
                 int32_t newbase = rcv.rowq[0].base;
-                if (newbase == rcv.cell_base)
+
+				// This value SHOULD be == nrowrem * sizeRow(), but this
+				// calculation is safe against bugs. Report them, if found, though.
+				int nrem = CSeqNo::seqoff(rcv.cell_base, newbase);
+
+                if (oldrowbase != rcv.cell_base)
                 {
-                    nrem = nrowrem;
+                    LOGC(mglog.Error, log << "FEC: CELL/ROW base discrepancy, calculating and resynchronizing");
                 }
                 else
                 {
-                    LOGC(mglog.Error, log << "FEC: CELL/ROW base discrepancy, calculating and resynchronizing");
-                    nrem = CSeqNo::seqoff(rcv.cell_base, newbase);
+                    HLOGC(mglog.Debug, log << "FEC: will remove " << nrem << " cells, SHOULD BE = "
+							<< (nrowrem * sizeRow()));
                 }
 
                 if (nrem > 0)
@@ -1388,6 +1608,8 @@ void FECFilterBuiltin::RcvCheckDismissColumn(int32_t seq, int colgx, loss_seqs_t
 
                     rcv.cells.erase(rcv.cells.begin(), rcv.cells.begin() + nrem);
                     rcv.cell_base = newbase;
+
+					DebugPrintCells(rcv.cell_base, rcv.cells, sizeRow());
                 }
                 else
                 {
@@ -1621,8 +1843,40 @@ int FECFilterBuiltin::ExtendColumns(int colgx)
         // once the last row of the first series is closed.
         LOGC(mglog.Error, log << "FEC/V: OFFSET=" << colgx << " exceeds maximum col container size, SHRINKING container by " << sizeRow());
 
-        rcv.colq.erase(rcv.colq.begin(), rcv.colq.begin() + sizeRow());
-        colgx -= sizeRow();
+		// Delete one series of columns.
+		int32_t oldbase SRT_ATR_UNUSED = rcv.colq[0].base;
+        rcv.colq.erase(rcv.colq.begin(), rcv.colq.begin() + numberCols());
+        colgx -= numberCols();
+		int32_t newbase = rcv.colq[0].base;
+
+		// Delete also appropriate number of rows for one series
+		rcv.rowq.erase(rcv.rowq.begin(), rcv.rowq.begin() + numberRows());
+
+		// Sanity-check if the resulting row absolute base is equal to column
+		if (rcv.rowq[0].base != newbase)
+		{
+			LOGC(mglog.Error, log << "FEC/V: IPE: removal of " << numberRows()
+					<< " rows ships no same seq: rowbase=%"
+					<< rcv.rowq[0].base
+					<< " colbase=%" << oldbase << " -> %" << newbase << " - RESETTING ROWS");
+
+			// How much you need, depends on the columns.
+			size_t nseries = rcv.colq.size() / numberCols() + 1;
+			size_t needrows = nseries * numberRows();
+
+			rcv.rowq.clear();
+			rcv.rowq.resize(needrows);
+			int32_t rowbase = newbase;
+			for (size_t i = 0; i < rcv.rowq.size(); ++i)
+			{
+				ConfigureGroup(rcv.rowq[i], rowbase, 1, sizeRow());
+				rowbase = CSeqNo::incseq(newbase, sizeRow());
+			}
+		}
+
+		size_t ncellrem = CSeqNo::seqoff(rcv.cell_base, newbase);
+		rcv.cells.erase(rcv.cells.begin(), rcv.cells.begin() + ncellrem);
+		rcv.cell_base = newbase;
 
         // Note that after this shift, column groups that were
         // in particular column, remain in that column.
