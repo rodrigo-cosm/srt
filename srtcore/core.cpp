@@ -3982,7 +3982,10 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
         m_iBandwidth = ib.m_iBandwidth;
     }
 
-    setupCC();
+    if (!setupCC())
+    {
+        return CONN_REJECT;
+    }
 
     // And, I am connected too.
     m_bConnecting = false;
@@ -4438,6 +4441,13 @@ void* CUDT::tsbpd(void* param)
           bool passack = true; //Get next packet to wait for even if not acked
 
           rxready = self->m_pRcvBuffer->getRcvFirstMsg(Ref(tsbpdtime), Ref(passack), Ref(skiptoseqno), Ref(current_pkt_seq));
+
+          HLOGC(tslog.Debug, log << boolalpha
+                  << "NEXT PKT CHECK: rdy=" << rxready
+                  << " passack=" << passack
+                  << " skipto=%" << skiptoseqno
+                  << " current=%" << current_pkt_seq
+                  << " buf-base=%" << self->m_iRcvLastSkipAck);
           /*
            * VALUES RETURNED:
            *
@@ -4723,7 +4733,11 @@ void CUDT::acceptAndRespond(const sockaddr* peer, CHandShake* hs, const CPacket&
        throw CUDTException(MJ_SETUP, MN_REJECTED, 0);
    }
 
-   setupCC();
+   if (!setupCC())
+   {
+       hs->m_iReqType = URQ_ERROR_REJECT;
+       throw CUDTException(MJ_SETUP, MN_REJECTED, 0);
+   }
 
    m_pPeerAddr = (AF_INET == m_iIPversion) ? (sockaddr*)new sockaddr_in : (sockaddr*)new sockaddr_in6;
    memcpy(m_pPeerAddr, peer, (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
@@ -4810,7 +4824,7 @@ bool CUDT::createCrypter(HandshakeSide side, bool bidirectional)
     return m_pCryptoControl->init(side, bidirectional);
 }
 
-void CUDT::setupCC()
+bool CUDT::setupCC()
 {
     // Prepare configuration object,
     // Create the CCC object and configure it.
@@ -4826,7 +4840,10 @@ void CUDT::setupCC()
 
     // Smoother will retrieve whatever parameters it needs
     // from *this.
-    m_Smoother.configure(this);
+    if ( !m_Smoother.configure(this))
+    {
+        return false;
+    }
 
     // XXX Configure FEC module
     if (m_OPT_PktFilterConfigString != "")
@@ -4837,7 +4854,10 @@ void CUDT::setupCC()
         // At this point we state everything is checked and the appropriate
         // corrector type is already selected, so now create it.
         HLOGC(mglog.Debug, log << "FEC: Configuring Corrector: " << m_OPT_PktFilterConfigString);
-        m_PacketFilter.configure(this, m_pRcvBuffer->getUnitQueue(), m_OPT_PktFilterConfigString);
+        if (!m_PacketFilter.configure(this, m_pRcvBuffer->getUnitQueue(), m_OPT_PktFilterConfigString))
+        {
+            return false;
+        }
 
         m_PktFilterRexmitLevel = m_PacketFilter.arqLevel();
     }
@@ -4856,6 +4876,7 @@ void CUDT::setupCC()
         << " bw=" << m_iBandwidth);
 
     updateCC(TEV_INIT, TEV_INIT_RESET);
+    return true;
 }
 
 void CUDT::considerLegacySrtHandshake(uint64_t timebase)
@@ -6633,6 +6654,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
       {
          int acksize = CSeqNo::seqoff(m_iRcvLastSkipAck, ack);
 
+         int32_t oldack SRT_ATR_UNUSED = m_iRcvLastSkipAck;
          m_iRcvLastAck = ack;
          m_iRcvLastSkipAck = ack;
 
@@ -6650,6 +6672,8 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
          // signal m_RcvTsbPdCond. This will kick in the tsbpd thread, which
          // will signal m_RecvDataCond when there's time to play for particular
          // data packet.
+         HLOGC(dlog.Debug, log << "ACK: clip %" << oldack << "-%" << ack
+                 << ", REVOKED " << acksize << " from RCV buffer");
 
          if (m_bTsbPd)
          {
@@ -7200,6 +7224,8 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       // protect packet retransmission
       CGuard::enterCS(m_AckLock);
 
+      int32_t wrong_loss SRT_ATR_UNUSED = CSeqNo::m_iMaxSeqNo;
+
       // decode loss list message and insert loss into the sender loss list
       for (int i = 0, n = (int)(ctrlpkt.getLength() / 4); i < n; ++ i)
       {
@@ -7218,6 +7244,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
             {
                // seq_a must not be greater than seq_b; seq_b must not be greater than the most recent sent seq
                secure = false;
+               wrong_loss = losslist_hi;
                // XXX leaveCS: really necessary? 'break' will break the 'for' loop, not the 'switch' statement.
                // and the leaveCS is done again next to the 'for' loop end.
                CGuard::leaveCS(m_AckLock);
@@ -7252,6 +7279,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
             {
                //seq_a must not be greater than the most recent sent seq
                secure = false;
+               wrong_loss = losslist[i];
                CGuard::leaveCS(m_AckLock);
                break;
             }
@@ -7268,7 +7296,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
       if (!secure)
       {
-         HLOGF(mglog.Debug, "WARNING: out-of-band LOSSREPORT received; considered bug or attack");
+         LOGC(mglog.Warn, log << "out-of-band LOSSREPORT received; BUG or ATTACK - last sent %" << m_iSndCurrSeqNo << " vs loss %" << wrong_loss);
          //this should not happen: attack or bug
          m_bBroken = true;
          m_iBrokenCounter = 0;
@@ -7991,7 +8019,6 @@ int CUDT::processData(CUnit* unit)
    typedef vector< pair<int32_t, int32_t> > loss_seqs_t;
    loss_seqs_t filter_loss_seqs;
    loss_seqs_t srt_loss_seqs;
-   bool record_loss = true;          // Check for loss yourself and record them
    bool report_recorded_loss = true; // Report immediately recorded loss
    vector<CUnit*> incoming;
    bool was_orderly_sent = true;
@@ -8014,18 +8041,14 @@ int CUDT::processData(CUnit* unit)
       vector<CUnit*> undec_units;
       if (m_PacketFilter)
       {
-          record_loss = m_PktFilterRexmitLevel != SRT_ARQ_NEVER;
           report_recorded_loss = m_PktFilterRexmitLevel == SRT_ARQ_ALWAYS;
 
           // Stuff this data into the corrector
           m_PacketFilter.receive(unit, Ref(incoming), Ref(filter_loss_seqs));
-          HLOGC(mglog.Debug, log << "(FEC) fed data, received " << incoming.size() << " pkts, "
+          HLOGC(mglog.Debug, log << "(FILTER) fed data, received " << incoming.size() << " pkts, "
                   << Printable(filter_loss_seqs) << " loss to report, "
-                  << (record_loss ? "" : "DO NOT ")
-                  << "check for losses later"
-                  << (record_loss ? (report_recorded_loss
-                          ? " AND REPORT THEM"
-                          : ", but do not report them") : ""));
+                  << (report_recorded_loss ? "FIND & REPORT LOSSES YOURSELF"
+                      : "REPORT ONLY THOSE"));
       }
       else
       {
@@ -8068,7 +8091,7 @@ int CUDT::processData(CUnit* unit)
 			  }
 
               HLOGC(mglog.Debug, log << CONID() << "RECEIVED: seq=" << packet.m_iSeqNo
-                      << " offset=" << offset << " (BELATED" << rexmitstat[pktrexmitflag] << rexmit_reason
+                      << " offset=" << offset << " (BELATED/" << rexmitstat[pktrexmitflag] << rexmit_reason
                       << ") FLAGS: " << packet.MessageFlagStr());
               continue;
           }
@@ -8112,7 +8135,7 @@ int CUDT::processData(CUnit* unit)
 
           }
 
-          if (m_pRcvBuffer->addData(unit, offset) < 0)
+          if (m_pRcvBuffer->addData(*i, offset) < 0)
           {
               // addData returns -1 if at the m_iLastAckPos+offset position there already is a packet.
               // So this packet is "redundant".
@@ -8128,7 +8151,7 @@ int CUDT::processData(CUnit* unit)
               }
           }
 
-          HLOGC(mglog.Debug, log << CONID() << "RECEIVED: seq=" << packet.m_iSeqNo << " offset=" << offset
+          HLOGC(mglog.Debug, log << CONID() << "RECEIVED: seq=" << rpkt.m_iSeqNo << " offset=" << offset
                   << " (" << exc_type << "/" << rexmitstat[pktrexmitflag] << rexmit_reason << ") FLAGS: "
                   << packet.MessageFlagStr());
 
@@ -8141,7 +8164,7 @@ int CUDT::processData(CUnit* unit)
               ;
               HLOGC(mglog.Debug, log << CONID() << "ERROR: packet not decrypted, dropping data.");
           }
-          else if (record_loss)
+          else
           {
               HLOGC(mglog.Debug, log << "CONTIGUITY CHECK: sequence distance: "
                       << CSeqNo::seqoff(m_iRcvCurrSeqNo, rpkt.m_iSeqNo));
@@ -8331,7 +8354,6 @@ int CUDT::processData(CUnit* unit)
    // can be quite well optimized.
 
    vector<int32_t> lossdata;
-   if (record_loss)
    {
        CGuard lg(m_RcvLossLock);
 
