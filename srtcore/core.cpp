@@ -4845,7 +4845,7 @@ bool CUDT::setupCC()
         return false;
     }
 
-    // XXX Configure FEC module
+    // Configure FEC module
     if (m_OPT_PktFilterConfigString != "")
     {
         // This string, when nonempty, defines that the corrector shall be
@@ -4861,6 +4861,11 @@ bool CUDT::setupCC()
 
         m_PktFilterRexmitLevel = m_PacketFilter.arqLevel();
     }
+	else
+	{
+		// When we have no filter, ARQ should work in ALWAYS mode.
+		m_PktFilterRexmitLevel = SRT_ARQ_ALWAYS;
+	}
 
     // Override the value of minimum NAK interval, per Smoother's wish.
     // When default 0 value is returned, the current value set by CUDT
@@ -8987,7 +8992,7 @@ void CUDT::checkTimers()
     }
 
 
-    if (m_bRcvNakReport)
+    if (m_bRcvNakReport && m_PktFilterRexmitLevel == SRT_ARQ_ALWAYS)
     {
         /*
          * Enable NAK reports for SRT.
