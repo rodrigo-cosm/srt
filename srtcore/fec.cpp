@@ -87,23 +87,6 @@ FECFilterBuiltin::FECFilterBuiltin(const SrtFilterInitializer &init, std::vector
         m_cols_only = false;
     }
 
-    if (m_arrangement_staircase)
-    {
-        // Staircase has currently a limitation that both sizes must be equal.
-        // This will be fixed later, but still, at least the limitation that one
-        // must be multiplicity of the other will still apply.
-        if (m_number_rows != 1 && m_number_rows != m_number_cols)
-        {
-            LOGC(mglog.Error, log << "FILTER/FEC: CONFIG: with layout=staircase (default), 'rows' must be = 'cols' or 1");
-            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
-        }
-        m_column_slip = 1 + sizeRow();
-    }
-    else
-    {
-        m_column_slip = 1;
-    }
-
     // Extra interpret level, if found, default never.
     // Check only those that are managed.
     string level = cfg.parameters["arq"];
@@ -198,9 +181,9 @@ FECFilterBuiltin::FECFilterBuiltin(const SrtFilterInitializer &init, std::vector
         // Slip: rows+1 (the first packet in the next group is later by 1 column + one whole row down)
 
         HLOGP(mglog.Debug, "FEC: INIT: sender first N columns");
-        ConfigureColumns(snd.cols, numberCols(), sizeCol(), m_column_slip, snd_isn);
+        ConfigureColumns(snd.cols, snd_isn);
         HLOGP(mglog.Debug, "FEC: INIT: receiver first N columns");
-        ConfigureColumns(rcv.colq, numberCols(), sizeCol(), m_column_slip, rcv_isn);
+        ConfigureColumns(rcv.colq, rcv_isn);
     }
 
     // The bit markers that mark the received/lost packets will be expanded
@@ -209,24 +192,67 @@ FECFilterBuiltin::FECFilterBuiltin(const SrtFilterInitializer &init, std::vector
 }
 
 template <class Container>
-void FECFilterBuiltin::ConfigureColumns(Container& which, size_t gsize, size_t gstep, size_t gslip, int32_t isn)
+void FECFilterBuiltin::ConfigureColumns(Container& which, int32_t isn)
 {
     // This is to initialize the first set of groups.
 
     // which: group vector.
-    // gsize: number of packets in one group
-    // gstep: seqdiff between two packets consecutive in the group
-    // gslip: seqdiff between the first packet in one group and first packet in the next group
+    // numberCols(): number of packets in one group
+    // sizeCol(): seqdiff between two packets consecutive in the group
+    // m_column_slip: seqdiff between the first packet in one group and first packet in the next group
     // isn: sequence number of the first packet in the first group
 
     size_t zero = which.size();
-    which.resize(zero + gsize);
 
-    int32_t seqno = isn;
+    // The first series of initialization should embrace:
+    // - if multiplyer == 1, EVERYTHING (also the case of SOLID matrix)
+    // - if more, ONLY THE FIRST SQUARE.
+    which.resize(zero + numberCols());
+
+    if (!m_arrangement_staircase)
+    {
+        HLOGC(mglog.Debug, log << "ConfigureColumns: new "
+                << numberCols() << " columns, START AT: " << zero);
+        // With even arrangement, just use a plain loop.
+        // Initialize straight way all groups in the size.
+        int32_t seqno = isn;
+        for (size_t i = zero; i < which.size(); ++i)
+        {
+            ConfigureGroup(which[i], seqno, sizeCol(), sizeCol() * numberCols());
+            seqno = CSeqNo::incseq(seqno);
+        }
+        return;
+    }
+
+    // With staircase, the next column's base sequence is
+    // shifted by 1 AND the length of the row. When this shift
+    // becomes below the column 0 bottom, reset it to the row 0
+    // and continue.
+
+    // Start here. The 'isn' is still the absolute base sequence value.
+    size_t offset = 0;
+
+    HLOGC(mglog.Debug, log << "ConfigureColumns: " << (which.size() - zero)
+            << " columns, START AT: " << zero);
+
     for (size_t i = zero; i < which.size(); ++i)
     {
-        ConfigureGroup(which[i], seqno, gstep, gstep * gsize);
-        seqno = CSeqNo::incseq(seqno, gslip);
+        int32_t seq = CSeqNo::incseq(isn, offset);
+        ConfigureGroup(which[i], seq, sizeCol(), sizeCol() * numberCols());
+
+        size_t col = i - zero;
+        if (col % numberRows() == numberRows() - 1)
+        {
+            offset = col + 1; // +1 because we want it for the next column
+            HLOGC(mglog.Debug, log << "ConfigureColumns: ... (resetting to column 0: +"
+                    << offset << " %" << CSeqNo::incseq(isn, offset));
+        }
+        else
+        {
+            offset += 1 + sizeRow();
+            HLOGC(mglog.Debug, log << "ConfigureColumns: ... (continue +"
+                    << offset << " %" << CSeqNo::incseq(isn, offset));
+        }
     }
 }
 
@@ -692,7 +718,14 @@ bool FECFilterBuiltin::receive(const CPacket& rpkt, loss_seqs_t& loss_seqs)
                 << " RESULT=" << boolalpha << ok << " IRRECOVERABLE: " << Printable(irrecover_row));
     }
 
-    if (!isfec.row) // == regular packet or FEC/COL
+    if (!ok)
+    {
+        // Just informative.
+        LOGC(mglog.Error, log << "FEC/H: rebuilding FAILED.");
+    }
+
+    // Don't do HangVertical in case of row-only configuration
+    if (!isfec.row && m_number_rows > 1) // == regular packet or FEC/COL
     {
         ok = HangVertical(rpkt, isfec.colx, irrecover_col);
         HLOGC(mglog.Debug, log << "FEC: HangVertical %" << rpkt.getSeqNo()
@@ -703,7 +736,7 @@ bool FECFilterBuiltin::receive(const CPacket& rpkt, loss_seqs_t& loss_seqs)
     if (!ok)
     {
         // Just informative.
-        LOGC(mglog.Error, log << "FEC: rebuilding FAILED.");
+        LOGC(mglog.Error, log << "FEC/V: rebuilding FAILED.");
     }
 
     // Pack the following packets as irrecoverable:
@@ -746,35 +779,72 @@ void FECFilterBuiltin::CheckLargeDrop(int32_t seqno)
 {
 	// Ok, first try to pick up the column and series
 
-    int offset = CSeqNo::seqoff(rcv.colq[0].base, seqno);
+    int offset = CSeqNo::seqoff(rcv.rowq[0].base, seqno);
     if (offset < 0)
     {
         return;
     }
 
-	// Number of column - regardless of series.
-	int colx = offset % numberCols();
+    // For row-only configuration, check only parts referring
+    // to a row.
+    if (m_number_rows == 1)
+    {
+        // We have no columns. So just check if exceeds 5* the row size.
+        // If so, clear the rows and reconfigure them.
+        if (offset > int(5 * sizeRow()))
+        {
+            // Calculate the new row base, without breaking the current
+            // layout. Make a skip by some number of rows so that the new
+            // first row is prepared to receive this packet.
 
-	// Base sequence from the group series 0 in this column
+            int32_t oldbase = rcv.rowq[0].base;
+            size_t rowdist = offset / sizeRow();
+            int32_t newbase = CSeqNo::incseq(oldbase, rowdist * sizeRow());
 
-	// [[assert rcv.colq.size() >= numberCols()]];
+            LOGC(mglog.Warn, log << "FEC: LARGE DROP detected! Resetting row groups. Base: %" << oldbase
+                    << " -> %" << newbase << "(shift by " << CSeqNo::seqoff(oldbase, newbase) << ")");
+
+            rcv.rowq.clear();
+            rcv.cells.clear();
+
+            rcv.rowq.resize(1);
+            HLOGP(mglog.Debug, "FEC: RE-INIT: receiver first row");
+            ConfigureGroup(rcv.rowq[0], newbase, 1, sizeRow());
+        }
+
+        return;
+    }
+
+    bool reset_anyway = false;
+    if (offset != CSeqNo::seqoff(rcv.colq[0].base, seqno))
+    {
+        reset_anyway = true;
+		HLOGC(mglog.Debug, log << "FEC: IPE: row.base %" << rcv.rowq[0].base << " != %" << rcv.colq[0].base << " - resetting");
+    }
+
+    // Number of column - regardless of series.
+    int colx = offset % numberCols();
+
+    // Base sequence from the group series 0 in this column
+
+    // [[assert rcv.colq.size() >= numberCols()]];
     int32_t colbase = rcv.colq[colx].base;
 
-	// Offset between this base and seqno
+    // Offset between this base and seqno
     int coloff = CSeqNo::seqoff(colbase, seqno);
 
-	// Might be that it's in the row above the column,
-	// still it's not a large-drop
-	if (coloff < 0)
-	{
-		return;
-	}
+    // Might be that it's in the row above the column,
+    // still it's not a large-drop
+    if (coloff < 0)
+    {
+        return;
+    }
 
-	size_t matrix = numberRows() * numberCols();
+    size_t matrix = numberRows() * numberCols();
 
-	int colseries = coloff / matrix;
+    int colseries = coloff / matrix;
 
-	if (colseries > 2)
+	if (colseries > 2 || reset_anyway)
 	{
 		// Ok, now define the new ABSOLUTE BASE. This is the base of the column 0
 		// column group from the series previous towards this one.
@@ -792,14 +862,11 @@ void FECFilterBuiltin::CheckLargeDrop(int32_t seqno)
 		HLOGP(mglog.Debug, "FEC: RE-INIT: receiver first row");
 		ConfigureGroup(rcv.rowq[0], newbase, 1, sizeRow());
 
-		if (sizeCol() > 1)
-		{
-			// Size: cols
-			// Step: rows (the next packet in the group is one row later)
-			// Slip: rows+1 (the first packet in the next group is later by 1 column + one whole row down)
-			HLOGP(mglog.Debug, "FEC: RE-INIT: receiver first N columns");
-			ConfigureColumns(rcv.colq, numberCols(), sizeCol(), m_column_slip, newbase);
-		}
+        // Size: cols
+        // Step: rows (the next packet in the group is one row later)
+        // Slip: rows+1 (the first packet in the next group is later by 1 column + one whole row down)
+        HLOGP(mglog.Debug, "FEC: RE-INIT: receiver first N columns");
+        ConfigureColumns(rcv.colq, newbase);
 
 		rcv.cell_base = newbase;
 	}
@@ -1128,9 +1195,9 @@ int32_t FECFilterBuiltin::RcvGetLossSeqVert(Group& g)
 
     int offset = -1;
 
-
-    for (size_t cix = baseoff; cix < baseoff + m_number_cols*m_number_rows; cix += m_number_rows)
+    for (size_t col = 0; col < sizeCol(); ++col)
     {
+        size_t cix = baseoff + (col * sizeRow());
         if (!rcv.CellAt(cix))
         {
             offset = cix;
@@ -1516,7 +1583,7 @@ void FECFilterBuiltin::RcvCheckDismissColumn(int32_t seq, int colgx, loss_seqs_t
     // - get the series for this column
     // - if series is 0, just return
 
-    int series = colgx / sizeCol();
+    int series = colgx / numberCols();
     if (series == 0)
         return;
 
@@ -1527,20 +1594,65 @@ void FECFilterBuiltin::RcvCheckDismissColumn(int32_t seq, int colgx, loss_seqs_t
 
     set<int32_t> loss;
 
-    int colx = colgx % sizeCol();
+    int colx = colgx % numberCols();
+
+    HLOGC(mglog.Debug, log << "FEC/V: going to DISMISS cols past %" << seq
+            << " at INDEX=" << colgx << " col=" << colx
+            << " series=" << series << " - looking up candidates...");
+
     // Series 0 means simply that colx is the index in the container
     for (int i = colx; i >= 0; --i)
     {
         RcvGroup& pg = rcv.colq[i];
         if (pg.dismissed)
-            break; // don't look for any preceding column, if this is dismissed
+        {
+            HLOGC(mglog.Debug, log << "FEC/V: ... [" << i << "] base=%"
+                    << pg.base << " ALREADY DISMISSED, done.");
+            continue;
+        }
+
+        // With multi-staircase it may happen that THIS column contains
+        // sequences that are all in the past, but the PREVIOUS column
+        // has some in the future, because THIS column is the top of
+        // the second staircase, and PREVIOUS is the bottom stair of
+        // the first staircase. When this is confirmed, simply skip
+        // the columns that have the highest sequence in the future
+        // because they can't be dismissed yet. Jump them over, so maybe
+        // they can be dismissed in future.
+        int this_col_offset = CSeqNo::seqoff(pg.base, seq);
+        int last_seq_offset = this_col_offset - (sizeCol()-1)*sizeRow();
+
+        if (last_seq_offset < 0)
+        {
+            HLOGC(mglog.Debug, log << "FEC/V: ... [" << i << "] base=%"
+                    << pg.base << " TOO EARLY (last=%"
+                    << CSeqNo::incseq(pg.base, (sizeCol()-1)*sizeRow())
+                    << ")");
+            continue;
+        }
+
+        // NOTE: If it was standing on the second staircase top, there's
+        // still a chance that it hits the staircase top of the first
+        // staircase and will dismiss it as well.
+
+        HLOGC(mglog.Debug, log << "FEC/V: ... [" << i << "] base="
+                << pg.base << " - collecting losses.");
 
         pg.dismissed = true; // mark irrecover already collected
         for (size_t sof = 0; sof < pg.step * sizeCol(); sof += pg.step)
         {
             int32_t lseq = CSeqNo::incseq(pg.base, sof);
             if (!IsLost(lseq))
+            {
                 loss.insert(lseq);
+                HLOGC(mglog.Debug, log << "FEC: ... cell +" << sof << " %" << lseq
+                        << " lost");
+            }
+            else
+            {
+                HLOGC(mglog.Debug, log << "FEC: ... cell +" << sof << " %" << lseq
+                        << " EXISTS");
+            }
         }
     }
 
@@ -1947,9 +2059,6 @@ int FECFilterBuiltin::ExtendColumns(int colgx)
     // Start with the series that doesn't exist
     int old_series = rcv.colq.size() / numberCols();
 
-    size_t gsize = numberCols(); // number of columns in one series
-    size_t gstep = sizeRow();    // seq diff bw. two consex elements in the column (stats)
-
     // Each iteration of this loop adds one series of columns.
     // One series count numberCols() columns.
     for (int s = old_series; s <= series; ++s)
@@ -1962,14 +2071,14 @@ int FECFilterBuiltin::ExtendColumns(int colgx)
         // base increased by one matrix size times series number.
         // THIS REMAINS TRUE NO MATTER IF WE USE STRAIGNT OR STAIRCASE ARRANGEMENT.
         int32_t sbase = CSeqNo::incseq(base, (numberCols()*numberRows()) * s);
-        HLOGC(mglog.Debug, log << "FEC/V: EXTENDING column groups, size "
-                << rcv.colq.size() << " -> " << (rcv.colq.size() + gsize)
-                << ", last base=%" << sbase << " step=" << gstep
-                << " size=" << gsize << " %slip=" << m_column_slip);
+        HLOGC(mglog.Debug, log << "FEC/V: EXTENDING column groups series " << s
+                << ", size " << rcv.colq.size() << " -> "
+                << (rcv.colq.size() + numberCols())
+                << ", base=%" << base << " -> %" << sbase);
 
         // Every call to this function extends the given container
         // by 'gsize' number and configures each so added column accordingly.
-        ConfigureColumns(rcv.colq, gsize, gstep, m_column_slip, sbase);
+        ConfigureColumns(rcv.colq, sbase);
     }
 
 #if ENABLE_HEAVY_LOGGING

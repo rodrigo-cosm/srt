@@ -18,7 +18,6 @@ class FECFilterBuiltin: public SrtPacketFilterBase
     SRT_ARQLevel m_fallback_level;
     bool m_cols_only;
     bool m_arrangement_staircase;
-    size_t m_column_slip;
 
 public:
 
@@ -158,7 +157,7 @@ private:
 
     void ConfigureGroup(Group& g, int32_t seqno, size_t gstep, size_t drop);
     template <class Container>
-    void ConfigureColumns(Container& which, size_t gsize, size_t gstep, size_t gslip, int32_t isn);
+    void ConfigureColumns(Container& which, int32_t isn);
 
     void ResetGroup(Group& g);
 

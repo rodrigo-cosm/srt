@@ -772,13 +772,6 @@ if (ENABLE_APPS)
 		srt_add_testprogram(srt-test-file)
 		srt_make_application(srt-test-file)
 
-		srt_add_testprogram(srt-test-folder)
-		target_include_directories(srt-test-folder PRIVATE
-			"${CMAKE_SOURCE_DIR}/submodules/json/single_include/"
-			"${CMAKE_SOURCE_DIR}/submodules/date/include/"
-		)
-		srt_make_application(srt-test-folder)
-
 		srt_add_testprogram(srt-test-relay)
 		srt_make_application(srt-test-relay)
 		target_compile_definitions(srt-test-relay PUBLIC -DSRT_ENABLE_VERBOSE_LOCK)
