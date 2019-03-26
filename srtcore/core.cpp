@@ -8166,10 +8166,10 @@ int CUDT::processData(CUnit* in_unit)
 					  // Keep packet in received buffer
 					  // Crypto flags are still set
 					  // It will be acknowledged
-					  m_iTraceRcvUndecrypt += 1;
-					  m_ullTraceRcvBytesUndecrypt += pktsz;
-					  m_iRcvUndecryptTotal += 1;
-					  m_ullRcvBytesUndecryptTotal += pktsz;
+					  m_stats.m_iTraceRcvUndecrypt += 1;
+					  m_stats.m_ullTraceRcvBytesUndecrypt += pktsz;
+					  m_stats.m_iRcvUndecryptTotal += 1;
+					  m_stats.m_ullRcvBytesUndecryptTotal += pktsz;
 					  // Log message degraded to debug because it may happen very often
 					  HLOGC(dlog.Debug, log << CONID() << "ERROR: packet not decrypted, dropping data.");
 					  adding_successful = false;
