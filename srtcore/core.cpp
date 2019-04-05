@@ -8040,7 +8040,8 @@ int CUDT::processData(CUnit* in_unit)
        uint64_t lossbytes = loss * m_pRcvBuffer->getRcvAvgPayloadSize();
        m_stats.traceRcvBytesLoss += lossbytes;
        m_stats.rcvBytesLossTotal += lossbytes;
-       HLOGC(mglog.Debug, log << "LOSS STATS: added packets=" << loss << " bytes=" << lossbytes << " (avg)");
+       HLOGC(mglog.Debug, log << "LOSS STATS: n=" << loss << "SEQ: ["
+               << CSeqNo::incseq(m_iRcvCurrSeqNo) << " " << CSeqNo::decseq(packet.m_iSeqNo) << "]");
    }
 
    {
