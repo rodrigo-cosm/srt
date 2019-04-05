@@ -8030,18 +8030,22 @@ int CUDT::processData(CUnit* in_unit)
    // to the filter and before the filter could recover the packet before anyone
    // notices :)
 
-
-   if (CSeqNo::seqcmp(packet.m_iSeqNo, CSeqNo::incseq(m_iRcvCurrSeqNo)) > 0)   // Loss detection, for stats.
+   if (packet.getMsgSeq() != 0) // disregard filter-control packets, their seq may mean nothing
    {
-       CGuard lg(m_StatsLock);
-       int loss = CSeqNo::seqlen(m_iRcvCurrSeqNo, packet.m_iSeqNo) - 2;
-       m_stats.traceRcvLoss += loss;
-       m_stats.rcvLossTotal += loss;
-       uint64_t lossbytes = loss * m_pRcvBuffer->getRcvAvgPayloadSize();
-       m_stats.traceRcvBytesLoss += lossbytes;
-       m_stats.rcvBytesLossTotal += lossbytes;
-       HLOGC(mglog.Debug, log << "LOSS STATS: n=" << loss << "SEQ: ["
-               << CSeqNo::incseq(m_iRcvCurrSeqNo) << " " << CSeqNo::decseq(packet.m_iSeqNo) << "]");
+       int diff = CSeqNo::seqoff(m_iRcvCurrSeqNo, packet.m_iSeqNo);
+       if (diff > 1)
+       {
+           CGuard lg(m_StatsLock);
+           int loss = diff - 2; // loss is all that is above diff == 1
+           m_stats.traceRcvLoss += loss;
+           m_stats.rcvLossTotal += loss;
+           uint64_t lossbytes = loss * m_pRcvBuffer->getRcvAvgPayloadSize();
+           m_stats.traceRcvBytesLoss += lossbytes;
+           m_stats.rcvBytesLossTotal += lossbytes;
+           HLOGC(mglog.Debug, log << "LOSS STATS: n=" << loss << "SEQ: ["
+                   << CSeqNo::incseq(m_iRcvCurrSeqNo) << " " << CSeqNo::decseq(packet.m_iSeqNo) << "]");
+
+       }
    }
 
    {
