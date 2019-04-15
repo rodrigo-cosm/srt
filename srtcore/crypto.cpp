@@ -105,10 +105,6 @@ void CCryptoControl::createFakeSndContext()
 
 int CCryptoControl::processSrtMsg_KMREQ(const uint32_t* srtdata, size_t bytelen, uint32_t* srtdata_out, ref_t<size_t> r_srtlen, int hsv)
 {
-    // The side that has received KMREQ is always an HSD_RESPONDER, regardless of
-    // what has called this function. The HSv5 handshake only enforces bidirectional
-    // connection.
-
     bool have_hsv5 = hsv > CUDT::HS_VERSION_UDT4;
 
     // This defines from where it was called:
@@ -116,7 +112,6 @@ int CCryptoControl::processSrtMsg_KMREQ(const uint32_t* srtdata, size_t bytelen,
     // - HSv4:
     //   - called from UMSG_EXT command packet with SRT_CMD_KMREQ command
     //   - must perform endian swapping (it has been swapped from upside, incorrectly).
-    const bool need_endianswap = !have_hsv5;
     //   - called for initial KMX when HSv4
     //   - regardless of HSv, called for key refreshing
     //   - it's always unidirectional
@@ -126,16 +121,16 @@ int CCryptoControl::processSrtMsg_KMREQ(const uint32_t* srtdata, size_t bytelen,
     //   - needs no endian swapping
     //   - called for initial KMX when HSv5
     //   - it is bidirectional
-    const bool bidirectional = have_hsv5;
 
     size_t& srtlen = *r_srtlen;
     srtlen = bytelen/sizeof(srtdata[SRT_KMR_KMSTATE]);
 
+    const bool need_endianswap = !have_hsv5;
     if (need_endianswap)
     {
-        //Receiver
-        /* All 32-bit msg fields swapped on reception
-         * But HaiCrypt expect network order message
+        // Command packets' payload is treated as a 32-bit integer array.
+        // This includes UMSG_EXT.
+        /* But HaiCrypt expect network order message
          * Re-swap to cancel it.
          */
         HtoNLA(srtdata_out, srtdata, srtlen);
@@ -146,6 +141,12 @@ int CCryptoControl::processSrtMsg_KMREQ(const uint32_t* srtdata, size_t bytelen,
     }
 
     unsigned char* kmdata = reinterpret_cast<unsigned char*>(srtdata_out);
+
+    // The side that has received KMREQ is always an HSD_RESPONDER, regardless of
+    // what has called this function. The HSv5 handshake only enforces bidirectional
+    // connection.
+
+    bool bidirectional = have_hsv5;
 
     // Local macro to return rejection appropriately.
     // CHANGED. The first version made HSv5 reject the connection.
@@ -337,11 +338,6 @@ int CCryptoControl::processSrtMsg_KMRSP(const uint32_t* srtdata, size_t len, int
 
     bool have_hsv5 = hsv > CUDT::HS_VERSION_UDT4;
 
-    // This defines from where it was called:
-    //
-    // - HSv4:
-    //   - called from UMSG_EXT command packet with SRT_CMD_KMREQ command
-    //   - must perform endian swapping (it has been swapped from upside, incorrectly).
     const bool need_endianswap = !have_hsv5;
 
     if (need_endianswap)

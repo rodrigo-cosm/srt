@@ -200,6 +200,7 @@ string CHandShake::ExtensionFlagStr(int32_t fl)
     return out.str();
 }
 
+
 // XXX This code isn't currently used. Left here because it can
 // be used in future, should any refactoring for the "manual word placement"
 // code be done.

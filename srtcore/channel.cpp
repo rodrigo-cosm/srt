@@ -404,8 +404,8 @@ int CChannel::sendto(const sockaddr* addr, const CPacket& packet) const
     // Payload should be:
     // - if data, left alone
     // - if control, then
-    //     - for specific command types, inverted with dedicated function
     //     - for a general case, treat the payload as a 32-bit integer array.
+    //     - for specific command types, inverted with dedicated function
     if (packet.isControl())
     {
         // Use the copy for inversion
