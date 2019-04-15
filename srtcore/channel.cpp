@@ -621,8 +621,12 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
 
     packet.setLength(recv_size - CPacket::HDR_SIZE);
 
+    // Apply hardware endian convention to the header
     NtoHLA(packet.m_nHeader, packet.m_nHeader, CPacket::PH_SIZE);
-    packet.hardwarizePayload();
+
+    // Now the header can be checked and the payload inverted as well, if needed
+    if (packet.isControl())
+        packet.hardwarizePayload();
     return RST_OK;
 
 Return_error:
