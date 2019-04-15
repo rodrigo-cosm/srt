@@ -1836,6 +1836,7 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
                     << " length=" << ra_size << " words (KmMsg_size=" << msglen << ")");
                     // XXX INSECURE ": [" << FormatBinaryString((uint8_t*)keydata, msglen) << "]";
 
+                memcpy(p + offset, keydata, ra_size * sizeof(uint32_t));
                 have_any_keys = true;
             }
 
@@ -1879,6 +1880,8 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
             ++offset; // Once cell, containting CMD spec and size
             HLOGC(mglog.Debug, log << "createSrtHandshake: KMRSP: applying returned key length="
                     << ra_size); // XXX INSECURE << " words: [" << FormatBinaryString((uint8_t*)kmdata, kmdata_wordsize*sizeof(uint32_t)) << "]";
+
+            memcpy(p + offset, keydata, ra_size * sizeof(uint32_t));
         }
         else
         {
