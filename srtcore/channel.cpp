@@ -422,7 +422,7 @@ int CChannel::sendto(const sockaddr* addr, const CPacket& packet) const
       msghdr mh;
       mh.msg_name = (sockaddr*)addr;
       mh.msg_namelen = m_iSockAddrSize;
-      mh.msg_iov = (iovec*)packet.m_PacketVector;
+      mh.msg_iov = outv;
       mh.msg_iovlen = 2;
       mh.msg_control = NULL;
       mh.msg_controllen = 0;
@@ -432,7 +432,7 @@ int CChannel::sendto(const sockaddr* addr, const CPacket& packet) const
    #else
       DWORD size = (DWORD) (CPacket::HDR_SIZE + packet.getLength());
       int addrsize = m_iSockAddrSize;
-      int res = ::WSASendTo(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, 0, addr, addrsize, NULL, NULL);
+      int res = ::WSASendTo(m_iSocket, (LPWSABUF)outv, 2, &size, 0, addr, addrsize, NULL, NULL);
       res = (0 == res) ? size : -1;
    #endif
 
