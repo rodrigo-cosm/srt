@@ -366,7 +366,7 @@ void CChannel::getPeerAddr(sockaddr* addr) const
 }
 
 
-int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
+int CChannel::sendto(const sockaddr* addr, const CPacket& packet) const
 {
 #if ENABLE_HEAVY_LOGGING
     std::ostringstream spec;
@@ -390,21 +390,33 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
         << spec.str());
 #endif
 
-   // convert control information into network order
-   // XXX USE HtoNLA!
-   if (packet.isControl())
-      for (ptrdiff_t i = 0, n = packet.getLength() / 4; i < n; ++i)
-         *((uint32_t *)packet.m_pcData + i) = htonl(*((uint32_t *)packet.m_pcData + i));
+    // Use stack-allocated for one packet
+    char outhdr[CPacket::HDR_SIZE];
+    char outctl[CPacket::SRT_MAX_PAYLOAD_SIZE];
 
-   // convert packet header into network order
-   //for (int j = 0; j < 4; ++ j)
-   //   packet.m_nHeader[j] = htonl(packet.m_nHeader[j]);
-   uint32_t* p = packet.m_nHeader;
-   for (int j = 0; j < 4; ++ j)
-   {
-      *p = htonl(*p);
-      ++ p;
-   }
+    IOVector outv[2];
+
+    outv[0].set(outhdr, CPacket::HDR_SIZE);
+
+    // Hardware-to-Network conversion: header
+    HtoNLA((uint32_t*)outhdr, packet.m_nHeader, CPacket::PH_SIZE);
+
+    // Payload should be:
+    // - if data, left alone
+    // - if control, then
+    //     - for specific command types, inverted with dedicated function
+    //     - for a general case, treat the payload as a 32-bit integer array.
+    if (packet.isControl())
+    {
+        // Use the copy for inversion
+        packet.networkizePayload(outctl);
+        outv[1].set(outctl, packet.getLength());
+    }
+    else
+    {
+        // Data will simply use the original buffer.
+        outv[1].set(packet.m_pcData, packet.getLength());
+    }
 
    #ifndef _WIN32
       msghdr mh;
@@ -423,22 +435,6 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
       int res = ::WSASendTo(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, 0, addr, addrsize, NULL, NULL);
       res = (0 == res) ? size : -1;
    #endif
-
-   // convert back into local host order
-   //for (int k = 0; k < 4; ++ k)
-   //   packet.m_nHeader[k] = ntohl(packet.m_nHeader[k]);
-   p = packet.m_nHeader;
-   for (int k = 0; k < 4; ++ k)
-   {
-      *p = ntohl(*p);
-       ++ p;
-   }
-
-   if (packet.isControl())
-   {
-      for (ptrdiff_t l = 0, n = packet.getLength() / 4; l < n; ++ l)
-         *((uint32_t *)packet.m_pcData + l) = ntohl(*((uint32_t *)packet.m_pcData + l));
-   }
 
    return res;
 }
@@ -625,25 +621,8 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
 
     packet.setLength(recv_size - CPacket::HDR_SIZE);
 
-    // convert back into local host order
-    // XXX use NtoHLA().
-    //for (int i = 0; i < 4; ++ i)
-    //   packet.m_nHeader[i] = ntohl(packet.m_nHeader[i]);
-    {
-        uint32_t* p = packet.m_nHeader;
-        for (size_t i = 0; i < CPacket::PH_SIZE; ++ i)
-        {
-            *p = ntohl(*p);
-            ++ p;
-        }
-    }
-
-    if (packet.isControl())
-    {
-        for (size_t j = 0, n = packet.getLength() / sizeof (uint32_t); j < n; ++ j)
-            *((uint32_t *)packet.m_pcData + j) = ntohl(*((uint32_t *)packet.m_pcData + j));
-    }
-
+    NtoHLA(packet.m_nHeader, packet.m_nHeader, CPacket::PH_SIZE);
+    packet.hardwarizePayload();
     return RST_OK;
 
 Return_error:

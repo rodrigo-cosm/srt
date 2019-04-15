@@ -163,6 +163,7 @@ modified by
 #include <cstring>
 #include "packet.h"
 #include "logging.h"
+#include "handshake.h"
 
 namespace srt_logging
 {
@@ -325,6 +326,207 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
    default:
       break;
    }
+}
+
+void CPacket::hardwarizePayload()
+{
+    // This function should turn the payload contents
+    // from the network order (big endian) into the
+    // hardware order. This should be done immediately
+    // upon reception and the hardware layout should then
+    // stay permanently there.
+
+    // Check entry conditions. For data packets there
+    // should be no transformation done.
+
+    if (!isControl())
+    {
+        LOGC(mglog.Fatal, log << "IPE: hardwarizePayload() should not be called on data packets!");
+        return;
+    }
+
+    // Normally a control packet should be treated as an array of
+    // 32-bit integers. A special case is with handshake.
+
+    if (getType() != UMSG_HANDSHAKE)
+    {
+        // Simply do network-to-hardware conversion for the whole contents.
+        size_t ra_size = getLength()/sizeof(uint32_t);
+        if (getLength()%sizeof(uint32_t))
+        {
+            LOGC(mglog.Error, log << "IPE: UNALIGNED payload size for a control packet!");
+            // Ignore though. The size in LONGs is still less than the payload length.
+        }
+
+        uint32_t* begin = (uint32_t*)m_pcData;
+        NtoHLA(begin, begin, ra_size);
+        return;
+    }
+
+    // We have a handshake, check the size
+    if (getLength() < CHandShake::m_iContentSize)
+    {
+        LOGC(mglog.Error, log << "IPE: HANDSHAKE PACKET TOO SMALL");
+        return; // don't do anything, it will still fail later
+    }
+
+    // We know that the initial part of the handshake
+    // is treated as a 32-bit integer array containing hardware-laidout
+    // integer numbers. First, invert only them.
+
+    uint32_t* begin = (uint32_t*)m_pcData;
+    NtoHLA(begin, begin, CHandShake::DATA_ARRAY_SIZE);
+
+    // This is followed by the IP address, with space predicted to hold
+    // both IPv4 and IPv6 address, however the functions that write this
+    // address to this field use the value from sockaddr_in/sockaddr_in6,
+    // which is already in network order. THIS MUST BE LEFT UNCHANGED.
+
+    // Now, check if we have extensions.
+    if (getLength() == CHandShake::m_iContentSize)
+    {
+        return; // no extensions
+    }
+
+    uint32_t* extbegin = (uint32_t*)(m_pcData + CHandShake::m_iContentSize);
+
+    // The extension protocol is:
+    // - 16-bit field ID
+    // - 16-bit field length
+    // HOWEVER, they are packed in a 32-bit integers using bit fields
+    // combined through & and >> operators.
+
+    size_t rem = getLength() - CHandShake::m_iContentSize;
+
+    for (;;)
+    {
+        *extbegin = ntohl(*extbegin);
+        size_t len = HS_CMDSPEC_SIZE::unwrap(*extbegin);
+        if (len*sizeof(uint32_t) > rem)
+        {
+            LOGC(mglog.Error, log << "FATAL: mis-declared extension len=" << len << " for remaining size=" << rem);
+            return;
+        }
+
+        if (CHandShake::isPlainEndian(HS_CMDSPEC_CMD::unwrap(*extbegin)))
+        {
+            // Do nothing.
+        }
+        else
+        {
+            NtoHLA(extbegin+1, extbegin+1, len);
+        }
+
+        extbegin += len+1; // Skip 1 32-bit header and the number of 32-bit words as spec'd by len
+
+        if ((char*)extbegin - m_pcData >= (int)getLength())
+            break;
+    }
+
+    // This is done in place, that's all.
+}
+
+void CPacket::networkizePayload(char* output) const
+{
+    // This function should turn the payload contents
+    // from the network order (big endian) into the
+    // hardware order. This should be done immediately
+    // upon reception and the hardware layout should then
+    // stay permanently there.
+
+    // Check entry conditions. For data packets there
+    // should be no transformation done.
+
+    if (!isControl())
+    {
+        LOGC(mglog.Fatal, log << "IPE: networkizePayload() should not be called on data packets!");
+        return;
+    }
+
+    // Normally a control packet should be treated as an array of
+    // 32-bit integers. A special case is with handshake.
+
+    if (getType() != UMSG_HANDSHAKE)
+    {
+        // Simply do hardware-to-network conversion for the whole contents.
+        size_t ra_size = getLength()/sizeof(uint32_t);
+        if (getLength()%sizeof(uint32_t))
+        {
+            LOGC(mglog.Error, log << "IPE: UNALIGNED payload size for a control packet!");
+            // Ignore though. The size in LONGs is still less than the payload length.
+        }
+
+        uint32_t* begin = (uint32_t*)m_pcData;
+        NtoHLA((uint32_t*)output, begin, ra_size);
+        return;
+    }
+
+    static const size_t SIZEI32 = sizeof(uint32_t);
+
+    // We have a handshake, check the size
+    if (getLength() < CHandShake::m_iContentSize)
+    {
+        LOGC(mglog.Error, log << "IPE: HANDSHAKE PACKET TOO SMALL");
+        return; // don't do anything, it will still fail later
+    }
+
+    // We know that the initial part of the handshake
+    // is treated as a 32-bit integer array containing hardware-laidout
+    // integer numbers. First, invert only them.
+
+    uint32_t* begin = (uint32_t*)m_pcData;
+    NtoHLA((uint32_t*)output, begin, CHandShake::DATA_ARRAY_SIZE);
+
+    // This is followed by the IP address, with space predicted to hold
+    // both IPv4 and IPv6 address, however the functions that write this
+    // address to this field use the value from sockaddr_in/sockaddr_in6,
+    // which is already in network order. THIS MUST BE LEFT UNCHANGED.
+
+    static const size_t IP_DELTA = CHandShake::DATA_ARRAY_SIZE * SIZEI32;
+
+    memcpy(output + IP_DELTA,
+            m_pcData + IP_DELTA,
+            sizeof(CHandShake::m_piPeerIP));
+
+    // Now, check if we have extensions.
+    if (getLength() == CHandShake::m_iContentSize)
+    {
+        return; // no extensions
+    }
+
+    size_t rem = getLength() - CHandShake::m_iContentSize;
+
+    uint32_t* extbegin = (uint32_t*)(m_pcData + CHandShake::m_iContentSize);
+    uint32_t* netbegin = (uint32_t*)(output + CHandShake::m_iContentSize);
+
+    for (;;)
+    {
+        *netbegin= htonl(*extbegin);
+        size_t len = HS_CMDSPEC_SIZE::unwrap(*extbegin);
+        if (len*sizeof(uint32_t) > rem)
+        {
+            LOGC(mglog.Error, log << "FATAL: mis-declared extension len=" << len << " for remaining size=" << rem);
+            return;
+        }
+
+        if (CHandShake::isPlainEndian(HS_CMDSPEC_CMD::unwrap(*extbegin)))
+        {
+            std::copy(extbegin + 1, extbegin + 1 + len, netbegin + 1);
+        }
+        else
+        {
+            HtoNLA(netbegin + 1, extbegin + 1, len);
+        }
+        size_t skiplen = len+1;
+
+        extbegin += skiplen; // Skip 1 32-bit header and the number of 32-bit words as spec'd by len
+        netbegin += skiplen;
+
+        // After jumping over the last extension, the distance
+        // should reach the total payload length
+        if ((char*)extbegin - m_pcData >= (int)getLength())
+            break;
+    }
 }
 
 IOVector* CPacket::getPacketVector()

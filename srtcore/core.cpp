@@ -1836,9 +1836,6 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
                     << " length=" << ra_size << " words (KmMsg_size=" << msglen << ")");
                     // XXX INSECURE ": [" << FormatBinaryString((uint8_t*)keydata, msglen) << "]";
 
-                // Yes, I know HtoNLA and NtoHLA do exactly the same operation, but I want
-                // to be clear about the true intention.
-                NtoHLA(p + offset, keydata, ra_size);
                 have_any_keys = true;
             }
 
@@ -1882,8 +1879,6 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
             ++offset; // Once cell, containting CMD spec and size
             HLOGC(mglog.Debug, log << "createSrtHandshake: KMRSP: applying returned key length="
                     << ra_size); // XXX INSECURE << " words: [" << FormatBinaryString((uint8_t*)kmdata, kmdata_wordsize*sizeof(uint32_t)) << "]";
-
-            NtoHLA(p + offset, keydata, ra_size);
         }
         else
         {

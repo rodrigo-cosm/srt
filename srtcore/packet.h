@@ -251,6 +251,7 @@ public:
    IOVector* getPacketVector();
 
    uint32_t* getHeader() { return m_nHeader; }
+   const uint32_t* getHeader() const { return m_nHeader; }
 
       /// Read the packet flag.
       /// @return packet flag (0 or 1).
@@ -407,6 +408,9 @@ protected:
 
    int32_t __pad;
    bool m_data_owned;
+
+   void networkizePayload(char* output) const;
+   void hardwarizePayload();
 
 protected:
    CPacket& operator=(const CPacket&);

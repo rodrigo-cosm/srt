@@ -615,6 +615,9 @@ inline size_t safe_advance(It& it, size_t num, It end)
 template <class V, size_t N> inline
 ATR_CONSTEXPR size_t Size(const V (&)[N]) ATR_NOEXCEPT { return N; }
 
+template <class V, size_t N> inline
+ATR_CONSTEXPR const V* End(const V (&rr)[N]) ATR_NOEXCEPT { return rr + N; }
+
 template <size_t DEPRLEN, typename ValueType>
 inline ValueType avg_iir(ValueType old_value, ValueType new_value)
 {

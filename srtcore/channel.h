@@ -121,7 +121,7 @@ public:
       /// @param [in] packet reference to a CPacket entity.
       /// @return Actual size of data sent.
 
-   int sendto(const sockaddr* addr, CPacket& packet) const;
+   int sendto(const sockaddr* addr, const CPacket& packet) const;
 
       /// Receive a packet from the channel and record the source address.
       /// @param [in] addr pointer to the source address.

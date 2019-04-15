@@ -236,18 +236,24 @@ public:
    int load_from(const char* buf, size_t size);
 
 public:
-   // This is the size of SERIALIZED handshake.
-   // Might be defined as simply sizeof(CHandShake), but the
-   // enum values would have to be forced as int32_t, which is only
-   // available in C++11. Theoretically they are all 32-bit, but
-   // such a statement is not reliable and not portable.
-   static const size_t m_iContentSize = 48;	// Size of hand shake data
-
    // Extension flags
 
     static const int32_t HS_EXT_HSREQ = BIT(0);
     static const int32_t HS_EXT_KMREQ = BIT(1);
     static const int32_t HS_EXT_CONFIG  = BIT(2);
+
+    static bool isPlainEndian(int cmd)
+    {
+        // NOTE! The items in this array must be arranged in ascending order!
+        static const int plainEndianExtensions [] = {
+            SRT_CMD_KMREQ,
+            SRT_CMD_KMRSP,
+            SRT_CMD_SID,
+            SRT_CMD_SMOOTHER
+        };
+
+        return std::binary_search(plainEndianExtensions, End(plainEndianExtensions), cmd);
+    }
 
     static std::string ExtensionFlagStr(int32_t fl);
 
@@ -263,7 +269,23 @@ public:
    UDTRequestType m_iReqType;   // handshake stage
    int32_t m_iID;		// socket ID
    int32_t m_iCookie;		// cookie
-   uint32_t m_piPeerIP[4];	// The IP address that the peer's UDP port is bound to
+
+   // ^^^ These above fields comprise a solid 32-bit integer array.
+   // A constant for their number
+   static const size_t DATA_ARRAY_SIZE = 8;
+
+   // Extra field
+   static const size_t IP_ADDR_SIZE = 4;
+   uint32_t m_piPeerIP[IP_ADDR_SIZE];  // The IP address that the peer's UDP port is bound to
+
+   // This is the size of SERIALIZED handshake.
+   // Might be defined as simply sizeof(CHandShake), but the
+   // enum values would have to be forced as int32_t, which is only
+   // available in C++11. Theoretically they are all 32-bit, but
+   // such a statement is not reliable and not portable.
+
+   // Should be 48
+   static const size_t m_iContentSize = sizeof(int32_t) * (DATA_ARRAY_SIZE + IP_ADDR_SIZE); // Size of hand shake data
 
    bool m_extension;
 
