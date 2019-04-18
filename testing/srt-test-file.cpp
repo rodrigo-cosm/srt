@@ -144,8 +144,8 @@ int main( int argc, char** argv )
 
         srt_startup();
 
-        // Register your own Smoother
-        CongestionController::add<WAGCongController>("flow");
+        // Register your own Controller
+        SrtCongestion::add<WAGCongController>("flow");
 
         if (mode_upload)
             Upload(ut, us);
@@ -391,8 +391,8 @@ bool Upload(UriParser& srt_target_uri, UriParser& fileuri)
     // Add some extra parameters.
     srt_target_uri["transtype"] = "file";
 
-    // use our own smoother
-    srt_target_uri["smoother"] = "flow";
+    // use our own congestion
+    srt_target_uri["congestion"] = "flow";
 
     return DoUpload(srt_target_uri, path, filename);
 }

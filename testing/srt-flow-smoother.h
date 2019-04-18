@@ -364,7 +364,7 @@ public:
         HLOGC(mglog.Debug, log << "Creating WAGCongController");
     }
 
-    bool checkTransArgs(CongestionController::TransAPI, CongestionController::TransDir, const char* , size_t , int , bool ) ATR_OVERRIDE
+    bool checkTransArgs(SrtCongestion::TransAPI, SrtCongestion::TransDir, const char* , size_t , int , bool ) ATR_OVERRIDE
     {
         // XXX
         // The WAGCongController has currently no restrictions, although it should be
@@ -2045,9 +2045,9 @@ RATE_LIMIT:
         }
     }
 
-    CongestionController::RexmitMethod rexmitMethod() ATR_OVERRIDE
+    SrtCongestion::RexmitMethod rexmitMethod() ATR_OVERRIDE
     {
-        return CongestionController::SRM_LATEREXMIT;
+        return SrtCongestion::SRM_LATEREXMIT;
     }
 };
 

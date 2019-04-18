@@ -206,7 +206,7 @@ int CUDTUnited::startup()
         throw CUDTException(MJ_SETUP, MN_NONE,  WSAGetLastError());
 #endif
 
-    CongestionController::globalInit();
+    SrtCongestion::globalInit();
 
 
     //init CTimer::EventLock

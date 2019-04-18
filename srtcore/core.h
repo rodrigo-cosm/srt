@@ -648,7 +648,7 @@ private:
     // Congestion control
     SlotPack<TEV__SIZE> m_Slots;
 
-    CongestionController m_CongCtl;
+    SrtCongestion m_CongCtl;
 
 
     // Internal state
@@ -925,7 +925,7 @@ private: // for UDP multiplexer
     CSNode* m_pSNode;               // node information for UDT list used in snd queue
     CRNode* m_pRNode;               // node information for UDT list used in rcv queue
 
-public: // For CongestionController
+public: // For SrtCongestion
     const CSndQueue* sndQueue() { return m_pSndQueue; }
     const CRcvQueue* rcvQueue() { return m_pRcvQueue; }
 

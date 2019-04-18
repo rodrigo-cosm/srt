@@ -45,7 +45,7 @@ SrtCongestionControlBase::SrtCongestionControlBase(CUDT* parent)
     m_dPktSndPeriod_us = 1;
 }
 
-void CongestionController::Check()
+void SrtCongestion::Check()
 {
     if (!congctl)
         throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
@@ -96,15 +96,15 @@ public:
         parent->ConnectSignal<TEV_ACK>(SSLOT(updatePktSndPeriod_onAck));
     }
 
-    bool checkTransArgs(CongestionController::TransAPI api, CongestionController::TransDir dir, const char* , size_t size, int , bool ) ATR_OVERRIDE
+    bool checkTransArgs(SrtCongestion::TransAPI api, SrtCongestion::TransDir dir, const char* , size_t size, int , bool ) ATR_OVERRIDE
     {
-        if (api != CongestionController::STA_MESSAGE)
+        if (api != SrtCongestion::STA_MESSAGE)
         {
             LOGC(mglog.Error, log << "LiveCC: invalid API use. Only sendmsg/recvmsg allowed.");
             return false;
         }
 
-        if (dir == CongestionController::STAD_SEND)
+        if (dir == SrtCongestion::STAD_SEND)
         {
             // For sending, check if the size of data doesn't exceed the maximum live packet size.
             if (size > m_zMaxPayloadSize)
@@ -210,9 +210,9 @@ private:
         setMaxBW(bw);
     }
 
-    CongestionController::RexmitMethod rexmitMethod() ATR_OVERRIDE
+    SrtCongestion::RexmitMethod rexmitMethod() ATR_OVERRIDE
     {
-        return CongestionController::SRM_FASTREXMIT;
+        return SrtCongestion::SRM_FASTREXMIT;
     }
 
     uint64_t updateNAKInterval(uint64_t nakint_tk, int /*rcv_speed*/, size_t /*loss_length*/) ATR_OVERRIDE
@@ -306,7 +306,7 @@ public:
     }
 
 
-    bool checkTransArgs(CongestionController::TransAPI, CongestionController::TransDir, const char* , size_t , int , bool ) ATR_OVERRIDE
+    bool checkTransArgs(SrtCongestion::TransAPI, SrtCongestion::TransDir, const char* , size_t , int , bool ) ATR_OVERRIDE
     {
         // XXX
         // The FileCC has currently no restrictions, although it should be
@@ -595,9 +595,9 @@ RATE_LIMIT:
         }
     }
 
-    CongestionController::RexmitMethod rexmitMethod() ATR_OVERRIDE
+    SrtCongestion::RexmitMethod rexmitMethod() ATR_OVERRIDE
     {
-        return CongestionController::SRM_LATEREXMIT;
+        return SrtCongestion::SRM_LATEREXMIT;
     }
 };
 
@@ -606,13 +606,13 @@ RATE_LIMIT:
 
 #undef SSLOT
 
-CongestionController::NamePtr CongestionController::builtin_controllers[] =
+SrtCongestion::NamePtr SrtCongestion::builtin_controllers[] =
 {
     {"live", Creator<LiveCC>::Create },
     {"file", Creator<FileCC>::Create }
 };
 
-bool CongestionController::IsBuiltin(const string& s)
+bool SrtCongestion::IsBuiltin(const string& s)
 {
     size_t size = sizeof builtin_controllers/sizeof(builtin_controllers[0]);
     for (size_t i = 0; i < size; ++i)
@@ -622,9 +622,9 @@ bool CongestionController::IsBuiltin(const string& s)
     return false;
 }
 
-CongestionController::srtcc_map_t CongestionController::controllers;
+SrtCongestion::srtcc_map_t SrtCongestion::controllers;
 
-void CongestionController::globalInit()
+void SrtCongestion::globalInit()
 {
     // Add the builtin controllers to the global map.
     // Users may add their controllers after that.
@@ -640,14 +640,14 @@ void CongestionController::globalInit()
     // with the same builtin.
 }
 
-bool CongestionController::select(const std::string& name)
+bool SrtCongestion::select(const std::string& name)
 {
     selector = controllers.find(name);
     return selector != controllers.end();
 }
 
 
-bool CongestionController::configure(CUDT* parent)
+bool SrtCongestion::configure(CUDT* parent)
 {
     if (selector == controllers.end())
         return false;
@@ -661,7 +661,7 @@ bool CongestionController::configure(CUDT* parent)
     return !!congctl;
 }
 
-CongestionController::~CongestionController()
+SrtCongestion::~SrtCongestion()
 {
     delete congctl;
     congctl = 0;
