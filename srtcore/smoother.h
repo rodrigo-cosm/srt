@@ -8,8 +8,8 @@
  * 
  */
 
-#ifndef INC__SMOOTHER_H
-#define INC__SMOOTHER_H
+#ifndef INC__CONGCTL_H
+#define INC__CONGCTL_H
 
 #include <map>
 #include <string>
@@ -18,25 +18,25 @@
 #include "common.h"
 
 class CUDT;
-class SmootherBase;
+class SrtCongestionControlBase;
 
-typedef SmootherBase* smoother_create_t(CUDT* parent);
+typedef SrtCongestionControlBase* srtcc_create_t(CUDT* parent);
 
-class Smoother
+class CongestionController
 {
     // Temporarily changed to linear searching, until this is exposed
-    // for a user-defined smoother.
+    // for a user-defined controller.
     // Note that this is a pointer to function :)
 
     // The first/second is to mimic the map.
-    typedef struct { const char* first; smoother_create_t* second; } NamePtr;
-    static NamePtr builtin_smoothers[];
-    typedef std::map<std::string, smoother_create_t*> smoothers_map_t;
-    static smoothers_map_t smoothers;
+    typedef struct { const char* first; srtcc_create_t* second; } NamePtr;
+    static NamePtr builtin_controllers[];
+    typedef std::map<std::string, srtcc_create_t*> srtcc_map_t;
+    static srtcc_map_t controllers;
 
-    // This is a smoother container.
-    SmootherBase* smoother;
-    smoothers_map_t::iterator selector;
+    // This is a congctl container.
+    SrtCongestionControlBase* congctl;
+    srtcc_map_t::iterator selector;
     void Check();
 
 public:
@@ -45,7 +45,7 @@ public:
     template <class Target>
     struct Creator
     {
-        static SmootherBase* Create(CUDT* parent) { return new Target(parent); }
+        static SrtCongestionControlBase* Create(CUDT* parent) { return new Target(parent); }
     };
 
     static bool IsBuiltin(const std::string&);
@@ -56,18 +56,18 @@ public:
         if (IsBuiltin(name))
             return false;
 
-        smoothers[name] = Creator<NewSmoother>::Create;
+        controllers[name] = Creator<NewSmoother>::Create;
         return true;
     }
 
-    // If you predict to allow something to be done on smoother also
+    // If you predict to allow something to be done on controller also
     // before it is configured, call this first. If you need it configured,
     // you can rely on Check().
-    bool ready() { return smoother; }
-    SmootherBase* operator->() { Check(); return smoother; }
+    bool ready() { return congctl; }
+    SrtCongestionControlBase* operator->() { Check(); return congctl; }
 
     // In the beginning it's uninitialized
-    Smoother(): smoother(), selector(smoothers.end()) {}
+    CongestionController(): congctl(), selector(controllers.end()) {}
 
     // You can call select() multiple times, until finally
     // the 'configure' method is called.
@@ -75,27 +75,27 @@ public:
 
     std::string selected_name()
     {
-        if (selector == smoothers.end())
+        if (selector == controllers.end())
             return "";
         return selector->first;
     }
 
     // Copy constructor - important when listener-spawning
     // Things being done:
-    // 1. The smoother is individual, so don't copy it. Set NULL.
+    // 1. The congctl is individual, so don't copy it. Set NULL.
     // 2. The selected name is copied so that it's configured correctly.
-    Smoother(const Smoother& source): smoother(), selector(source.selector) {}
+    CongestionController(const CongestionController& source): congctl(), selector(source.selector) {}
 
     // This function will be called by the parent CUDT
     // in appropriate time. It should select appropriate
-    // smoother basing on the value in selector, then
+    // congctl basing on the value in selector, then
     // pin oneself in into CUDT for receiving event signals.
     bool configure(CUDT* parent);
 
-    // Will delete the pinned in smoother object.
+    // Will delete the pinned in congctl object.
     // This must be defined in *.cpp file due to virtual
     // destruction.
-    ~Smoother();
+    ~CongestionController();
 
     enum RexmitMethod
     {
@@ -118,7 +118,7 @@ public:
 };
 
 
-class SmootherBase
+class SrtCongestionControlBase
 {
 protected:
     // Here can be some common fields
@@ -137,7 +137,7 @@ protected:
     //char* m_pcParam;         // Used to access m_llMaxBw. Use m_parent->maxBandwidth() instead.
 
     // Constructor in protected section so that this class is semi-abstract.
-    SmootherBase(CUDT* parent);
+    SrtCongestionControlBase(CUDT* parent);
 public:
 
     // This could be also made abstract, but this causes a linkage
@@ -145,9 +145,9 @@ public:
     // and C++ compiler uses the location of the first virtual method as the
     // file to which it also emits the virtual call table. When this is
     // abstract, there would have to be simultaneously either defined
-    // an empty method in smoother.cpp file (obviously never called),
+    // an empty method in congctl.cpp file (obviously never called),
     // or simply left empty body here.
-    virtual ~SmootherBase() { }
+    virtual ~SrtCongestionControlBase() { }
 
     // All these functions that return values interesting for processing
     // by CUDT can be overridden. Normally they should refer to the fields
@@ -186,13 +186,13 @@ public:
         return false;
     }
 
-    // A smoother is allowed to agree or disagree on the use of particular API.
-    virtual bool checkTransArgs(Smoother::TransAPI , Smoother::TransDir , const char* /*buffer*/, size_t /*size*/, int /*ttl*/, bool /*inorder*/)
+    // Particular controller is allowed to agree or disagree on the use of particular API.
+    virtual bool checkTransArgs(CongestionController::TransAPI , CongestionController::TransDir , const char* /*buffer*/, size_t /*size*/, int /*ttl*/, bool /*inorder*/)
     {
         return true;
     }
 
-    virtual Smoother::RexmitMethod rexmitMethod() = 0; // Implementation enforced.
+    virtual CongestionController::RexmitMethod rexmitMethod() = 0; // Implementation enforced.
 
     virtual uint64_t updateNAKInterval(uint64_t nakint_tk, int rcv_speed, size_t loss_length)
     {

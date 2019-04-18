@@ -457,6 +457,7 @@ MafReadDir(srtcore filelist.maf
 	SOURCES SOURCES_srt
 	PUBLIC_HEADERS HEADERS_srt
 	PROTECTED_HEADERS HEADERS_srt
+	PRIVATE_HEADERS HEADERS_srt_private
 )
 
 # Auto generated version file and add it to the HEADERS_srt list.
@@ -691,6 +692,9 @@ macro(srt_make_application name)
 	set_target_properties(${name} PROPERTIES COMPILE_FLAGS "${CFLAGS_CXX_STANDARD} ${EXTRA_stransmit}" ${FORCE_RPATH})
 
 	target_link_libraries(${name} ${srt_link_library})
+	if (srt_libspec_static AND CMAKE_DL_LIBS)
+		target_link_libraries(${name} ${CMAKE_DL_LIBS})
+	endif()
 endmacro()
 
 macro(srt_add_application name sources)
@@ -791,6 +795,12 @@ if (ENABLE_EXAMPLES)
 	srt_add_example(recvfile.cpp apps/logsupport.cpp)
 	srt_make_application(recvfile)
 
+	srt_add_example(test-c-client.c)
+	srt_make_application(test-c-client)
+
+	srt_add_example(test-c-server.c)
+	srt_make_application(test-c-server)
+
 	srt_add_example(testcapi-connect.c)
 	target_link_libraries(testcapi-connect ${srt_link_library} ${DEPENDS_srt})
 
@@ -814,6 +824,8 @@ if (ENABLE_UNITTESTS AND ENABLE_CXX11)
 	MafReadDir(test filelist.maf
 		SOURCES SOURCES_unittests
 	)
+	
+	message(STATUS "Unit test sources: ${SOURCES_unittests}")
 
 	srt_add_program(test_srt ${SOURCES_unittests})
 	srt_make_application(test_srt)

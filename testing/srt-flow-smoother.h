@@ -8,7 +8,7 @@
 
 using namespace srt_logging;
 
-class FlowSmoother: public SmootherBase
+class WAGCongController: public SrtCongestionControlBase
 {
     // Fields from CUDTCC
     const int m_iRCInterval;			// UDT Rate control interval
@@ -294,8 +294,8 @@ class FlowSmoother: public SmootherBase
     static constexpr double MIN_SPEED_SND_PERIOD = 250000; // 0.25s bw packets
 
 public:
-    FlowSmoother(CUDT* parent):
-        SmootherBase(parent),
+    WAGCongController(CUDT* parent):
+        SrtCongestionControlBase(parent),
         m_iRCInterval(CUDT::COMM_SYN_INTERVAL_US), // == 10ms
         m_State(FS_WARMUP)
     {
@@ -350,9 +350,9 @@ public:
 
         m_llMaxBW = 0;
 
-#define CONNECT(signal, slot) m_parent->ConnectSignal<signal>(MakeEventSlot(this, &FlowSmoother:: slot))
+#define CONNECT(signal, slot) m_parent->ConnectSignal<signal>(MakeEventSlot(this, &WAGCongController:: slot))
 // Maybe a syntax in C++20:
-// this->onACK  <==>  bind(this, &FlowSmoother::onACK)
+// this->onACK  <==>  bind(this, &WAGCongController::onACK)
 
         CONNECT(TEV_ACK, onACK);
         CONNECT(TEV_LOSSREPORT, onLOSS_CollectLoss);
@@ -361,13 +361,13 @@ public:
 
         m_PrevState = FS_WARMUP;
 
-        HLOGC(mglog.Debug, log << "Creating FlowSmoother");
+        HLOGC(mglog.Debug, log << "Creating WAGCongController");
     }
 
-    bool checkTransArgs(Smoother::TransAPI, Smoother::TransDir, const char* , size_t , int , bool ) ATR_OVERRIDE
+    bool checkTransArgs(CongestionController::TransAPI, CongestionController::TransDir, const char* , size_t , int , bool ) ATR_OVERRIDE
     {
         // XXX
-        // The FlowSmoother has currently no restrictions, although it should be
+        // The WAGCongController has currently no restrictions, although it should be
         // rather required that the "message" mode or "buffer" mode be used on both sides the same.
         // This must be somehow checked separately.
         return true;
@@ -375,7 +375,7 @@ public:
 
     bool needsQuickACK(const CPacket& pkt) ATR_OVERRIDE
     {
-        // For FlowSmoother, treat non-full-buffer situation as an end-of-message situation;
+        // For WAGCongController, treat non-full-buffer situation as an end-of-message situation;
         // request ACK to be sent immediately.
         if (pkt.getLength() < m_parent->maxPayloadSize())
             return true;
@@ -388,7 +388,7 @@ public:
         if (maxbw != 0)
         {
             m_llMaxBW = maxbw;
-            HLOGC(mglog.Debug, log << "FlowSmoother: updated BW: " << m_llMaxBW);
+            HLOGC(mglog.Debug, log << "WAGCongController: updated BW: " << m_llMaxBW);
         }
     }
 
@@ -410,7 +410,7 @@ private:
             }
             else
             {
-                HLOGC(mglog.Debug, log << "FlowSmoother: UPD/ACK (slowstart:KEPT) wndsize="
+                HLOGC(mglog.Debug, log << "WAGCongController: UPD/ACK (slowstart:KEPT) wndsize="
                     << m_dCongestionWindow << "/" << m_dMaxCWndSize
                     << " sndperiod=" << m_dPktSndPeriod_us << "us");
             }
@@ -443,7 +443,7 @@ private:
             // The cooldown state can be interrupted at any time if the loss
             // rate drops to 0.
             m_dPktSndPeriod_us = snd_period*10;
-            HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (exit WARMUP/spike) CWND="
+            HLOGC(mglog.Debug, log << "WAGCongController: " << hdr << " (exit WARMUP/spike) CWND="
                     << setprecision(6) << m_dCongestionWindow << "/" << m_dMaxCWndSize
                     << " sndperiod=" << m_dPktSndPeriod_us << "us [1/10 of HIGHEST SPEED OBSERVED: "
                     << best_speed << "p/s]");
@@ -462,7 +462,7 @@ private:
             else if (exp_speed > 0)
             {
                 snd_period = 1000000.0/exp_speed;
-                HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (reached TOP) CWND="
+                HLOGC(mglog.Debug, log << "WAGCongController: " << hdr << " (reached TOP) CWND="
                         << setprecision(6) << m_dCongestionWindow << "/" << m_dMaxCWndSize
                         << " sndperiod=" << snd_period << "us [EQUAL TO DELIVERY RATE: "
                         << m_parent->deliveryRate() << "p/s]");
@@ -470,7 +470,7 @@ private:
             else
             {
                 snd_period = m_dCongestionWindow / (m_parent->RTT() + m_iRCInterval);
-                HLOGC(mglog.Debug, log << "FlowSmoother: " << hdr << " (reached TOP) CWND="
+                HLOGC(mglog.Debug, log << "WAGCongController: " << hdr << " (reached TOP) CWND="
                         << setprecision(6) << snd_period << "/" << m_dMaxCWndSize
                         << " sndperiod=" << m_dPktSndPeriod_us
                         << "us [BASED ON RTT+RCI=" << ((m_parent->RTT() + m_iRCInterval)/1000.0)
@@ -503,7 +503,7 @@ private:
 
         m_dPktSndPeriod_SLOWEST_us = slowest;
         m_dPktSndPeriod_FASTEST_us = fastest;
-        HLOGC(mglog.Debug, log << "FlowSmoother: SWITCH STATE: " << DisplayState(m_State) << "PROBE:["
+        HLOGC(mglog.Debug, log << "WAGCongController: SWITCH STATE: " << DisplayState(m_State) << "PROBE:["
             << m_zProbeSize << "." << m_zProbeSpan << "] sndperiod=<" << slowest << " .. " << fastest << ">" );
     }
 
@@ -522,7 +522,7 @@ private:
         if (slower > MIN_SPEED_SND_PERIOD)
             slower = MIN_SPEED_SND_PERIOD;
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: LOSS >50%, EMERGENCY BRAKE. sndperiod=" << slower);
+        HLOGC(mglog.Debug, log << "WAGCongController: LOSS >50%, EMERGENCY BRAKE. sndperiod=" << slower);
 
         // Set the lowest speed as the current speed and highest as 0 (to be measured).
         //switchState(FS_KEEP, 16, 1, slower, 0);
@@ -569,7 +569,7 @@ private:
         uint64_t ack_period = currtime - m_LastAckTime;
         if (ack_period == 0)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: IPE: impossible same-time ACK as previous @ " << FormatTime(m_LastAckTime));
+            HLOGC(mglog.Debug, log << "WAGCongController: IPE: impossible same-time ACK as previous @ " << FormatTime(m_LastAckTime));
             // Some mistake, would make it div/0. Ignore the event.
             return;
         }
@@ -596,7 +596,7 @@ private:
 
         if (acksize == 1)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: LITE ACK DETECTED, not doing anything");
+            HLOGC(mglog.Debug, log << "WAGCongController: LITE ACK DETECTED, not doing anything");
             // For LITE ACK don't make any measurements.
             // (you don't have appropriate data to do it).
             return;
@@ -684,7 +684,7 @@ private:
 
                 // XXX This calculation is wrong. Use it only for an extra log
                 // loss_rate = max(loss_rate, number_loss_rate);
-                HLOGC(mglog.Debug, log << "FlowSmoother: ACK: considered number_loss_rate="
+                HLOGC(mglog.Debug, log << "WAGCongController: ACK: considered number_loss_rate="
                         << number_loss_rate << " vs. loss_rate=" << loss_rate);
             }
 
@@ -737,7 +737,7 @@ private:
             m_dLossRate = m_LossRateMeasure.currentAverage();
         }
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: LOSSDATA: avgrate=" << m_dLossRate
+        HLOGC(mglog.Debug, log << "WAGCongController: LOSSDATA: avgrate=" << m_dLossRate
                 << "(" << (loss_rate_reliable ? "" : "UN") << "reliable) history "
                 << Printable(m_LossRateHistory) << " average=" << m_LossRateHistory.average());
 
@@ -748,7 +748,7 @@ private:
             if (loss_rate_reliable && m_dLossRate == 0 && m_LossRateHistory.average() == 0)
             {
                 // Exit COOLDOWN state as we no longer experience packet loss.
-                HLOGC(mglog.Debug, log << "FlowSmoother: REACHED loss rate " << m_dLossRate
+                HLOGC(mglog.Debug, log << "WAGCongController: REACHED loss rate " << m_dLossRate
                         << " Average loss history: " << m_LossRateHistory.average() << " -> SPEED ANALYSIS");
                 switch_time = true;
             }
@@ -809,7 +809,7 @@ private:
         // In case when m_zProbeSpan == 1, this will be equivalent to a simple assignment.
         m_adStats[m_State.probe_index].update(m_State.span_index, probe);
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: ACK STATS: {" << DisplayState(m_State) << "}"
+        HLOGC(mglog.Debug, log << "WAGCongController: ACK STATS: {" << DisplayState(m_State) << "}"
                 << " Snd: Period:" << m_dPktSndPeriod_us << "us"
                 << " sRTT:" << rttform.str() << "(" << m_SenderRTT_us << ")"
                 << "us Speed=" << m_SenderSpeed_pps << "p/s"
@@ -835,7 +835,7 @@ private:
             if (m_State.probe_index == m_zProbeSize)
             {
                 // Reached end of probe size. Analyze results.
-                HLOGC(mglog.Debug, log << "FlowSmoother: REACHED PROBE SIZE -> SPEED ANALYSIS");
+                HLOGC(mglog.Debug, log << "WAGCongController: REACHED PROBE SIZE -> SPEED ANALYSIS");
                 switch_time = true;
             }
         }
@@ -856,7 +856,7 @@ private:
                 // value is greater than the previous one. If so, switch to stage 1.
                 if (m_dCongestionWindow > last_cwnd_size)
                 {
-                    HLOGC(mglog.Debug, log << "FlowSmoother: CWND GROWS BACK (" << last_cwnd_size
+                    HLOGC(mglog.Debug, log << "WAGCongController: CWND GROWS BACK (" << last_cwnd_size
                             << " -> " << m_dCongestionWindow << ")");
                     m_iCWNDMeasureStage = 1;
                     if (m_dPktSndPeriod_SLOWEST_us == 0)
@@ -879,7 +879,7 @@ private:
                     if (m_dPktSndPeriod_SLOWEST_us == 0 || m_dPktSndPeriod_FASTEST_us == 0)
                     {
                         // Now limit found yet. It must speed up until it reaches the loss.
-                        HLOGC(mglog.Debug, log << "FlowSmoother: CWND falling down, but speed range not set: slowest="
+                        HLOGC(mglog.Debug, log << "WAGCongController: CWND falling down, but speed range not set: slowest="
                                 << m_dPktSndPeriod_SLOWEST_us << " fastest=" << m_dPktSndPeriod_FASTEST_us);
                         m_iCWNDMeasureStage = 0;
                     }
@@ -893,7 +893,7 @@ private:
                             // Alright, let's set this as the current speed and keep it
                             // constant for a while.
                             m_dPktSndPeriod_us = m_dPktSndPeriod_FASTEST_us + slowsegment;
-                            HLOGC(mglog.Debug, log << "FlowSmoother: CWND falling down again; SNDPERIOD: "
+                            HLOGC(mglog.Debug, log << "WAGCongController: CWND falling down again; SNDPERIOD: "
                                     << m_dPktSndPeriod_SLOWEST_us << " ... " << m_dPktSndPeriod_FASTEST_us
                                     << " -> Selecting " << m_dPktSndPeriod_us << " to KEEP");
                             switchState(FS_KEEP, 16, 1, m_dPktSndPeriod_SLOWEST_us, m_dPktSndPeriod_FASTEST_us);
@@ -962,7 +962,7 @@ private:
                 // this needs to slow down even more.
                 m_dPktSndPeriod_us = m_dPktSndPeriod_us*2;
 
-                HLOGC(mglog.Debug, log << "FlowSmoother: COOLDOWN failed - increasing cooling with half a speed (period="
+                HLOGC(mglog.Debug, log << "WAGCongController: COOLDOWN failed - increasing cooling with half a speed (period="
                         << m_dPktSndPeriod_us << "us)");
                 switchState(FS_COOLDOWN, 8, 1, m_dPktSndPeriod_us, 0);
             }
@@ -972,7 +972,7 @@ private:
                 //double best_speed = std::max(m_MaxReceiverSpeed_pps, m_parent->deliveryRate())*9/10;
                 double best_speed = m_parent->deliveryRate();
 
-                HLOGC(mglog.Debug, log << "FlowSmoother: COOLDOWN did the job. Setting to speed:"
+                HLOGC(mglog.Debug, log << "WAGCongController: COOLDOWN did the job. Setting to speed:"
                         << best_speed << "p/s with average=" << m_parent->deliveryRate()
                         << "p/s running=" << m_LastRcvSpeed << "p/s max=" << m_MaxReceiverSpeed_pps << "p/s");
 
@@ -1002,13 +1002,13 @@ private:
                 /*
                 double slowdown_factor = 1.125;
                 m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * slowdown_factor);
-                HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion increases, slowing down to " << m_dPktSndPeriod_us);
+                HLOGC(mglog.Debug, log << "WAGCongController: FS_KEEP, congestion increases, slowing down to " << m_dPktSndPeriod_us);
 
                 // And measure again. Set the current sending speed as the fastest.
                 switchState(FS_KEEP, 16, 1, 0, m_dPktSndPeriod_us);
                 */
 
-                HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion increases, turn to FS_SLIDE with no lower limit");
+                HLOGC(mglog.Debug, log << "WAGCongController: FS_KEEP, congestion increases, turn to FS_SLIDE with no lower limit");
                 switchState(FS_SLIDE, 16, 4, m_dPktSndPeriod_SLOWEST_us, 0);
             }
             else
@@ -1018,7 +1018,7 @@ private:
                     // Check if the previous state was COOLDOWN, in this case you can
                     // at the first time use the maximum ever noticed speed.
                     m_dPktSndPeriod_FASTEST_us = 1000000.0/m_MaxReceiverSpeed_pps;
-                    HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, FASTEST period not set, setting slowest period by max speed: "
+                    HLOGC(mglog.Debug, log << "WAGCongController: FS_KEEP, FASTEST period not set, setting slowest period by max speed: "
                             << m_dPktSndPeriod_FASTEST_us);
                 }
 
@@ -1026,13 +1026,13 @@ private:
                 {
                     // We have a highest possible speed defined, so climb to it
                     // If the results don't get worse, switch currently to FS_BITE
-                    HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion steady, FASTEST speed known, switching to FS_CLIMB");
+                    HLOGC(mglog.Debug, log << "WAGCongController: FS_KEEP, congestion steady, FASTEST speed known, switching to FS_CLIMB");
                     switchState(FS_CLIMB, 16, 4, m_dPktSndPeriod_SLOWEST_us, m_dPktSndPeriod_FASTEST_us);
                 }
                 else
                 {
                     // We don't have the speed range recognized yet, so switch to climbing blindly.
-                    HLOGC(mglog.Debug, log << "FlowSmoother: FS_KEEP, congestion steady, FASTEST speed UNKNOWN, switching to FS_BITE");
+                    HLOGC(mglog.Debug, log << "WAGCongController: FS_KEEP, congestion steady, FASTEST speed UNKNOWN, switching to FS_BITE");
 
                     // Before switching to BITE, remember the current speed
                     m_LastGoodSndPeriod_us = m_dPktSndPeriod_us;
@@ -1065,7 +1065,7 @@ private:
     {
         if (last_index < 4)
         {
-            LOGC(mglog.Error, log << "FlowSmoother: IPE: analyzeStats() requires that at least 4 probes are made, "
+            LOGC(mglog.Error, log << "WAGCongController: IPE: analyzeStats() requires that at least 4 probes are made, "
                     << last_index << " received");
             return;
         }
@@ -1105,7 +1105,7 @@ private:
         int64_t speed_median, speed_variance;
         size_t speed_extrval;
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: Analyzing receiver SPEED tendency");
+        HLOGC(mglog.Debug, log << "WAGCongController: Analyzing receiver SPEED tendency");
         int spd_tend = arrayTendency(speedval, &speed_extremum, &speed_extrval, &speed_median, &speed_variance);
 #if ENABLE_HEAVY_LOGGING
 
@@ -1143,7 +1143,7 @@ private:
             if (m_dPktSndPeriod_FASTEST_us < (m_dPktSndPeriod_us - (m_dPktSndPeriod_us - m_adStats[speed_extrval].snd_period)/2))
                 fastest = m_dPktSndPeriod_FASTEST_us;
 
-            HLOGC(mglog.Debug, log << "FlowSmoother: SPEED TENDENCY+ extremum around pos ["
+            HLOGC(mglog.Debug, log << "WAGCongController: SPEED TENDENCY+ extremum around pos ["
                     << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
                     << m_adStats[speed_extremum.first].snd_period << "-"
                     << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
@@ -1161,7 +1161,7 @@ private:
             m_dPktSndPeriod_us = m_adStats[0].snd_period;
             m_dPktSndPeriod_OPTIMAL_us = 0; // we don't know the optimum speed yet
 
-            HLOGC(mglog.Debug, log << "FlowSmoother: SPEED TENDENCY- extremum around pos ["
+            HLOGC(mglog.Debug, log << "WAGCongController: SPEED TENDENCY- extremum around pos ["
                     << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
                     << m_adStats[speed_extremum.first].snd_period << "-"
                     << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
@@ -1178,7 +1178,7 @@ private:
         {
             m_dPktSndPeriod_us = m_adStats[speed_extremum.first].snd_period;
 
-            HLOGC(mglog.Debug, log << "FlowSmoother: SPEED TENDENCY- extremum around pos ["
+            HLOGC(mglog.Debug, log << "WAGCongController: SPEED TENDENCY- extremum around pos ["
                     << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
                     << m_adStats[speed_extremum.first].snd_period << "-"
                     << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
@@ -1192,7 +1192,7 @@ private:
         pair<size_t, size_t> ack_extremum;
         int ack_median, ack_variance;
         size_t ack_extrval = 0;
-        HLOGC(mglog.Debug, log << "FlowSmoother: Analyzing ACK RATE tendency");
+        HLOGC(mglog.Debug, log << "WAGCongController: Analyzing ACK RATE tendency");
         int ack_tend = arrayTendency(ackavg, &ack_extremum, &ack_extrval, &ack_median, &ack_variance);
 
 #if ENABLE_HEAVY_LOGGING
@@ -1226,7 +1226,7 @@ private:
             if (m_dPktSndPeriod_FASTEST_us < (m_dPktSndPeriod_us - (m_dPktSndPeriod_us - m_adStats[ack_extrval].snd_period)/2))
                 fastest = m_dPktSndPeriod_FASTEST_us;
 
-            HLOGC(mglog.Debug, log << "FlowSmoother: ACKRATE TENDENCY" << (ack_tend?"=":"+") << " extremum around pos ["
+            HLOGC(mglog.Debug, log << "WAGCongController: ACKRATE TENDENCY" << (ack_tend?"=":"+") << " extremum around pos ["
                     << speed_extremum.first << "-" << speed_extremum.second << "] sender-period ["
                     << m_adStats[speed_extremum.first].snd_period << "-"
                     << m_adStats[speed_extremum.second].snd_period << "] upper speed period:"
@@ -1246,7 +1246,7 @@ private:
     {
         if (last_index < 4)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother::calculateCongestionTendency: time series too short for measurement, no tendency reporting");
+            HLOGC(mglog.Debug, log << "WAGCongController::calculateCongestionTendency: time series too short for measurement, no tendency reporting");
             return 0;
         }
         // This function should trace the values of loss rate and RTT
@@ -1258,12 +1258,12 @@ private:
         std::transform(m_adStats, m_adStats + last_index,
                 std::back_inserter(values), Probe::field(&Probe::lossrate));
 
-        HLOGC(mglog.Debug, log << "FlowSmoother:calculateCongestionTendency: checking loss rate tendency");
+        HLOGC(mglog.Debug, log << "WAGCongController:calculateCongestionTendency: checking loss rate tendency");
         int loss_tendency = arrayTendency(values);
 
         if (loss_tendency > 0) // increasing
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: CONGESTION TENDENCY: loss increasing: " << loss_tendency);
+            HLOGC(mglog.Debug, log << "WAGCongController: CONGESTION TENDENCY: loss increasing: " << loss_tendency);
             return loss_tendency;
         }
 
@@ -1271,7 +1271,7 @@ private:
         std::transform(m_adStats, m_adStats + last_index,
                 std::back_inserter(values), Probe::field(&Probe::sender_rtt));
 
-        HLOGC(mglog.Debug, log << "FlowSmoother:calculateCongestionTendency: checking RTT tendency");
+        HLOGC(mglog.Debug, log << "WAGCongController:calculateCongestionTendency: checking RTT tendency");
         int rtt_tendency = arrayTendency(values);
 
         return rtt_tendency; // return as is
@@ -1395,7 +1395,7 @@ private:
             }
             median = (median*i + value)/(i+1);
             later = averages[i]; // Note the last jumping average
-            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency(trace): value=" << value
+            HLOGC(mglog.Debug, log << "WAGCongController: arrayTendency(trace): value=" << value
                     << " min=" << minimum << " max=" << maximum << " var=" << variance);
         }
 
@@ -1408,7 +1408,7 @@ private:
         if (ret_median)
             *ret_median = median;
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: values <" << minimum
+        HLOGC(mglog.Debug, log << "WAGCongController: arrayTendency: values <" << minimum
                 << " ... " << maximum << " = " << valuespan << "> median=" << median
                 << " variance=" << variance
                 << " average span <" << earlier << " ... " << later << " = " << avg_tend << ">");
@@ -1433,7 +1433,7 @@ private:
 
         if (variance >= valuespan)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: NONE - variance exceeds valuespan");
+            HLOGC(mglog.Debug, log << "WAGCongController: arrayTendency: NONE - variance exceeds valuespan");
             return 0; // no clear tendency
         }
 
@@ -1444,7 +1444,7 @@ private:
         // The latter if the variance is higher than their difference
         if (fabs(avg_tend) < variance)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: NONE - variance exceeds average tendency");
+            HLOGC(mglog.Debug, log << "WAGCongController: arrayTendency: NONE - variance exceeds average tendency");
             return 0; // Variance is too high to have a reliable tendency
         }
 
@@ -1454,12 +1454,12 @@ private:
         double over_later = fabs(later - median);
         if (over_later < (variance/2) && over_earlier < (variance/2))
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: NONE - late ("
+            HLOGC(mglog.Debug, log << "WAGCongController: arrayTendency: NONE - late ("
                    << over_later << ") & early (" << over_earlier << ") median > half variance");
             return 0;
         }
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: arrayTendency: result: " << avg_tend);
+        HLOGC(mglog.Debug, log << "WAGCongController: arrayTendency: result: " << avg_tend);
 
         return avg_tend > 0 ? 1 : avg_tend < 0 ? -1 : 0;
     }
@@ -1495,11 +1495,11 @@ private:
         if ((m_dPktSndPeriod_us > m_dLastDecPeriod) && (B > B9))
         {
             B = B9;
-            HLOGC(mglog.Debug, log << "FlowSmoother: INCREASE: continued, using B=" << B);
+            HLOGC(mglog.Debug, log << "WAGCongController: INCREASE: continued, using B=" << B);
         }
         else
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: INCREASE: initial, using B=" << B << " with BW/sndperiod="
+            HLOGC(mglog.Debug, log << "WAGCongController: INCREASE: initial, using B=" << B << " with BW/sndperiod="
                     << (m_parent->bandwidth() / m_dPktSndPeriod_us));
         }
 
@@ -1521,7 +1521,7 @@ private:
 
         double new_period = (m_dPktSndPeriod_us * m_iRCInterval) / (m_dPktSndPeriod_us * inc + m_iRCInterval);
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: INCREASE factor: " << inc << " with 1/MSS=" << i_mss);
+        HLOGC(mglog.Debug, log << "WAGCongController: INCREASE factor: " << inc << " with 1/MSS=" << i_mss);
 
         m_dPktSndPeriod_us = new_period;
     }
@@ -1606,7 +1606,7 @@ private:
                         // middle point between these values.
 
                         double distance = (m_dPktSndPeriod_us - m_dPktSndPeriod_FASTEST_us)*9.0/10;
-                        HLOGC(mglog.Debug, log << "FlowSmoother: FAST SPEEDUP by " << (distance/2) << " -> " << (m_dPktSndPeriod_us - (distance/2)));
+                        HLOGC(mglog.Debug, log << "WAGCongController: FAST SPEEDUP by " << (distance/2) << " -> " << (m_dPktSndPeriod_us - (distance/2)));
                         m_dPktSndPeriod_us -= distance/2;
                         reason = "climbing to fastest";
                     }
@@ -1626,7 +1626,7 @@ private:
                         double selected_speed = begin_speed + 9.0/10*(end_speed - begin_speed);
 
                         m_dPktSndPeriod_us = 1000000.0/selected_speed;
-                        HLOGC(mglog.Debug, log << "FlowSmoother: SLIDE SLOWDOWN from " << begin_speed << " to " << end_speed
+                        HLOGC(mglog.Debug, log << "WAGCongController: SLIDE SLOWDOWN from " << begin_speed << " to " << end_speed
                                 << " - setting " << selected_speed << "(" << m_dPktSndPeriod_us << "us)");
                         reason = "sliding to slowest";
                     }
@@ -1660,14 +1660,14 @@ RATE_LIMIT:
             if (m_dPktSndPeriod_us < minSP)
             {
                 m_dPktSndPeriod_us = minSP;
-                HLOGC(mglog.Debug, log << "FlowSmoother: BW limited to " << m_llMaxBW
+                HLOGC(mglog.Debug, log << "WAGCongController: BW limited to " << m_llMaxBW
                     << " - SLOWDOWN sndperiod=" << m_dPktSndPeriod_us << "us");
             }
         }
 
         if (bite_slowdown)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: BITE SLOWDOWN AFTER LOSS detected. Switch to step-climbing");
+            HLOGC(mglog.Debug, log << "WAGCongController: BITE SLOWDOWN AFTER LOSS detected. Switch to step-climbing");
             switchState(FS_CLIMB, 16, 4, m_dPktSndPeriod_us, m_LastGoodSndPeriod_us);
         }
 
@@ -1693,7 +1693,7 @@ RATE_LIMIT:
         int udp_buffer_free = -1;
 #endif
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: UPD (state:"
+        HLOGC(mglog.Debug, log << "WAGCongController: UPD (state:"
             << DisplayState(m_State) << ") wndsize=" << m_dCongestionWindow
             << " sndperiod=" << m_dPktSndPeriod_us
             << "us BANDWIDTH USED:" << usedbw << " (limit: " << m_llMaxBW
@@ -1723,7 +1723,7 @@ RATE_LIMIT:
                 nloss += r.size;
                 m_UnackLossRange.push_back(r);
                 last_loss = vlast;
-                HLOGC(mglog.Debug, log << "FlowSmoother: ... LOSS [" << r.begin << " - " << vlast
+                HLOGC(mglog.Debug, log << "WAGCongController: ... LOSS [" << r.begin << " - " << vlast
                         << "] (" << r.size << ")");
             }
             else
@@ -1733,7 +1733,7 @@ RATE_LIMIT:
                 ++nloss;
                 m_UnackLossRange.push_back(r);
                 last_loss = val;
-                HLOGC(mglog.Debug, log << "FlowSmoother: ... LOSS [" << r.begin << "]");
+                HLOGC(mglog.Debug, log << "WAGCongController: ... LOSS [" << r.begin << "]");
             }
         }
 
@@ -1773,7 +1773,7 @@ RATE_LIMIT:
         // If this happened to be a NAKREPORT sent after a lost LOSSREPORT,
         // ignore packets that are received, but happen to be between
         // various lost packets.
-        HLOGC(mglog.Debug, log << "FlowSmoother: collecting loss: ACK ["
+        HLOGC(mglog.Debug, log << "WAGCongController: collecting loss: ACK ["
                 << CSeqNo::decseq(m_LastLossAckSeq) << " - "
                 << CSeqNo::decseq(first_loss) << "] (" << CSeqNo::seqoff(m_LastLossAckSeq, first_loss) << ") ...");
         return addLossRanges(ar);
@@ -1796,7 +1796,7 @@ RATE_LIMIT:
             *number_acked = 0;
             *loss_rate = 0;
 
-            HLOGC(mglog.Debug, log << "FlowSmoother: LOSS CALC (" << ack_begin << " ... " << ack_end << "): No loss observed");
+            HLOGC(mglog.Debug, log << "WAGCongController: LOSS CALC (" << ack_begin << " ... " << ack_end << "): No loss observed");
             return;
         }
 
@@ -1818,7 +1818,7 @@ RATE_LIMIT:
         *number_loss = nloss;
         *number_acked = whole_range - nloss;
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: LOSS CALC (" << ack_begin << " ... " << ack_end
+        HLOGC(mglog.Debug, log << "WAGCongController: LOSS CALC (" << ack_begin << " ... " << ack_end
                 << " = " << whole_range << ") Total: ACK=" << (*number_acked)
                 << " LOSS=" << nloss << " LOSS RATE: " << (*loss_rate));
     }
@@ -1834,7 +1834,7 @@ RATE_LIMIT:
         // is called with a nonempty loss list.
         if ( losslist_size == 0 )
         {
-            LOGC(mglog.Error, log << "IPE: FlowSmoother: empty loss list!");
+            LOGC(mglog.Error, log << "IPE: WAGCongController: empty loss list!");
             return;
         }
 
@@ -1857,7 +1857,7 @@ RATE_LIMIT:
 
         if (m_State.state != FS_SLIDE)
         {
-            HLOGC(mglog.Debug, log << "FlowSmoother: LOSS, state {" << DisplayState(m_State) << "} - NOT decreasing speed YET.");
+            HLOGC(mglog.Debug, log << "WAGCongController: LOSS, state {" << DisplayState(m_State) << "} - NOT decreasing speed YET.");
         }
 
         if (m_dPktSndPeriod_us > 5 && m_dPktSndPeriod_FASTEST_us > m_dPktSndPeriod_us) // less than 5 is "ridiculously high", so disregard it
@@ -1878,7 +1878,7 @@ RATE_LIMIT:
             // In contradiction to UDT, TEV_LOSSREPORT will be reported also when
             // the lossreport is being sent again, periodically, as a result of
             // NAKREPORT feature. You should make sure that NAKREPORT is off when
-            // using FlowSmoother, so relying on SRTO_TRANSTYPE rather than
+            // using WAGCongController, so relying on SRTO_TRANSTYPE rather than
             // just SRTO_SMOOTHER is recommended.
 
             int loss_span = CSeqNo::seqcmp(lossbegin, m_iLastRCTimeSndSeq);
@@ -1887,7 +1887,7 @@ RATE_LIMIT:
             /*
             if (prevstate == FS_WARMUP)
             {
-                HLOGC(mglog.Debug, log << "FlowSmoother: exitting WARMUP, lossrate=" << (100*avg_loss_rate) << "%");
+                HLOGC(mglog.Debug, log << "WAGCongController: exitting WARMUP, lossrate=" << (100*avg_loss_rate) << "%");
             }
             else
             {
@@ -1895,7 +1895,7 @@ RATE_LIMIT:
                 {
                     slowdown_factor = 1 + avg_loss_rate/2;
                 }
-                HLOGC(mglog.Debug, log << "FlowSmoother: still BITE, lossrate="
+                HLOGC(mglog.Debug, log << "WAGCongController: still BITE, lossrate="
                         << setprecision(6) << fixed
                         << (100*avg_loss_rate) << "%"
                         << " slowdown by " << (100*(slowdown_factor-1)) << "%" );
@@ -1918,7 +1918,7 @@ RATE_LIMIT:
                 m_iDecRandom = (int)ceil(m_iAvgNAKNum * (double(rand()) / RAND_MAX));
                 if (m_iDecRandom < 1)
                     m_iDecRandom = 1;
-                HLOGC(mglog.Debug, log << "FlowSmoother: LOSS:NEW: rand=" << m_iDecRandom
+                HLOGC(mglog.Debug, log << "WAGCongController: LOSS:NEW: rand=" << m_iDecRandom
                         << " avg NAK:" << m_iAvgNAKNum
                         << ", sndperiod=" << m_dPktSndPeriod_us << "us");
                 decision = "SLOW-OVER";
@@ -1928,14 +1928,14 @@ RATE_LIMIT:
                 // 0.875^5 = 0.51, rate should not be decreased by more than half within a congestion period
                 m_dPktSndPeriod_us = ceil(m_dPktSndPeriod_us * slowdown_factor);
                 m_iLastRCTimeSndSeq = m_parent->sndSeqNo();
-                HLOGC(mglog.Debug, log << "FlowSmoother: LOSS:PERIOD: loss_span=" << loss_span
+                HLOGC(mglog.Debug, log << "WAGCongController: LOSS:PERIOD: loss_span=" << loss_span
                         << ", decrnd=" << m_iDecRandom
                         << ", sndperiod=" << m_dPktSndPeriod_us << "us");
                 decision = "SLOW-STILL";
             }
             else
             {
-                HLOGC(mglog.Debug, log << "FlowSmoother: LOSS:STILL: loss_span=" << loss_span
+                HLOGC(mglog.Debug, log << "WAGCongController: LOSS:STILL: loss_span=" << loss_span
                         << ", decrnd=" << m_iDecRandom
                         << ", sndperiod=" << m_dPktSndPeriod_us << "us");
                 decision = "KEEP-SPEED";
@@ -1979,7 +1979,7 @@ RATE_LIMIT:
             // report didn't report any loss :)
             : last_contig;
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: LOSS STATS: {" << DisplayState(m_State) << "}"
+        HLOGC(mglog.Debug, log << "WAGCongController: LOSS STATS: {" << DisplayState(m_State) << "}"
                 << " Snd: Period:" << m_dPktSndPeriod_us << "us"
                 << " sRTT:(last)=" << m_LastSenderRTT << "(" << m_SenderRTT_us << ")"
                 << "us Speed=" << m_SenderSpeed_pps << "p/s"
@@ -2008,7 +2008,7 @@ RATE_LIMIT:
         if (stg == TEV_CHT_INIT)
             return;
 
-        HLOGC(mglog.Debug, log << "FlowSmoother: TIMER EVENT. State: " << DisplayState(m_State));
+        HLOGC(mglog.Debug, log << "WAGCongController: TIMER EVENT. State: " << DisplayState(m_State));
 
         ++m_zTimerCounter;
 
@@ -2045,9 +2045,9 @@ RATE_LIMIT:
         }
     }
 
-    Smoother::RexmitMethod rexmitMethod() ATR_OVERRIDE
+    CongestionController::RexmitMethod rexmitMethod() ATR_OVERRIDE
     {
-        return Smoother::SRM_LATEREXMIT;
+        return CongestionController::SRM_LATEREXMIT;
     }
 };
 

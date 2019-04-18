@@ -185,7 +185,7 @@ std::string CUDTUnited::CONID(SRTSOCKET sock)
         return "";
 
     std::ostringstream os;
-    os << "%" << sock << ":";
+    os << "@" << sock << ":";
     return os.str();
 }
 
@@ -206,7 +206,7 @@ int CUDTUnited::startup()
         throw CUDTException(MJ_SETUP, MN_NONE,  WSAGetLastError());
 #endif
 
-    Smoother::globalInit();
+    CongestionController::globalInit();
 
 
     //init CTimer::EventLock
@@ -915,8 +915,6 @@ int CUDTUnited::close(const SRTSOCKET u)
    bool synch_close_snd = s->m_pUDT->m_bSynSending;
    //bool synch_close_rcv = s->m_pUDT->m_bSynRecving;
 
-   int id = s->m_SocketID;
-
    if (s->m_Status == SRTS_LISTENING)
    {
       if (s->m_pUDT->m_bBroken)
@@ -952,14 +950,17 @@ int CUDTUnited::close(const SRTSOCKET u)
        s->m_pUDT->close();
 
        // synchronize with garbage collection.
-       HLOGC(mglog.Debug, log << "%" << id << " CUDT::close done. GLOBAL CLOSE: " << s->m_pUDT->CONID() << ". Acquiring GLOBAL control lock");
+       HLOGC(mglog.Debug, log << "@" << u << "U::close done. GLOBAL CLOSE: " << s->m_pUDT->CONID() << ". Acquiring GLOBAL control lock");
        CGuard manager_cg(m_ControlLock);
 
        // since "s" is located before m_ControlLock, locate it again in case
        // it became invalid
        map<SRTSOCKET, CUDTSocket*>::iterator i = m_Sockets.find(u);
        if ((i == m_Sockets.end()) || (i->second->m_Status == SRTS_CLOSED))
+       {
+           HLOGC(mglog.Debug, log << "@" << u << "U::close: NOT AN ACTIVE SOCKET, returning.");
            return 0;
+       }
        s = i->second;
 
        s->m_Status = SRTS_CLOSED;
@@ -971,12 +972,13 @@ int CUDTUnited::close(const SRTSOCKET u)
        s->m_TimeStamp = CTimer::getTime();
 
        m_Sockets.erase(s->m_SocketID);
-       m_ClosedSockets.insert(pair<SRTSOCKET, CUDTSocket*>(s->m_SocketID, s));
+       m_ClosedSockets[s->m_SocketID] = s;
+       HLOGC(mglog.Debug, log << "@" << u << "U::close: Socket MOVED TO CLOSED for collecting later.");
 
        CTimer::triggerEvent();
    }
 
-   HLOGC(mglog.Debug, log << "%" << id << ": GLOBAL: CLOSING DONE");
+   HLOGC(mglog.Debug, log << "%" << u << ": GLOBAL: CLOSING DONE");
 
    // Check if the ID is still in closed sockets before you access it
    // (the last triggerEvent could have deleted it).
@@ -984,7 +986,7 @@ int CUDTUnited::close(const SRTSOCKET u)
    {
 #if SRT_ENABLE_CLOSE_SYNCH
 
-       HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sync-waiting for releasing sender resources...");
+       HLOGC(mglog.Debug, log << "@" << u << " GLOBAL CLOSING: sync-waiting for releasing sender resources...");
        for (;;)
        {
            CSndBuffer* sb = s->m_pUDT->m_pSndBuffer;
@@ -992,14 +994,14 @@ int CUDTUnited::close(const SRTSOCKET u)
            // Disconnected from buffer - nothing more to check.
            if (!sb)
            {
-               HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sending buffer disconnected. Allowed to close.");
+               HLOGC(mglog.Debug, log << "@" << u << " GLOBAL CLOSING: sending buffer disconnected. Allowed to close.");
                break;
            }
 
            // Sender buffer empty
            if (sb->getCurrBufSize() == 0)
            {
-               HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: sending buffer depleted. Allowed to close.");
+               HLOGC(mglog.Debug, log << "@" << u << " GLOBAL CLOSING: sending buffer depleted. Allowed to close.");
                break;
            }
 
@@ -1011,7 +1013,7 @@ int CUDTUnited::close(const SRTSOCKET u)
            bool isgone = false;
            {
                CGuard manager_cg(m_ControlLock);
-               isgone = m_ClosedSockets.count(id) == 0;
+               isgone = m_ClosedSockets.count(u) == 0;
            }
            if (!isgone)
            {
@@ -1019,11 +1021,11 @@ int CUDTUnited::close(const SRTSOCKET u)
            }
            if (isgone)
            {
-               HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: ... gone in the meantime, whatever. Exiting close().");
+               HLOGC(mglog.Debug, log << "@" << u << " GLOBAL CLOSING: ... gone in the meantime, whatever. Exiting close().");
                break;
            }
 
-           HLOGC(mglog.Debug, log << "%" << id << " GLOBAL CLOSING: ... still waiting for any update.");
+           HLOGC(mglog.Debug, log << "@" << u << " GLOBAL CLOSING: ... still waiting for any update.");
            CTimer::EWait wt = CTimer::waitForEvent();
 
            if ( wt == CTimer::WT_ERROR )
@@ -1838,11 +1840,13 @@ void* CUDTUnited::garbageCollect(void* p)
        timeout.tv_sec = now.tv_sec + 1;
        timeout.tv_nsec = now.tv_usec * 1000;
 
+       HLOGC(mglog.Debug, log << "GC: sleep until " << FormatTime(uint64_t(now.tv_usec) + 1000000*(timeout.tv_sec)));
        pthread_cond_timedwait(
                &self->m_GCStopCond, &self->m_GCStopLock, &timeout);
    }
 
    // remove all sockets and multiplexers
+   HLOGC(mglog.Debug, log << "GC: GLOBAL EXIT - releasing all pending sockets. Acquring control lock...");
    CGuard::enterCS(self->m_ControlLock);
    for (map<SRTSOCKET, CUDTSocket*>::iterator i = self->m_Sockets.begin();
       i != self->m_Sockets.end(); ++ i)
@@ -1877,6 +1881,7 @@ void* CUDTUnited::garbageCollect(void* p)
    }
    CGuard::leaveCS(self->m_ControlLock);
 
+   HLOGC(mglog.Debug, log << "GC: GLOBAL EXIT - releasing all CLOSED sockets.");
    while (true)
    {
       self->checkBrokenSockets();

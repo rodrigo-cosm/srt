@@ -518,9 +518,10 @@ immediately upon experiencing a "gap" in sequences.
 | --------------------- | ----- | ------- | --------- | --------- | -------- | ------ |
 | `SRTO_MAXBW`          | 1.0.5 | pre     | `int64_t` | bytes/sec | -1       | -1     |
 
-- **[GET or SET]** - Maximum send bandwidth. -1: infinite (CSRTCC limit is 
-30mbps) = 0: relative to input rate (SRT 1.0.5 addition, see `SRTO_INPUTBW`) 
->0: absolute limit 
+- **[GET or SET]** - Maximum send bandwidth.
+- `-1`: infinite (CSRTCC limit is 30mbps)
+- `= 0`: relative to input rate (SRT 1.0.5 addition, see `SRTO_INPUTBW`) 
+- `>0`: absolute limit 
 - *SRT recommended value: 0 (relative)*
 ---
 
@@ -1173,6 +1174,3 @@ buffer size is too small for a single message to fit in it.
 Note that you can use any of the sending and receiving functions
 for sending and receiving messages, except sendfile/recvfile, which
 are dedicated exclusively for Buffer API. 
-
-
-

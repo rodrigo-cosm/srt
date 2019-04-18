@@ -145,7 +145,7 @@ int main( int argc, char** argv )
         srt_startup();
 
         // Register your own Smoother
-        Smoother::add<FlowSmoother>("flow");
+        CongestionController::add<WAGCongController>("flow");
 
         if (mode_upload)
             Upload(ut, us);

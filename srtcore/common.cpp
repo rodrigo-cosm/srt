@@ -787,7 +787,7 @@ std::string MessageTypeStr(UDTMessageType mt, uint32_t extt)
         "EXT:kmreq",
         "EXT:kmrsp",
         "EXT:sid",
-        "EXT:smoother"
+        "EXT:congctl"
     };
 
 
@@ -820,7 +820,7 @@ std::string ConnectStatusStr(EConnectStatus cst)
 
 std::string TransmissionEventStr(ETransmissionEvent ev)
 {
-    static const std::string vals [] =
+    static const char* const vals [] =
     {
         "init",
         "ack",
