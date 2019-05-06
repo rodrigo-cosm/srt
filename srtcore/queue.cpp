@@ -359,6 +359,21 @@ int CSndUList::pop(ref_t<sockaddr*> r_addr, ref_t<CPacket> r_pkt, ref_t<CUDT*> r
         );
 #undef UST
 
+#define UST(field) ( (u->m_b##field) ? "+" : "-" ) << #field << " "
+
+   HLOGC(mglog.Debug, log << "SND:pop: requesting packet from @" << u->socketID()
+           << " STATUS: "
+           << UST(Listening)
+           << UST(Connecting)
+           << UST(Connected)
+           << UST(Closing)
+           << UST(Shutdown)
+           << UST(Broken)
+           << UST(PeerHealth)
+           << UST(Opened)
+        );
+#undef UST
+
    if (!u->m_bConnected || u->m_bBroken)
       return -1;
 
