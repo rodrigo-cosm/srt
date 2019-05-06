@@ -89,7 +89,7 @@ public:
     int Write(const char* data, size_t size, ostream &SRT_ATR_UNUSED = cout) override
     {
         ofile.write(data, size);
-        return !(ofile.bad()) ? size : 0;
+        return !(ofile.bad()) ? (int) size : 0;
     }
 
     bool IsOpen() override { return !!ofile; }
