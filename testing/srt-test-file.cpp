@@ -28,7 +28,7 @@ written by
 #include <srt.h>
 #include <udt.h>
 
-#include <.h> // Specific smoother for testing
+#include <smoother.h> // Specific smoother for testing
 
 #include "apputil.hpp"
 #include "uriparser.hpp"

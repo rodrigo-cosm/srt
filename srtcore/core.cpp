@@ -51,6 +51,18 @@ modified by
 *****************************************************************************/
 
 #ifndef _WIN32
+// This is kinda confusing.
+//
+// This <stdint.h> file is from C99, which is a newer standard than C++03
+// (it's C++98, just redacted). This won't compile on compilers that don't
+// support C99, fortunately on Mac and Linux all do. This, however, is not
+// part of C++98 standard (as a derived C standard) - it's true only in
+// C++11 and only in this standard is the <cstdint> header available.
+//
+// Normally this is included intermediately through some other headers, but
+// it happens sometimes that it's not.
+#define __STDC_LIMIT_MACROS 1 // Without this it won't compile interesting macros
+   #include <stdint.h>
    #include <unistd.h>
    #include <netdb.h>
    #include <arpa/inet.h>
