@@ -28,7 +28,7 @@ written by
 #include <srt.h>
 #include <udt.h>
 
-#include <smoother.h> // Specific smoother for testing
+#include <.h> // Specific smoother for testing
 
 #include "apputil.hpp"
 #include "uriparser.hpp"
@@ -410,7 +410,7 @@ bool Download(UriParser& srt_source_uri, UriParser& fileuri)
 
     srt_source_uri["transtype"] = "file";
     // use our own smoother
-    srt_source_uri["smoother"] = "flow";
+    srt_source_uri["congestion"] = "flow";
 
     return DoDownload(srt_source_uri, directory, filename);
 }
