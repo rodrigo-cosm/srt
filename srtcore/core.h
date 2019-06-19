@@ -134,12 +134,9 @@ enum GroupDataItem
 {
     GRPD_GROUPID,
     GRPD_GROUPTYPE,
+    GRPD_PRIORITY,
 
-    /* That was an early concept, not to be used.
-    GRPD_MASTERID,
-    GRPD_MASTERTDIFF,
-    */
-    /// end
+
     GRPD__SIZE
 };
 
@@ -172,10 +169,27 @@ public:
     enum GroupState
     {
         GST_PENDING,  // The socket is created correctly, but not yet ready for getting data.
-        GST_IDLE,     // The socket should be activated at the next operation immediately.
+        GST_IDLE,     // The socket is ready to be activated
         GST_RUNNING,  // The socket was already activated and is in use
         GST_BROKEN    // The last operation broke the socket, it should be closed.
     };
+
+    // Note that the use of states may differ in particular group types:
+    //
+    // Redundancy: links that are freshly connected become PENDING and then IDLE only
+    // for a short moment to be activated immediately at the nearest sending operation.
+    //
+    // Bonding: like with redundancy, just that the link activation gets its shared percentage
+    // of traffic balancing
+    //
+    // Multicast: The link is never idle. The data are always sent over the UDP multicast link
+    // and the receiver simply gets subscribed and reads packets once it's ready.
+    //
+    // Backup: The link stays idle until it's activated, and the activation can only happen
+    // at the moment when the currently active link is "suspected of being likely broken"
+    // (the current active link fails to receive ACK in a time when two ACKs should already
+    // be received). After a while when the current active link is confirmed broken, it turns
+    // into broken state.
 
     static std::string StateStr(GroupState);
 
@@ -193,6 +207,9 @@ public:
         bool ready_read;
         bool ready_write;
         bool ready_error;
+
+        // Configuration
+        int priority;
     };
 
 #ifdef SRT_ENABLE_APP_READER
@@ -350,7 +367,7 @@ public:
     };
 
 
-    CUDTGroup();
+    CUDTGroup(SRT_GROUP_TYPE);
     ~CUDTGroup();
 
     static SocketData prepareData(CUDTSocket* s);
@@ -415,6 +432,8 @@ public:
             m_bConnected = false;
         }
 
+        m_Positions.erase(id);
+
         return s;
     }
 
@@ -429,6 +448,13 @@ public:
     static gli_t gli_NULL() { return s_NoGroup.end(); }
 
     int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+
+    // For Backup, sending all previous packet
+    int sendBackupRexmit(CUDT& core);
+
+
     int recv(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     void close();
@@ -491,6 +517,9 @@ public:
 #else
     void debugGroup() {}
 #endif
+
+    void ackMessage(int32_t msgno);
+
 private:
     // Check if there's at least one connected socket.
     // If so, grab the status of all member sockets.
@@ -516,6 +545,18 @@ private:
     bool m_selfManaged;
     SRT_GROUP_TYPE m_type;
     CUDTSocket* m_listener; // A "group" can only have one listener.
+    struct BufferedMessage
+    {
+        SRT_MSGCTRL mc;
+        std::vector<char> buffer;
+    };
+    std::deque< BufferedMessage > m_SenderBuffer;
+    int32_t m_iSndOldestMsgNo; // oldest position in the sender buffer
+
+    // THIS function must be called only in a function for a group type
+    // that does use sender buffer.
+    void addMessageToBuffer(const char* buf, size_t len, ref_t<SRT_MSGCTRL> mc);
+
     std::set<int> m_sPollID;                     // set of epoll ID to trigger
     int m_iMaxPayloadSize;
     bool m_bSynRecving;
@@ -599,6 +640,8 @@ private:
     pthread_cond_t m_RcvDataCond;
     pthread_mutex_t m_RcvDataLock;
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
+    volatile int32_t m_iLastSchedMsgNo;
+    bool m_bSynchOnMsgNo;
 public:
 
     // Required after the call on newGroup on the listener side.
@@ -626,6 +669,11 @@ public:
         // by TLPKTDROP.
         m_RcvBaseSeqNo = -1;
     }
+
+    int baseOffset(SRT_MSGCTRL& mctrl);
+    int baseOffset(ReadPos& pos);
+    bool seqDiscrepancy(SRT_MSGCTRL& mctrl);
+
 #else
     void setInitialRxSequence(int32_t seq)
     {
@@ -679,6 +727,7 @@ public:
     SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
     SRTU_PROPERTY_RO(CUDTUnited*, uglobal, m_pGlobal);
     SRTU_PROPERTY_RO(std::set<int>&, pollset, m_sPollID);
+    SRTU_PROPERTY_RO(bool, synchOnMsgNo, m_bSynchOnMsgNo);
 };
 
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
@@ -1486,6 +1535,8 @@ private: // Timers
     volatile uint64_t m_ullLastRspTime_tk;    // time stamp of last response from the peer
     volatile uint64_t m_ullLastRspAckTime_tk; // time stamp of last ACK from the peer
     volatile uint64_t m_ullLastSndTime_tk;    // time stamp of last data/ctrl sent (in system ticks)
+    volatile uint64_t m_ullTmpActiveTime_tk;  // time since temporary activated, or 0 if not temporary activated
+    volatile uint64_t m_ullUnstableSince_tk;  // time since unexpected ACK delay experienced, or 0 if link seems healthy
     uint64_t m_ullMinNakInt_tk;               // NAK timeout lower bound; too small value can cause unnecessary retransmission
     uint64_t m_ullMinExpInt_tk;               // timeout lower bound threshold: too small timeout can cause problem
 
