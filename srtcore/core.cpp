@@ -11002,12 +11002,12 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // the streams or not.
     if (m_iLastSchedMsgNo != 0)
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: setting message number: " << m_iLastSchedMsgNo);
+        HLOGC(dlog.Debug, log << "grp/sendRedundant: setting message number: " << m_iLastSchedMsgNo);
         mc.msgno = m_iLastSchedMsgNo;
     }
     else
     {
-        HLOGP(dlog.Debug, "CUDTGroup::send: NOT setting message number - waiting for the first successful sending");
+        HLOGP(dlog.Debug, "grp/sendRedundant: NOT setting message number - waiting for the first successful sending");
     }
 
     // XXX G make a distinction here for an exact group type of managed sending.
@@ -11023,7 +11023,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Check socket sndstate before sending
         if (d->sndstate == GST_BROKEN)
         {
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
+            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
             wipeme.push_back(d);
 
             /*
@@ -11067,7 +11067,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 continue;
             }
 
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in IDLE state: @" << d->id << " - will activate it");
+            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in IDLE state: @" << d->id << " - will activate it");
             // This is idle, we'll take care of them next time
             // Might be that:
             // - this socket is idle, while some NEXT socket is running
@@ -11080,12 +11080,12 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         if (d->sndstate == GST_RUNNING)
         {
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in RUNNING state: @" << d->id << " - will send a payload");
+            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in RUNNING state: @" << d->id << " - will send a payload");
             sendable.push_back(d);
             continue;
         }
 
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: socket @" << d->id << " not ready, state: "
+        HLOGC(dlog.Debug, log << "grp/sendRedundant: socket @" << d->id << " not ready, state: "
                 << StateStr(d->sndstate) << "(" << int(d->sndstate) << ") - NOT sending, SET AS PENDING");
 
         pending.push_back(d);
@@ -11123,7 +11123,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             if (m_iLastSchedMsgNo == 0)
             {
                 // Initialize this number
-                HLOGC(dlog.Debug, log << "CUDTGroup::send: INITIALIZING message number: " << mc.msgno);
+                HLOGC(dlog.Debug, log << "grp/sendRedundant: INITIALIZING message number: " << mc.msgno);
                 m_iLastSchedMsgNo = mc.msgno;
             }
         }
@@ -11180,7 +11180,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         int lastseq = d->ps->core().schedSeqNo();
         if (curseq != -1 && curseq != lastseq)
         {
-            HLOGC(mglog.Debug, log << "CUDTGroup::send: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendRedundant: socket @" << d->id
                 << ": override snd sequence %" << lastseq
                 << " with %" << curseq << " (diff by "
                 << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD: " << BufferStamp(buf, len));
@@ -11188,7 +11188,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
         else
         {
-            HLOGC(mglog.Debug, log << "CUDTGroup::send: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendRedundant: socket @" << d->id
                 << ": sequence remains with original value: %" << lastseq
                 << "; SENDING PAYLOAD " << BufferStamp(buf, len));
         }
@@ -11221,7 +11221,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             if (m_iLastSchedMsgNo == 0)
             {
                 // Initialize this number
-                HLOGC(dlog.Debug, log << "CUDTGroup::send: INITIALIZING message number: " << mc.msgno);
+                HLOGC(dlog.Debug, log << "grp/sendRedundant: INITIALIZING message number: " << mc.msgno);
                 m_iLastSchedMsgNo = mc.msgno;
             }
         }
@@ -11234,13 +11234,13 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     if (curseq != -1)
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: updating current scheduling sequence %" << curseq);
+        HLOGC(dlog.Debug, log << "grp/sendRedundant: updating current scheduling sequence %" << curseq);
         m_iLastSchedSeqNo = curseq;
     }
 
     if (!pending.empty())
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: found pending sockets, polling them.");
+        HLOGC(dlog.Debug, log << "grp/sendRedundant: found pending sockets, polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
@@ -11249,7 +11249,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (m_SndEpolld->empty())
         {
             // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "CUDTGroup::send: IPE: reported pending sockets, but EID is empty - wiping pending!");
+            LOGC(dlog.Error, log << "grp/sendRedundant: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pending.begin(), pending.end(), back_inserter(wipeme));
         }
         else
@@ -11259,7 +11259,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: RDY: "
+            HLOGC(dlog.Debug, log << "grp/sendRedundant: RDY: "
                     << DisplayEpollResults(sready.rd(), "[R]")
                     << DisplayEpollResults(sready.wr(), "[W]")
                     << DisplayEpollResults(sready.ex(), "[E]"));
@@ -11270,7 +11270,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 gli_t d = *i;
                 if (sready.ex().count(d->id))
                 {
-                    HLOGC(dlog.Debug, log << "CUDTGroup::send: Socket @" << d->id << " reported FAILURE - moved to wiped.");
+                    HLOGC(dlog.Debug, log << "grp/sendRedundant: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(d);
                     m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
@@ -11299,7 +11299,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         CUDTSocket* ps = d->ps;
         if (!ps)
         {
-            LOGC(dlog.Error, log << "CUDTGroup::send: IPE: socket NULL at id=" << d->id << " - removing from group list");
+            LOGC(dlog.Error, log << "grp/sendRedundant: IPE: socket NULL at id=" << d->id << " - removing from group list");
             // Closing such socket is useless, it simply won't be found in the map and
             // the internal facilities won't know what to do with it anyway.
             // Simply delete the entry.
@@ -11317,7 +11317,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
             CUDTSocket* ps = *x;
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
+            HLOGC(dlog.Debug, log << "grp/sendRedundant: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
 
             // NOTE: This does inside: ps->removeFromGroup().
             // After this call, 'd' is no longer valid and *i is singular.
@@ -11325,7 +11325,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
     }
 
-    HLOGC(dlog.Debug, log << "CUDTGroup::send: - wiped " << wipeme.size() << " broken sockets");
+    HLOGC(dlog.Debug, log << "grp/sendRedundant: - wiped " << wipeme.size() << " broken sockets");
 
     // We'll need you again.
     wipeme.clear();
@@ -11409,7 +11409,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
         }
 
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: all blocked, trying to common-block on epoll...");
+        HLOGC(dlog.Debug, log << "grp/sendRedundant: all blocked, trying to common-block on epoll...");
         // None was successful, but some were blocked. It means that we
         // haven't sent the payload over any link so far, so we still have
         // a chance to retry.
@@ -11428,7 +11428,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
             InvertedGuard ug(&m_GroupLock, "Group");
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: blocking on any of blocked sockets to allow sending");
+            HLOGC(dlog.Debug, log << "grp/sendRedundant: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
             blst = m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, m_iSndTimeOut);
@@ -11485,7 +11485,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                     if (m_iLastSchedMsgNo == 0)
                     {
                         // Initialize this number
-                        HLOGC(dlog.Debug, log << "CUDTGroup::send: INITIALIZING message number: " << mc.msgno);
+                        HLOGC(dlog.Debug, log << "grp/sendRedundant: INITIALIZING message number: " << mc.msgno);
                         m_iLastSchedMsgNo = mc.msgno;
                     }
                 }
@@ -11537,7 +11537,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     if (m_iLastSchedMsgNo != 0)
     {
         m_iLastSchedMsgNo = ++MsgNo(m_iLastSchedMsgNo);
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: updated msgno: " << m_iLastSchedMsgNo);
+        HLOGC(dlog.Debug, log << "grp/sendRedundant: updated msgno: " << m_iLastSchedMsgNo);
     }
 
 
@@ -11636,9 +11636,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     vector<gli_t> sendable;
     SRT_MSGCTRL& mc = *r_mc;
 
-    int rstat = -1;
-
     int stat = 0;
+    int final_stat = -1;
     SRT_ATR_UNUSED CUDTException cx (MJ_SUCCESS, MN_NONE, 0);
 
 
@@ -11649,12 +11648,12 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // the streams or not.
     if (m_iLastSchedMsgNo != 0)
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: setting message number: " << m_iLastSchedMsgNo);
+        HLOGC(dlog.Debug, log << "grp/sendBackup: setting message number: " << m_iLastSchedMsgNo);
         mc.msgno = m_iLastSchedMsgNo;
     }
     else
     {
-        HLOGP(dlog.Debug, "CUDTGroup::send: NOT setting message number - waiting for the first successful sending");
+        HLOGP(dlog.Debug, "grp/sendBackup: NOT setting message number - waiting for the first successful sending");
     }
 
     // Alright, we have msgno, now we can store the packet in the sender buffer.
@@ -11671,7 +11670,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Check socket sndstate before sending
         if (d->sndstate == GST_BROKEN)
         {
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
+            HLOGC(dlog.Debug, log << "grp/sendBackup: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
             wipeme.push_back(d);
 
             /*
@@ -11715,7 +11714,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 continue;
             }
 
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in IDLE state: @" << d->id << " - will activate it");
+            HLOGC(dlog.Debug, log << "grp/sendBackup: socket in IDLE state: @" << d->id << " - will activate it IF NEEDED");
             // This is idle, we'll take care of them next time
             // Might be that:
             // - this socket is idle, while some NEXT socket is running
@@ -11732,7 +11731,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             // This link might be unstable, check its responsiveness status
             if (!u.m_ullUnstableSince_tk && (now_tk - u.m_ullLastRspTime_tk)/CTimer::getCPUFrequency() > 2*CUDT::COMM_SYN_INTERVAL_US)
             {
-                HLOGC(dlog.Debug, log << "CUDTGroup::send: socket NEW UNSTABLE: @" << d->id);
+                HLOGC(dlog.Debug, log << "grp/sendBackup: socket NEW UNSTABLE: @" << d->id);
                 // The link seems to have missed two ACKs already.
                 // Qualify this link as unstable
                 // Notify that it has been seen so since now
@@ -11742,7 +11741,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             // Could be set above
             if (u.m_ullUnstableSince_tk)
             {
-                HLOGC(dlog.Debug, log << "CUDTGroup::send: socket UNSTABLE since "
+                HLOGC(dlog.Debug, log << "grp/sendBackup: socket UNSTABLE since "
                         << ((now_tk - u.m_ullUnstableSince_tk) / CTimer::getCPUFrequency()) << " : @" << d->id << " - will send a payload");
                 // The link is already unstable
                 if (!oldest_unstable_tk || oldest_unstable_tk > u.m_ullUnstableSince_tk)
@@ -11751,13 +11750,13 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             }
             else
             {
-                HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in RUNNING state: @" << d->id << " - will send a payload");
+                HLOGC(dlog.Debug, log << "grp/sendBackup: socket in RUNNING state: @" << d->id << " - will send a payload");
             }
             sendable.push_back(d);
             continue;
         }
 
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: socket @" << d->id << " not ready, state: "
+        HLOGC(dlog.Debug, log << "grp/sendBackup: socket @" << d->id << " not ready, state: "
                 << StateStr(d->sndstate) << "(" << int(d->sndstate) << ") - NOT sending, SET AS PENDING");
 
         pending.push_back(d);
@@ -11778,6 +11777,20 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // and sending was successful. Later, all but the one with highest
     // priority should remain active.
     vector<gli_t> parallel;
+
+#if ENABLE_HEAVY_LOGGING
+    {
+        vector<SRTSOCKET> show_running, show_idle;
+        for (vector<gli_t>::iterator i = sendable.begin(); i != sendable.end(); ++i)
+            show_running.push_back((*i)->id);
+
+        for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
+            show_idle.push_back((*i)->id);
+
+        LOGC(dlog.Debug, log << "grp/sendBackup: RUNNING: " << Printable(show_running)
+                << " IDLE: " << Printable(show_idle));
+    }
+#endif
 
     // We believe that we need to send the payload over every sendable link anyway.
     for (vector<gli_t>::iterator snd = sendable.begin(); snd != sendable.end(); ++snd)
@@ -11808,10 +11821,11 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         {
             parallel.push_back(d);
             none_succeeded = false;
+            final_stat = stat;
             if (m_iLastSchedMsgNo == 0)
             {
                 // Initialize this number
-                HLOGC(dlog.Debug, log << "CUDTGroup::send: INITIALIZING message number: " << mc.msgno);
+                HLOGC(dlog.Debug, log << "grp/sendBackup: INITIALIZING message number: " << mc.msgno);
                 m_iLastSchedMsgNo = mc.msgno;
             }
         }
@@ -11910,6 +11924,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Sort the idle sockets by priority so the highest priority idle links are checked first.
         sort(idlers.begin(), idlers.end(), FByPriotity());
 
+        HLOGC(dlog.Debug, log << "grp/sendBackup: no stable links, trying to activate an idle link:");
+
         for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
         {
             int erc = 0;
@@ -11920,9 +11936,11 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
             try
             {
+                HLOGC(dlog.Debug, log << "grp/sendBackup: ... trying @" << d->id << " - resending "
+                        << m_SenderBuffer.size() << " collected messages...");
                 // Note: this will set the currently required packet
                 // because it has been just freshly added to the sender buffer
-                stat = sendBackupRexmit(d->ps->core());
+                stat = sendBackupRexmit(d->ps->core(), r_mc);
             }
             catch (CUDTException& e)
             {
@@ -11950,12 +11968,13 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 if (m_iLastSchedMsgNo == 0)
                 {
                     // Initialize this number
-                    HLOGC(dlog.Debug, log << "CUDTGroup::send: INITIALIZING message number: " << mc.msgno);
+                    HLOGC(dlog.Debug, log << "grp/sendBackup: INITIALIZING message number: " << mc.msgno);
                     m_iLastSchedMsgNo = mc.msgno;
                 }
 
                 parallel.push_back(d);
                 none_succeeded = false;
+                final_stat = stat;
 
                 // We've activated the link, so that's enough.
                 break;
@@ -11976,6 +11995,11 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                     << (isblocked ? "blocked" : "ERROR") << "), trying to activate another link.");
         }
     }
+    else
+    {
+        HLOGC(dlog.Debug, log << "grp/sendBackup: have sendable links, stable="
+                << (sendable.size() - nunstable) << " unstable=" << nunstable);
+    }
 
     // If we have at least one stable link, then check links that have highest
     // priority and silence the rest.
@@ -11989,7 +12013,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     //
     if (!pending.empty())
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: found pending sockets, polling them.");
+        HLOGC(dlog.Debug, log << "grp/sendBackup: found pending sockets, polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
@@ -11998,7 +12022,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (m_SndEpolld->empty())
         {
             // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "CUDTGroup::send: IPE: reported pending sockets, but EID is empty - wiping pending!");
+            LOGC(dlog.Error, log << "grp/sendBackup: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pending.begin(), pending.end(), back_inserter(wipeme));
         }
         else
@@ -12008,7 +12032,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: RDY: "
+            HLOGC(dlog.Debug, log << "grp/sendBackup: RDY: "
                     << DisplayEpollResults(sready.rd(), "[R]")
                     << DisplayEpollResults(sready.wr(), "[W]")
                     << DisplayEpollResults(sready.ex(), "[E]"));
@@ -12019,7 +12043,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 gli_t d = *i;
                 if (sready.ex().count(d->id))
                 {
-                    HLOGC(dlog.Debug, log << "CUDTGroup::send: Socket @" << d->id << " reported FAILURE - moved to wiped.");
+                    HLOGC(dlog.Debug, log << "grp/sendBackup: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(d);
                     m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
@@ -12048,7 +12072,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         CUDTSocket* ps = d->ps;
         if (!ps)
         {
-            LOGC(dlog.Error, log << "CUDTGroup::send: IPE: socket NULL at id=" << d->id << " - removing from group list");
+            LOGC(dlog.Error, log << "grp/sendBackup: IPE: socket NULL at id=" << d->id << " - removing from group list");
             // Closing such socket is useless, it simply won't be found in the map and
             // the internal facilities won't know what to do with it anyway.
             // Simply delete the entry.
@@ -12066,7 +12090,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
             CUDTSocket* ps = *x;
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
+            HLOGC(dlog.Debug, log << "grp/sendBackup: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
 
             // NOTE: This does inside: ps->removeFromGroup().
             // After this call, 'd' is no longer valid and *i is singular.
@@ -12074,7 +12098,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
     }
 
-    HLOGC(dlog.Debug, log << "CUDTGroup::send: - wiped " << wipeme.size() << " broken sockets");
+    HLOGC(dlog.Debug, log << "grp/sendBackup: - wiped " << wipeme.size() << " broken sockets");
 
     // We'll need you again.
     wipeme.clear();
@@ -12113,7 +12137,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
             // wipeme wiped, pending sockets checked, it can only mean that
             // all sockets are broken.
-            HLOGC(dlog.Debug, log << "CUDTGroup::sendBackup: epolld empty - all sockets broken?");
+            HLOGC(dlog.Debug, log << "grp/sendBackup: epolld empty - all sockets broken?");
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
         }
 
@@ -12135,6 +12159,9 @@ RetryWaitBlocked:
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
         }
 
+        // XXX PROBABLE BUG:
+        // This loop may loop forever in case when all sockets fail.
+
         // Ok, now check if we have at least one write-ready.
         // Note that the procedure of activation of a new link in case of
         // no stable links found embraces also rexmit-sending and status
@@ -12152,7 +12179,7 @@ RetryWaitBlocked:
             {
                 // Note: this will set the currently required packet
                 // because it has been just freshly added to the sender buffer
-                stat = sendBackupRexmit(d->ps->core());
+                stat = sendBackupRexmit(d->ps->core(), r_mc);
             }
             catch (CUDTException& e)
             {
@@ -12172,6 +12199,7 @@ RetryWaitBlocked:
             }
 
             parallel.push_back(d);
+            final_stat = stat;
 
             break;
         }
@@ -12185,7 +12213,7 @@ RetryWaitBlocked:
         sort(parallel.begin(), parallel.end(), FByPriotity());
 
         vector<gli_t>::iterator b = parallel.begin();
-        HLOGC(dlog.Debug, log << "CUDTGroup::sendBackup: keeping parallel link @" << (*b)->id << " and silencing others:");
+        HLOGC(dlog.Debug, log << "grp/sendBackup: keeping parallel link @" << (*b)->id << " and silencing others:");
         ++b;
         for (; b != parallel.end(); ++b)
         {
@@ -12212,7 +12240,7 @@ RetryWaitBlocked:
     if (m_iLastSchedMsgNo != 0)
     {
         m_iLastSchedMsgNo = ++MsgNo(m_iLastSchedMsgNo);
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: updated msgno: " << m_iLastSchedMsgNo);
+        HLOGC(dlog.Debug, log << "grp/sendBackup: updated msgno: " << m_iLastSchedMsgNo);
     }
 
     // Now fill in the socket table. Check if the size is enough, if not,
@@ -12240,7 +12268,7 @@ RetryWaitBlocked:
             mc.grpdata[i].status = d->laststatus;
 
             if (d->sndstate == GST_RUNNING)
-                mc.grpdata[i].result = rstat; // The same result for all sockets, if running
+                mc.grpdata[i].result = d->sndresult;
             else if (d->sndstate == GST_IDLE)
                 mc.grpdata[i].result = 0;
             else
@@ -12265,7 +12293,7 @@ RetryWaitBlocked:
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
     }
 
-    return rstat;
+    return final_stat;
 }
 
 void CUDTGroup::addMessageToBuffer(const char* buf, size_t len, ref_t<SRT_MSGCTRL> mc)
@@ -12283,9 +12311,18 @@ void CUDTGroup::addMessageToBuffer(const char* buf, size_t len, ref_t<SRT_MSGCTR
     }
 }
 
-int CUDTGroup::sendBackupRexmit(CUDT& core)
+int CUDTGroup::sendBackupRexmit(CUDT& core, ref_t<SRT_MSGCTRL> r_mc)
 {
     // This should resend all packets
+    if (m_SenderBuffer.empty())
+    {
+        LOGC(dlog.Fatal, log << "IPE: sendBackupRexmit: sender buffer empty");
+
+        // Although act as if it was successful, otherwise you'll get connection break
+        return 0;
+    }
+
+    // using [[assert !m_SenderBuffer.empty()]];
 
     // Send everything you currently have in the sender buffer.
     // The receiver will reject packets that it currently has.
@@ -12314,6 +12351,8 @@ int CUDTGroup::sendBackupRexmit(CUDT& core)
         }
     }
 
+    // Copy the contents of the last item being updated.
+    *r_mc = m_SenderBuffer.back().mc;
     return stat;
 }
 

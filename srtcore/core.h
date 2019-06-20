@@ -452,7 +452,7 @@ public:
     int sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     // For Backup, sending all previous packet
-    int sendBackupRexmit(CUDT& core);
+    int sendBackupRexmit(CUDT& core, ref_t<SRT_MSGCTRL> r_mc);
 
 
     int recv(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
