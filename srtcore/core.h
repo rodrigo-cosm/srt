@@ -212,130 +212,6 @@ public:
         int priority;
     };
 
-#ifdef SRT_ENABLE_APP_READER
-#else
-
-    // This object will be placed at the position in the
-    // buffer assigned to packet's sequence number. When extracting
-    // the data to be delivered to the output, this defines, from
-    // which socket the data should be read to get the packet of that
-    // sequence. The data are read until the packet with this sequence
-    // is found. The play time defines when exactly the packet should be
-    // given up to the application.
-    struct Provider
-    {
-        uint64_t playtime;
-        std::vector<CUDT*> provider; // XXX may be not the most optimal
-        bool signedoff;
-
-        Provider(): playtime(0), signedoff(false) {}
-
-        struct FUpdate
-        {
-            uint64_t playtime;
-            CUDT* provider;
-            FUpdate(CUDT* prov, uint64_t pt): playtime(pt), provider(prov) {}
-            void operator()(Provider& accessed, bool isnew)
-            {
-                if (isnew)
-                {
-                    accessed.playtime = playtime;
-                    accessed.provider.clear();
-                    accessed.provider.push_back(provider);
-                }
-                else
-                {
-                    std::vector<CUDT*>& ap = accessed.provider;
-                    // This might be called multiple times for the same packet,
-                    // so find the provider if it isn't there already
-                    std::vector<CUDT*>::iterator f = std::find(ap.begin(),
-                            ap.end(), provider);
-                    if (f == ap.end())
-                        ap.push_back(provider);
-                }
-            }
-        };
-
-        struct FValid
-        {
-            bool operator()(const Provider& p) { return !p.provider.empty() && p.signedoff; }
-        };
-    };
-
-    // This object keeps the data extracted from the packet and waiting
-    // to be delivered to the application when the time comes. The CPacket
-    // object is used here because it already provides the automatic allocation
-    // facility. It's not the best that can be used here, but there's no better
-    // alternative, provided we need to keep the receiver buffer untouched.
-    struct Pending
-    {
-        uint64_t playtime;
-        SRT_MSGCTRL msgctrl;
-        char* buffer;
-        int size;
-        bool owned;
-
-        void move_from(Pending& sec)
-        {
-            playtime = sec.playtime;
-            msgctrl = sec.msgctrl;
-
-            // Move the allocated buffer to the new packet.
-            // Other data are not important, this is only for
-            // data passing.
-            buffer = sec.buffer;
-            size = sec.size;
-            owned = true;
-
-            sec.buffer = NULL;
-            sec.owned = false;
-        }
-
-        Pending(): playtime(0), msgctrl(srt_msgctrl_default), buffer(NULL), owned(false)
-        {
-        }
-
-        char* release()
-        {
-            char* b = buffer;
-            dispose();
-            buffer = NULL;
-            return b;
-        }
-
-        void dispose()
-        {
-            if (owned)
-            {
-                delete [] buffer;
-            }
-        }
-
-        ~Pending()
-        {
-            dispose();
-        }
-
-        void allocate(int bufsize)
-        {
-            if (owned)
-            {
-                if (bufsize == size)
-                    return;
-                delete [] buffer;
-            }
-
-            buffer = new char[bufsize];
-            size = bufsize;
-            owned = true;
-        }
-
-    private:
-        Pending(const Pending&);
-    };
-
-#endif
-
     struct ConfigItem
     {
         SRT_SOCKOPT so;
@@ -564,7 +440,6 @@ private:
     bool m_bTsbPd;
     bool m_bTLPktDrop;
     int64_t m_iTsbPdDelay_us;
-#ifdef SRT_ENABLE_APP_READER
     int m_RcvEID;
     class CEPollDesc* m_RcvEpolld;
     int m_SndEID;
@@ -582,10 +457,13 @@ private:
 
     struct ReadPos
     {
-        int32_t sequence;
+        //int32_t sequence;
         std::vector<char> packet;
         SRT_MSGCTRL mctrl;
-        ReadPos(int32_t s): sequence(s), mctrl(srt_msgctrl_default) {}
+        ReadPos(int32_t s): /*sequence(s), */ mctrl(srt_msgctrl_default)
+        {
+            mctrl.pktseq = s;
+        }
     };
     std::map<SRTSOCKET, ReadPos> m_Positions;
 
@@ -596,34 +474,8 @@ private:
     // from the first delivering socket will be taken as a good deal.
     volatile int32_t m_RcvBaseSeqNo;
 
-#else
-    pthread_t m_RcvInterceptorThread;
-
-    // This buffer gets updated when a packet with some seq number has come.
-    // This gives the TSBPD thread clue that a packet is ready for extraction
-    // for given sequence number. This is also a central packet information for
-    // other sockets in the group to know whether the packet recovery for jumped-over
-    // sequences shall be undertaken or not.
-    CircularBuffer<Provider> m_Providers;
-    CircularBuffer<Pending> m_Pending;
-
-    // This condition shall be signaled when a packet arrives
-    // at the position earlier than the current earliest sequence.
-    // Including when the provider buffer is currently empty.
-    pthread_cond_t m_RcvPacketAhead;
-
-    // This is the sequence number of the position [0] in m_Providers buffer.
-    volatile int32_t m_RcvBaseSeqNo;
-
-    // This is the sequence number that is next available for extraction.
-    // May be equal to m_RcvBaseSeqNo if you have a packet at head ready.
-    // This sequence should be updated in case when the buffer was empty
-    // and when the newly coming packet has a sequence less than this.
-    volatile int32_t m_RcvReadySeqNo;
-
-    // Incremented with a new packet arriving
-    volatile int32_t m_RcvLatestSeqNo;
-#endif
+    // Version used when using msgno synchronization.
+    volatile int32_t m_RcvBaseMsgNo;
 
     bool m_bOpened;    // Set to true when at least one link is at least pending
     bool m_bConnected; // Set to true on first link confirmed connected
@@ -641,7 +493,6 @@ private:
     pthread_mutex_t m_RcvDataLock;
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
     volatile int32_t m_iLastSchedMsgNo;
-    bool m_bSynchOnMsgNo;
 public:
 
     // Required after the call on newGroup on the listener side.
@@ -660,7 +511,6 @@ public:
 #endif
     }
 
-#if SRT_ENABLE_APP_READER
     void setInitialRxSequence(int32_t)
     {
         // The app-reader doesn't care about the real sequence number.
@@ -668,19 +518,12 @@ public:
         // this is going to be past the ISN, at worst it will be caused
         // by TLPKTDROP.
         m_RcvBaseSeqNo = -1;
+        m_RcvBaseMsgNo = -1;
     }
 
     int baseOffset(SRT_MSGCTRL& mctrl);
     int baseOffset(ReadPos& pos);
     bool seqDiscrepancy(SRT_MSGCTRL& mctrl);
-
-#else
-    void setInitialRxSequence(int32_t seq)
-    {
-        m_RcvBaseSeqNo = m_RcvReadySeqNo = m_RcvLatestSeqNo = CSeqNo::decseq(seq);
-    }
-#endif
-
 
     bool applyGroupTime(ref_t<uint64_t> r_start_time, ref_t<uint64_t> r_peer_start_time)
     {
@@ -727,7 +570,6 @@ public:
     SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
     SRTU_PROPERTY_RO(CUDTUnited*, uglobal, m_pGlobal);
     SRTU_PROPERTY_RO(std::set<int>&, pollset, m_sPollID);
-    SRTU_PROPERTY_RO(bool, synchOnMsgNo, m_bSynchOnMsgNo);
 };
 
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
@@ -1080,11 +922,7 @@ private:
 
     SRT_ATR_NODISCARD int recvmsg(char* data, int len, uint64_t& srctime);
     SRT_ATR_NODISCARD int recvmsg2(char* data, int len, ref_t<SRT_MSGCTRL> m);
-#ifdef SRT_ENABLE_APP_READER
     SRT_ATR_NODISCARD int receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> m, int erh = 1 /*throw exception*/);
-#else
-    SRT_ATR_NODISCARD int receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> m, int32_t uptoseq = CSeqNo::m_iMaxSeqNo);
-#endif
     SRT_ATR_NODISCARD int receiveBuffer(char* data, int len);
 
     size_t dropMessage(int32_t seqtoskip);

@@ -802,7 +802,7 @@ private:
         if ( left < right )
         {
             int32_t diff = right - left;
-            if ( diff >= HALF ) // over barrier
+            if ( diff >= int32_t(HALF) ) // over barrier
             {
                 // It means that left is less than right because it was overflown
                 // For example: left = 0x0005, right = 0xFFF0; diff = 0xFFEB > HALF
@@ -813,7 +813,7 @@ private:
         else
         {
             int32_t diff = left - right;
-            if ( diff >= HALF )
+            if ( diff >= int32_t(HALF) )
             {
                 right += OVER - MIN;
             }
