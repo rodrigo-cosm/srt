@@ -194,6 +194,7 @@ typedef enum SRT_SOCKOPT {
    SRTO_IPV6ONLY,            // IPV6_V6ONLY mode
    SRTO_PEERIDLETIMEO,       // Peer-idle timeout (max time of silence heard from peer) in [ms]
    SRTO_GROUPCONNECT,        // Set on a listener to allow group connection
+   SRTO_GROUPSTABTIMEO,      // Stability timeout (backup groups) in [ms]
 } SRT_SOCKOPT;
 
 // DEPRECATED OPTIONS:
@@ -535,6 +536,9 @@ enum SRT_EPOLL_OPT
    // some new names can be added to improve clarity.
    SRT_EPOLL_CONNECT = SRT_EPOLL_OUT,
    SRT_EPOLL_ACCEPT = SRT_EPOLL_IN,
+
+   // INTERNAL USE ONLY! DO NOT USE!
+   SRT_EPOLL_SPECIAL = 0x10
 };
 
 #ifdef __cplusplus

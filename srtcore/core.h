@@ -139,6 +139,8 @@ enum GroupDataItem
     GRPD__SIZE
 };
 
+const size_t GRPD_MIN_SIZE = 2; // ID and GROUPTYPE as backward compat
+
 const size_t GRPD_FIELD_SIZE = sizeof(int32_t);
 
 // For HSv4 legacy handshake
@@ -159,6 +161,15 @@ void SRT_tsbpdLoop(
         ExecutorType* self,
         SRTSOCKET sid,
         CGuard& lock);
+
+#if ENABLE_HEAVY_LOGGING
+    const char* const srt_log_grp_state [] = {
+        "PENDING",
+        "IDLE",
+        "RUNNING",
+        "BROKEN"
+    };
+#endif
 
 class CUDTGroup
 {
@@ -218,6 +229,7 @@ public:
             if (sizeof(T) > value.size())
                 return false;
             refr = *(T*)&value[0];
+            return true;
         }
 
         ConfigItem(SRT_SOCKOPT o, const void* val, int size): so(o)
@@ -226,6 +238,16 @@ public:
             unsigned char* begin = (unsigned char*)val;
             std::copy(begin, begin+size, value.begin());
         }
+
+        struct OfType
+        {
+            SRT_SOCKOPT so;
+            OfType(SRT_SOCKOPT soso): so(soso) {}
+            bool operator()(ConfigItem& ci)
+            {
+                return ci.so == so;
+            }
+        };
     };
 
     typedef std::list<SocketData> group_t;
@@ -304,6 +326,7 @@ public:
             m_bConnected = false;
         }
 
+        // XXX BUGFIX
         m_Positions.erase(id);
 
         return s;
@@ -391,6 +414,8 @@ public:
 #endif
 
     void ackMessage(int32_t msgno);
+    void handleKeepalive(gli_t);
+    void internalKeepalive(gli_t);
 
 private:
     // Check if there's at least one connected socket.
@@ -398,14 +423,7 @@ private:
     void getGroupCount(ref_t<size_t> r_size, ref_t<bool> r_still_alive);
     void getMemberStatus(ref_t< std::vector<SRT_SOCKGROUPDATA> > r_gd, SRTSOCKET wasread, int result, bool again);
 
-    // XXX UNUSED
-    void readInterceptorThread();
-    static void* readInterceptorThread_FWD(void* vself)
-    {
-        CUDTGroup* self = (CUDTGroup*)vself;
-        self->readInterceptorThread();
-        return 0;
-    }
+    void updateLatestRcv();
 
     class CUDTUnited* m_pGlobal;
     pthread_mutex_t m_GroupLock;
@@ -429,6 +447,108 @@ private:
     // that does use sender buffer.
     void addMessageToBuffer(const char* buf, size_t len, ref_t<SRT_MSGCTRL> mc);
 
+
+public:
+
+    // XXX unused now 
+    struct BufferedMessageStorage
+    {
+        size_t blocksize;
+        size_t maxstorage;
+        std::vector<char*> storage;
+
+        BufferedMessageStorage(size_t blk, size_t max = 0):
+            blocksize(blk),
+            maxstorage(max),
+            storage()
+        {
+        }
+
+        char* get()
+        {
+            if (storage.empty())
+                return new char[blocksize];
+
+            // Get the element from the end
+            char* block = storage.back();
+            storage.pop_back();
+            return block;
+        }
+
+        void put(char* block)
+        {
+            if (storage.size() >= maxstorage)
+            {
+                // Simply delete
+                delete [] block;
+                return;
+            }
+
+            // Put the block into the spare buffer
+            storage.push_back(block);
+        }
+
+        ~BufferedMessageStorage()
+        {
+            for (size_t i = 0; i < storage.size(); ++i)
+                delete [] storage[i];
+        }
+    };
+
+    struct BufferedMessage
+    {
+        static BufferedMessageStorage storage;
+
+        SRT_MSGCTRL mc;
+        char* data;
+        size_t size;
+
+        BufferedMessage(): data(), size() {}
+        ~BufferedMessage()
+        {
+            if (data)
+                storage.put(data);
+        }
+
+        // NOTE: size 's' must be checked against SRT_LIVE_MAX_PLSIZE
+        // before calling
+        void copy(const char* buf, size_t s)
+        {
+            size = s;
+            data = storage.get();
+            memcpy(data, buf, s);
+        }
+
+        BufferedMessage(const BufferedMessage& foreign SRT_ATR_UNUSED):
+            data(), size()
+        {
+            // This is only to copy empty container.
+            // Any other use should not be done.
+#if ENABLE_DEBUG
+            if (foreign.data)
+                abort();
+#endif
+        }
+
+    private:
+        friend void fwd_swap(BufferedMessage&, BufferedMessage&);
+    };
+
+    typedef std::deque< BufferedMessage > senderBuffer_t;
+    //typedef StaticBuffer<BufferedMessage, 1000> senderBuffer_t;
+
+private:
+
+    // Fields required for SRT_GTYPE_BACKUP groups.
+    senderBuffer_t m_SenderBuffer;
+    int32_t m_iSndOldestMsgNo; // oldest position in the sender buffer
+    volatile int32_t m_iSndAckedMsgNo;
+    uint32_t m_uOPT_StabilityTimeout;
+
+    // THIS function must be called only in a function for a group type
+    // that does use sender buffer.
+    int32_t addMessageToBuffer(const char* buf, size_t len, ref_t<SRT_MSGCTRL> mc);
+
     std::set<int> m_sPollID;                     // set of epoll ID to trigger
     int m_iMaxPayloadSize;
     bool m_bSynRecving;
@@ -437,9 +557,9 @@ private:
     bool m_bTLPktDrop;
     int64_t m_iTsbPdDelay_us;
     int m_RcvEID;
-    class CEPollDesc* m_RcvEpolld;
+    struct CEPollDesc* m_RcvEpolld;
     int m_SndEID;
-    class CEPollDesc* m_SndEpolld;
+    struct CEPollDesc* m_SndEpolld;
 
     int m_iSndTimeOut;                           // sending timeout in milliseconds
     int m_iRcvTimeOut;                           // receiving timeout in milliseconds
@@ -550,6 +670,8 @@ public:
     bool applyGroupSequences(SRTSOCKET, ref_t<int32_t> r_snd_isn, ref_t<int32_t> r_rcv_isn);
     void synchronizeDrift(CUDT* cu, int64_t udrift, uint64_t newtimebase);
 
+    void updateLatestRcv(gli_t);
+
     // Property accessors
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, peerid, m_PeerGroupID);
@@ -566,6 +688,22 @@ public:
     SRTU_PROPERTY_RO(CUDTUnited*, uglobal, m_pGlobal);
     SRTU_PROPERTY_RO(std::set<int>&, pollset, m_sPollID);
 };
+
+inline void fwd_swap(CUDTGroup::BufferedMessage& a, CUDTGroup::BufferedMessage& b)
+{
+    CUDTGroup::BufferedMessage tmp;
+    tmp = a;
+    a = b;
+    b = tmp;
+    tmp.data = 0;
+}
+
+namespace std
+{
+    template<>
+    inline void swap(CUDTGroup::BufferedMessage& a, CUDTGroup::BufferedMessage& b)
+    { ::fwd_swap(a, b); }
+}
 
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
 // There's no reason for separating them, there's no case of having them
@@ -856,7 +994,7 @@ private:
     static CUDTGroup& newGroup(int); // defined EXCEPTIONALLY in api.cpp for convenience reasons
     // Note: This is an "interpret" function, which should treat the tp as
     // "possibly group type" that might be out of the existing values.
-    SRT_ATR_NODISCARD bool interpretGroup(const int32_t grpdata[], int hsreq_type_cmd);
+    SRT_ATR_NODISCARD bool interpretGroup(const int32_t grpdata[], size_t data_size, int hsreq_type_cmd);
     SRT_ATR_NODISCARD SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
     void synchronizeWithGroup(CUDTGroup* grp);
 
@@ -864,6 +1002,8 @@ private:
 
     void updateSrtRcvSettings();
     void updateSrtSndSettings();
+
+    void updateIdleLinkFrom(CUDT* source);
 
     void checkNeedDrop(ref_t<bool> bCongestion);
 
@@ -1077,6 +1217,7 @@ private: // Identification
     bool m_bOPT_GroupConnect;
     std::string m_sStreamName;
     int m_iOPT_PeerIdleTimeout;      // Timeout for hearing anything from the peer.
+    uint32_t m_uOPT_StabilityTimeout;
 
     int m_iTsbPdDelay_ms;                           // Rx delay to absorb burst in milliseconds
     int m_iPeerTsbPdDelay_ms;                       // Tx delay that the peer uses to absorb burst in milliseconds
@@ -1170,7 +1311,7 @@ private: // Sending related data
         m_iSndLastAck = isn;
         m_iSndLastDataAck = isn;
         m_iSndLastFullAck = isn;
-        m_iSndCurrSeqNo = isn - 1;
+        m_iSndCurrSeqNo = CSeqNo::decseq(isn);
         m_iSndNextSeqNo = isn;
         m_iSndLastAck2 = isn;
     }
@@ -1183,7 +1324,7 @@ private: // Sending related data
 #endif
         m_iRcvLastSkipAck = m_iRcvLastAck;
         m_iRcvLastAckAck = isn;
-        m_iRcvCurrSeqNo = isn - 1;
+        m_iRcvCurrSeqNo = CSeqNo::decseq(isn);
     }
 
     uint64_t m_ullSndLastAck2Time;               // The time when last ACK2 was sent back
@@ -1284,7 +1425,7 @@ private: // Common connection Congestion Control setup
     bool createCrypter(HandshakeSide side, bool bidi);
 
 private: // Generation and processing of packets
-    void sendCtrl(UDTMessageType pkttype, void* lparam = NULL, void* rparam = NULL, int size = 0);
+    void sendCtrl(UDTMessageType pkttype, int32_t* lparam = NULL, void* rparam = NULL, int size = 0);
     void processCtrl(CPacket& ctrlpkt);
     /// Pack a packet from a list of lost packets.
     ///
@@ -1301,7 +1442,7 @@ private: // Generation and processing of packets
     static void addLossRecord(std::vector<int32_t>& lossrecord, int32_t lo, int32_t hi);
     int32_t bake(const sockaddr_any& addr, int32_t previous_cookie = 0, int correction = 0);
     int32_t ackDataUpTo(int32_t seq);
-
+    void handleKeepalive(const char* data, size_t lenghth);
 
 private: // Trace
 

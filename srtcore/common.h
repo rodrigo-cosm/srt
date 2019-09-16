@@ -55,6 +55,7 @@ modified by
 
 #define _CRT_SECURE_NO_WARNINGS 1 // silences windows complaints for sscanf
 #include <memory>
+#include <utility>
 #include <cstdlib>
 #include <cstdio>
 #ifndef _WIN32
@@ -68,6 +69,7 @@ modified by
 #include "srt.h"
 #include "utilities.h"
 #include "netinet_any.h"
+#include "logging.h"
 
 // System-independent errno
 #ifndef _WIN32
@@ -715,7 +717,60 @@ public:
 
 class CSeqNo
 {
+    int32_t value;
+
 public:
+
+   explicit CSeqNo(int32_t v): value(v) {}
+
+   // Comparison
+   bool operator == (const CSeqNo& other) const { return other.value == value; }
+   bool operator < (const CSeqNo& other) const
+   {
+       return seqcmp(value, other.value) < 0;
+   }
+
+   // The std::rel_ops namespace cannot be "imported"
+   // as a whole into the class - it can only be used
+   // in the application code. 
+   bool operator != (const CSeqNo& other) const { return other.value != value; }
+   bool operator > (const CSeqNo& other) const { return other < *this; }
+   bool operator >= (const CSeqNo& other) const
+   {
+       return seqcmp(value, other.value) >= 0;
+   }
+   bool operator <=(const CSeqNo& other) const
+   {
+       return seqcmp(value, other.value) <= 0;
+   }
+
+   // rounded arithmetics
+   friend int operator-(const CSeqNo& c1, const CSeqNo& c2)
+   {
+       return seqoff(c2.value, c1.value);
+   }
+
+   friend CSeqNo operator-(const CSeqNo& c1, int off)
+   {
+       return CSeqNo(decseq(c1.value, off));
+   }
+
+   friend CSeqNo operator+(const CSeqNo& c1, int off)
+   {
+       return CSeqNo(incseq(c1.value, off));
+   }
+
+   friend CSeqNo operator+(int off, const CSeqNo& c1)
+   {
+       return CSeqNo(incseq(c1.value, off));
+   }
+
+   CSeqNo& operator++()
+   {
+       value = incseq(value);
+       return *this;
+   }
+
    inline static int seqcmp(int32_t seq1, int32_t seq2)
    {return (abs(seq1 - seq2) < m_iSeqNoTH) ? (seq1 - seq2) : (seq2 - seq1);}
 
@@ -767,6 +822,7 @@ public:
    static const int32_t m_iSeqNoTH = 0x3FFFFFFF;             // threshold for comparing seq. no.
    static const int32_t m_iMaxSeqNo = 0x7FFFFFFF;            // maximum sequence number used in UDT
 };
+
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -1461,5 +1517,245 @@ inline std::string SrtVersionString(int version)
     sprintf(buf, "%d.%d.%d", major, minor, patch);
     return buf;
 }
+
+namespace srt_logging
+{
+    extern Logger mglog;
+}
+using srt_logging::mglog;
+
+// This is for testing-debugging purposes only.
+template <class Value, size_t SIZE>
+class StaticBuffer
+{
+    Value buffer_[SIZE];
+    size_t size_;
+
+    void verify_iterators(const Value* b, const Value* e)
+    {
+        if (e < b)
+        {
+            LOGC(mglog.Fatal, log << "IPE: erase uses non-contiguous range: b=" << b << " e=" << e);
+            abort();
+        }
+
+        if (b < begin() || e > end())
+        {
+            LOGC(mglog.Fatal, log << "IPE: erase uses pointers from outside the container");
+            abort();
+        }
+    }
+
+public:
+
+    StaticBuffer(): size_(0)
+    {
+    }
+
+    static const size_t MAX_SIZE = SIZE;
+
+    typedef Value* iterator;
+    typedef Value const* const_iterator;
+    typedef Value value_type;
+
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+
+#if HAVE_CXX11
+    template <typename... Args>
+    void emplace_back(Args&&... args)
+    {
+        // If the size is too small, simply don't push.
+        if (size_ == SIZE)
+        {
+            LOGC(mglog.Error, log << "IPE: StaticBuffer too small!");
+            return;
+        }
+
+        HLOGC(mglog.Debug, log << "StaticBuffer::emplace_back(&&...): adding item #" << size_);
+
+        buffer_[size_] = Value(std::forward<Args>(args)...);
+        ++size_;
+    }
+
+    void push_back(Value&& v)
+    {
+        // If the size is too small, simply don't push.
+        if (size_ == SIZE)
+        {
+            LOGC(mglog.Error, log << "IPE: StaticBuffer too small!");
+            return;
+        }
+
+        HLOGC(mglog.Debug, log << "StaticBuffer::push_back(&&): adding item #" << size_);
+
+        buffer_[size_] = std::move(v);
+        ++size_;
+    }
+#endif
+
+    void push_back(const Value& v)
+    {
+        // If the size is too small, simply don't push.
+        if (size_ == SIZE)
+        {
+            LOGC(mglog.Error, log << "IPE: StaticBuffer too small!");
+            return;
+        }
+
+        HLOGC(mglog.Debug, log << "StaticBuffer::push_back(C&): adding item #" << size_);
+
+        buffer_[size_] = v;
+        ++size_;
+    }
+
+#if HAVE_CXX11
+    template <typename... Args>
+    void emplace(const Value* pos, Args&&... args)
+    {
+        verify_iterators(pos, pos);
+
+        // If the size is too small, simply don't push.
+        if (size_ == SIZE)
+        {
+            LOGC(mglog.Error, log << "IPE: StaticBuffer too small!");
+            return;
+        }
+
+        size_t ipos = pos - begin();
+
+        // Prepare the place first.
+        // (i > ipos is ok because in the lowest
+        // position ipos == 0, and this is the place
+        // which should be left alone)
+        for (size_t i = size_-1; i > ipos; --i)
+        {
+            swap(buffer_[i+1], buffer_[i]);
+        }
+
+        buffer_[ipos] = Value(std::forward<Args>(args)...);
+        ++size_;
+
+        HLOGC(mglog.Debug, log << "StaticBuffer::emplace: inserted at #" << ipos << "/" << size_);
+    }
+#endif
+
+    void pop_back()
+    {
+        if (size_ == 0)
+        {
+            LOGC(mglog.Fatal, log << "StaticBuffer::pop_back: empty buffer! (allowed to continue)");
+            return;
+        }
+
+        --size_;
+        buffer_[size_] = value_type();
+    }
+
+    void pop_front()
+    {
+        if (size_ == 0)
+        {
+            LOGC(mglog.Fatal, log << "StaticBuffer::pop_front: empty buffer! (allowed to continue)");
+            return;
+        }
+
+        buffer_[0] = value_type();
+        move(&buffer_[1], &buffer_[size_], &buffer_[0]);
+
+        --size_;
+    }
+
+    Value* begin() { return buffer_; }
+    Value* end() { return buffer_ + size_; }
+    const Value* begin() const { return buffer_; }
+    const Value* end() const { return buffer_ + size_; }
+    size_t size() { return size_; }
+    bool empty() { return size_ == 0; }
+
+    reverse_iterator rbegin() { return reverse_iterator(begin()); }
+    reverse_iterator rend() { return reverse_iterator(end()); }
+
+    Value& operator[](size_t pos)
+    {
+        if (pos > size_)
+        {
+            LOGC(mglog.Fatal, log << "IPE: accessing sndbuf[" << pos << "] at size=" << size_);
+            abort();
+        }
+
+        return buffer_[pos];
+    }
+
+    Value& back()
+    {
+        if (size_ == 0)
+        {
+            LOGC(mglog.Fatal, log << "IPE: accessing back for an empty container");
+            abort();
+        }
+
+        return buffer_[size_-1];
+    }
+
+    void clear()
+    {
+        // Destroy all container first. This is reusing empty
+        // objects, so simply initialize them to a default value.
+        for (size_t i = 0; i < size_; ++i)
+            buffer_[i] = Value();
+
+        size_ = 0;
+    }
+
+    void resize(size_t newsize)
+    {
+        if (newsize >= SIZE)
+        {
+            LOGC(mglog.Fatal, log << "IPE: StaticBuffer too small for extension");
+            abort(); // the caller to resize assumes the size changed.
+        }
+
+        if (newsize < size_)
+        {
+            LOGC(mglog.Fatal, log << "IPE: resize should expand container. size=" << size_ << " << newsize=" << newsize);
+            abort();
+        }
+
+        HLOGC(mglog.Debug, log << "StaticBuffer::resize: increasing size " << size_ << " -> " << newsize << " (max: " << SIZE << ")");
+
+        size_ = newsize; // the space is clear anyway and ready for extraction.
+    }
+
+    void erase(const Value* b, const Value* e)
+    {
+        verify_iterators(b, e);
+
+        size_t begx = b - begin();
+        size_t endx = e - begin();
+
+        size_t shift = endx - begx;
+
+        // First, destroy elements in the range.
+        // Then, move elements past the range to the place.
+        for (size_t i = begx; i < endx; ++i)
+        {
+            buffer_[i] = Value();
+        }
+
+        for (size_t i = endx; i < size_; ++i)
+        {
+            std::swap(buffer_[i], buffer_[i - shift]);
+        }
+
+        size_ -= shift;
+    }
+
+    void erase(const Value* b)
+    {
+        return erase(b, b+1);
+    }
+};
+
+
 
 #endif

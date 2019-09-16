@@ -145,7 +145,7 @@ public:
     void Close() override
     {
 #ifdef PLEASE_LOG
-        extern logging::Logger applog;
+        extern srt_logging::Logger applog;
         applog.Debug() << "FileTarget::Close";
 #endif
         ofile.close();
@@ -245,7 +245,13 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
                     Error("With //group, every node in 'nodes' must have port >1024");
                 }
 
-                m_group_nodes.push_back(Connection(check.host(), check.portno()));
+                Connection cc(check.host(), check.portno());
+                if (check.parameters().count("pri"))
+                {
+                    cc.priority = stoi(check.queryValue("pri"));
+                }
+
+                m_group_nodes.push_back(cc);
             }
 
             par.erase("type");
@@ -571,12 +577,24 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
         Verb() << "Setting SND blocking mode: " << boolalpha << yes << " timeout=" << m_timeout;
         result = srt_setsockopt(sock, 0, SRTO_SNDSYN, &yes, sizeof yes);
         if ( result == -1 )
+        {
+#ifdef PLEASE_LOG
+            extern srt_logging::Logger applog;
+            applog.Error() << "ERROR SETTING OPTION: SRTO_SNDSYN";
+#endif
             return result;
+        }
 
         if ( m_timeout )
             result = srt_setsockopt(sock, 0, SRTO_SNDTIMEO, &m_timeout, sizeof m_timeout);
         if ( result == -1 )
+        {
+#ifdef PLEASE_LOG
+            extern srt_logging::Logger applog;
+            applog.Error() << "ERROR SETTING OPTION: SRTO_SNDTIMEO";
+#endif
             return result;
+        }
     }
 
     if ( m_direction & SRT_EPOLL_IN )
@@ -750,7 +768,9 @@ void SrtCommon::OpenGroupClient()
         sockaddr* psa = (sockaddr*)&sa;
         Verb() << "\t[" << i << "] " << c.host << ":" << c.port << " ... " << VerbNoEOL;
         ++i;
-        targets.push_back(srt_prepare_endpoint(psa, namelen));
+        SRT_SOCKGROUPDATA gd = srt_prepare_endpoint(psa, namelen);
+        gd.priority = c.priority;
+        targets.push_back(gd);
     }
 
     int fisock = srt_connect_group(m_sock, 0, namelen, targets.data(), targets.size());
@@ -928,6 +948,10 @@ void SrtCommon::ConnectClient(string host, int port)
     if ( stat == SRT_ERROR )
     {
         SRT_REJECT_REASON reason = srt_getrejectreason(m_sock);
+#if PLEASE_LOG
+        extern srt_logging::Logger applog;
+        LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
+#endif
         srt_close(m_sock);
         Error(UDT::getlasterror(), "srt_connect", reason);
     }
@@ -1002,6 +1026,10 @@ void SrtCommon::SetupRendezvous(string adapter, int port)
 
 void SrtCommon::Close()
 {
+#if PLEASE_LOG
+        extern srt_logging::Logger applog;
+        LOGP(applog.Error, "CLOSE requested - closing socket @", m_sock);
+#endif
     bool any = false;
     bool yes = true;
     if ( m_sock != SRT_INVALID_SOCK )
