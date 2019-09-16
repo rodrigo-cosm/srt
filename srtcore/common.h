@@ -179,7 +179,7 @@ enum EConnectMethod
 std::string ConnectStatusStr(EConnectStatus est);
 
 
-const int64_t BW_INFINITE =  30000000/8;         //Infinite=> 30Mbps
+const int64_t BW_INFINITE =  1000000000/8;         //Infinite=> 1 Gbps
 
 
 enum ETransmissionEvent
@@ -592,7 +592,7 @@ public:
    static void createMutex(pthread_mutex_t& lock);
    static void releaseMutex(pthread_mutex_t& lock);
 
-   static void createCond(pthread_cond_t& cond);
+   static void createCond(pthread_cond_t& cond, pthread_condattr_t* opt_attr = NULL);
    static void releaseCond(pthread_cond_t& cond);
 
 #if ENABLE_LOGGING
@@ -1443,11 +1443,9 @@ inline int32_t SrtParseVersion(const char* v)
     int major, minor, patch;
     int result = sscanf(v, "%d.%d.%d", &major, &minor, &patch);
 
-    if ( result != 3 )
+    if (result != 3)
     {
         return 0;
-        fprintf(stderr, "Invalid version format for HAISRT_VERSION: %s - use m.n.p\n", v);
-        throw v; // Throwing exception, as this function will be run before main()
     }
 
     return major*0x10000 + minor*0x100 + patch;

@@ -148,12 +148,37 @@ public:
 #endif /* SRT_ENABLE_SNDBUFSZ_MAVG */
    int getCurrBufSize(ref_t<int> bytes, ref_t<int> timespan);
 
-   int getInputRate(ref_t<int> payloadtsz, ref_t<uint64_t> period);
-   void updInputRate(uint64_t time, int pkts, int bytes);
-   void setInputRateSmpPeriod(int period);
+   uint64_t getInRatePeriod() const { return m_InRatePeriod; }
+
+   /// Retrieve input bitrate in bytes per second
+   int getInputRate() const { return m_iInRateBps; }
+
+   /// Update input rate calculation.
+   /// @param [in] time   current time in microseconds
+   /// @param [in] pkts   number of packets newly added to the buffer
+   /// @param [in] bytes  number of payload bytes in those newly added packets
+   ///
+   /// @return Current size of the data in the sending list.
+   void updateInputRate(uint64_t time, int pkts = 0, int bytes = 0);
+
+
+   void resetInputRateSmpPeriod(bool disable = false)
+   {
+       setInputRateSmpPeriod(disable ? 0 : INPUTRATE_FAST_START_US);
+   }
+
 
 private:
+
    void increase();
+   void setInputRateSmpPeriod(int period);
+
+private:    // Constants
+
+    static const uint64_t INPUTRATE_FAST_START_US   =      500000;    //  500 ms
+    static const uint64_t INPUTRATE_RUNNING_US      =     1000000;    // 1000 ms
+    static const int64_t  INPUTRATE_MAX_PACKETS     =        2000;    // ~ 21 Mbps of 1316 bytes payload
+    static const int      INPUTRATE_INITIAL_BYTESPS = BW_INFINITE;
 
 private:
    pthread_mutex_t m_BufLock;           // used to synchronize buffer operation
@@ -237,7 +262,10 @@ public:
     std::string CONID() const { return ""; }
 
    static const int DEFAULT_SIZE = 65536;
-   CRcvBuffer(CUnitQueue* queue, int bufsize = DEFAULT_SIZE);
+      /// Construct the buffer.
+      /// @param [in] queue  CUnitQueue that actually holds the units (packets)
+      /// @param [in] bufsize_pkts in units (packets)
+   CRcvBuffer(CUnitQueue* queue, int bufsize_pkts = DEFAULT_SIZE);
    ~CRcvBuffer();
 
       /// Write data into the buffer.
@@ -262,18 +290,21 @@ public:
    int readBufferToFile(std::fstream& ofs, int len);
 
       /// Update the ACK point of the buffer.
-      /// @param [in] len size of data to be acknowledged.
+      /// @param [in] len number of units to be acknowledged.
       /// @return 1 if a user buffer is fulfilled, otherwise 0.
 
    int ackData(int len);
 
       /// Query how many buffer space left for data receiving.
+      /// Actually only acknowledged packets, that are still in the buffer,
+      /// are considered to take buffer space.
+      ///
       /// @return size of available buffer space (including user buffer) for data receiving.
+      ///         Not counting unacknowledged packets.
 
    int getAvailBufSize() const;
 
       /// Query how many data has been continuously received (for reading) and ready to play (tsbpdtime < now).
-      /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
       /// @return size of valid (continous) data for reading.
 
    int getRcvDataSize() const;
@@ -359,7 +390,8 @@ public:
       /// @param [in] timestamp packet time stamp
       /// @param [ref] lock Mutex that should be locked for the operation
 
-   void addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& lock);
+   bool addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mutex_to_lock,
+           ref_t<int64_t> r_udrift, ref_t<uint64_t> r_newtimebase);
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
    void printDriftHistogram(int64_t iDrift);
@@ -433,9 +465,10 @@ private:
 public:
 
    // @return Wrap check value
-   bool getInternalTimeBase(ref_t<uint64_t> tb);
+   bool getInternalTimeBase(ref_t<uint64_t> tb, ref_t<int64_t> r_udrift);
 
-   void applyGroupTime(uint64_t timebase, bool wrapcheck, uint32_t delay);
+   void applyGroupTime(uint64_t timebase, bool wrapcheck, uint32_t delay, int64_t udrift);
+   void applyGroupDrift(uint64_t timebase, bool wrapcheck, int64_t udrift);
    uint64_t getPktTsbPdTime(uint32_t timestamp);
    int debugGetSize() const;
 
@@ -479,7 +512,7 @@ private:
 
 private:
    CUnit** m_pUnit;                  // Array of pointed units collected in the buffer
-   int m_iSize;                      // Size of the internal array
+   const int m_iSize;                // Size of the internal array of CUnit* items
    CUnitQueue* m_pUnitQueue;         // the shared unit queue
 
    int m_iStartPos;                  // HEAD: first packet available for reading

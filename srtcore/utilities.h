@@ -27,20 +27,40 @@ written by
 
 #if defined(__cplusplus) && __cplusplus > 199711L
 #define HAVE_CXX11 1
+
+// For gcc 4.7, claim C++11 is supported, as long as experimental C++0x is on,
+// however it's only the "most required C++11 support".
+#if defined(__GXX_EXPERIMENTAL_CXX0X__) && __GNUC__ == 4 && __GNUC_MINOR__ >= 7 // 4.7 only!
+#define ATR_NOEXCEPT
+#define ATR_CONSTEXPR
+#define ATR_OVERRIDE
+#define ATR_FINAL
+#else
+#define HAVE_FULL_CXX11 1
 #define ATR_NOEXCEPT noexcept
 #define ATR_CONSTEXPR constexpr
 #define ATR_OVERRIDE override
 #define ATR_FINAL final
+#endif
+
 // Microsoft Visual Studio supports C++11, but not fully,
 // and still did not change the value of __cplusplus. Treat
 // this special way.
 // _MSC_VER == 1800  means Microsoft Visual Studio 2013.
 #elif defined(_MSC_VER) && _MSC_VER >= 1800
 #define HAVE_CXX11 1
+#if defined(_MSC_FULL_VER) && _MSC_FULL_VER >= 190023026
+#define HAVE_FULL_CXX11 1
+#define ATR_NOEXCEPT noexcept
+#define ATR_CONSTEXPR constexpr
+#define ATR_OVERRIDE override
+#define ATR_FINAL final
+#else
 #define ATR_NOEXCEPT
 #define ATR_CONSTEXPR
 #define ATR_OVERRIDE
 #define ATR_FINAL
+#endif
 #else
 #define HAVE_CXX11 0
 #define ATR_NOEXCEPT // throw() - bad idea
@@ -123,14 +143,26 @@ written by
 
 #	include <sys/endian.h>
 
+#ifndef be16toh
 #	define be16toh(x) betoh16(x)
+#endif
+#ifndef le16toh
 #	define le16toh(x) letoh16(x)
+#endif
 
+#ifndef be32toh
 #	define be32toh(x) betoh32(x)
+#endif
+#ifndef le32toh
 #	define le32toh(x) letoh32(x)
+#endif
 
+#ifndef be64toh
 #	define be64toh(x) betoh64(x)
+#endif
+#ifndef le64toh
 #	define le64toh(x) letoh64(x)
+#endif
 
 #elif defined(__WINDOWS__)
 
@@ -268,8 +300,8 @@ struct BitsetMask<L, R, false>
 template <size_t L, size_t R = L>
 struct Bits
 {
-    // DID YOU GET kind-of error: ‘mask’ is not a member of ‘Bits<3u, 5u, false>’ ?
-    // See the the above declaration of 'correct' !
+    // DID YOU GET a kind-of error: 'mask' is not a member of 'Bits<3u, 5u, false>'?
+    // See the the above declaration of 'correct'!
     static const uint32_t mask = BitsetMask<L, R>::value;
     static const uint32_t offset = R;
     static const size_t size = L - R + 1;
@@ -589,6 +621,28 @@ typename Map::mapped_type* map_getp(Map& m, const Key& key)
 
 #endif
 
+template <class Signature>
+struct CallbackHolder
+{
+    void* opaque;
+    Signature* fn;
+
+    CallbackHolder(): opaque(NULL), fn(NULL)  {}
+
+    void set(void* o, Signature* f)
+    {
+        // Test if the pointer is a pointer to function. Don't let
+        // other type of pointers here.
+        void* (*testfn)(void*) ATR_UNUSED = (void*(*)(void*))f;
+        opaque = o;
+        fn = f;
+    }
+
+    operator bool() { return fn != NULL; }
+};
+
+#define CALLBACK_CALL(holder,...) (*holder.fn)(holder.opaque, __VA_ARGS__)
+
 template <class Result, class Arg>
 struct Callback
 {
@@ -646,24 +700,24 @@ inline std::string FormatBinaryString(const uint8_t* bytes, size_t size)
 }
 
 
-// This function is useful in multiple uses where
-// the time drift should be traced. It's currently in use in every
-// solution that implements any kind of TSBPD (AKA Stower).
+/// This class is useful in every place where
+/// the time drift should be traced. It's currently in use in every
+/// solution that implements any kind of TSBPD.
 template<unsigned MAX_SPAN, int MAX_DRIFT, bool CLEAR_ON_UPDATE = true>
 class DriftTracer
 {
-    int64_t m_qDrift;
-    int64_t m_qOverdrift;
+    int64_t  m_qDrift;
+    int64_t  m_qOverdrift;
 
-    int64_t m_qDriftSum;
+    int64_t  m_qDriftSum;
     unsigned m_uDriftSpan;
 
 public:
     DriftTracer()
-        : m_qDrift(),
-        m_qOverdrift(),
-        m_qDriftSum(),
-        m_uDriftSpan()
+        : m_qDrift(0)
+        , m_qOverdrift(0)
+        , m_qDriftSum(0)
+        , m_uDriftSpan(0)
     {}
 
     bool update(int64_t driftval)
@@ -671,37 +725,42 @@ public:
         m_qDriftSum += driftval;
         ++m_uDriftSpan;
 
-        if ( m_uDriftSpan >= MAX_SPAN )
+        if (m_uDriftSpan < MAX_SPAN)
+            return false;
+
+        if (CLEAR_ON_UPDATE)
+            m_qOverdrift = 0;
+
+        // Calculate the median of all drift values.
+        // In most cases, the divisor should be == MAX_SPAN.
+        m_qDrift = m_qDriftSum / m_uDriftSpan;
+
+        // And clear the collection
+        m_qDriftSum = 0;
+        m_uDriftSpan = 0;
+
+        // In case of "overdrift", save the overdriven value in 'm_qOverdrift'.
+        // In clear mode, you should add this value to the time base when update()
+        // returns true. The drift value will be since now measured with the
+        // overdrift assumed to be added to the base.
+        if (std::abs(m_qDrift) > MAX_DRIFT)
         {
-            if ( CLEAR_ON_UPDATE )
-                m_qOverdrift = 0;
-
-            // Calculate the median of all drift values.
-            // In most cases, the divisor should be == MAX_SPAN.
-            m_qDrift = m_qDriftSum / m_uDriftSpan;
-
-            // And clear the collection
-            m_qDriftSum = 0;
-            m_uDriftSpan = 0;
-
-            // In case of "overdrift", save the overdriven value in 'm_qOverdrift'.
-            // In clear mode, you should add this value to the time base when update()
-            // returns true. The drift value will be since now measured with the
-            // overdrift assumed to be added to the base.
-            if (std::abs(m_qDrift) > MAX_DRIFT)
-            {
-                m_qOverdrift = m_qDrift < 0 ? -MAX_DRIFT : MAX_DRIFT;
-                m_qDrift -= m_qOverdrift;
-            }
-
-            // printDriftOffset(m_qOverdrift, m_qDrift);
-
-            // Timebase is separate
-            // m_qTimeBase += m_qOverdrift;
-
-            return true;
+            m_qOverdrift = m_qDrift < 0 ? -MAX_DRIFT : MAX_DRIFT;
+            m_qDrift -= m_qOverdrift;
         }
-        return false;
+
+        // printDriftOffset(m_qOverdrift, m_qDrift);
+
+        // Timebase is separate
+        // m_qTimeBase += m_qOverdrift;
+
+        return true;
+    }
+
+    // For group overrides
+    void forceDrift(int64_t driftval)
+    {
+        m_qDrift = driftval;
     }
 
     // These values can be read at any time, however if you want
@@ -725,8 +784,8 @@ public:
     // any changes in overdrift. By manipulating the MAX_DRIFT parameter
     // you can decide how high the drift can go relatively to stay below
     // overdrift.
-    int64_t drift() { return m_qDrift; }
-    int64_t overdrift() { return m_qOverdrift; }
+    int64_t drift() const { return m_qDrift; }
+    int64_t overdrift() const { return m_qOverdrift; }
 };
 
 template <class KeyType, class ValueType>

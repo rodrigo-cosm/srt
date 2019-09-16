@@ -64,7 +64,6 @@ modified by
 #include "window.h"
 #include "packet.h"
 #include "channel.h"
-//#include "api.h"
 #include "cache.h"
 #include "queue.h"
 #include "handshake.h"
@@ -207,11 +206,8 @@ public:
         bool ready_read;
         bool ready_write;
         bool ready_error;
-
         // Configuration
         int priority;
-    };
-
     struct ConfigItem
     {
         SRT_SOCKOPT so;
@@ -476,7 +472,6 @@ private:
 
     // Version used when using msgno synchronization.
     volatile int32_t m_RcvBaseMsgNo;
-
     bool m_bOpened;    // Set to true when at least one link is at least pending
     bool m_bConnected; // Set to true on first link confirmed connected
     bool m_bClosing;
@@ -520,7 +515,6 @@ public:
         m_RcvBaseSeqNo = -1;
         m_RcvBaseMsgNo = -1;
     }
-
     int baseOffset(SRT_MSGCTRL& mctrl);
     int baseOffset(ReadPos& pos);
     bool seqDiscrepancy(SRT_MSGCTRL& mctrl);
@@ -551,9 +545,10 @@ public:
         return false;
     }
 
-    bool getBufferTimeBase(CUDT* forthesakeof, ref_t<uint64_t> tb, ref_t<bool> wp);
-
+    // Live state synchronization
+    bool getBufferTimeBase(CUDT* forthesakeof, ref_t<uint64_t> tb, ref_t<bool> wp, ref_t<int64_t> dr);
     bool applyGroupSequences(SRTSOCKET, ref_t<int32_t> r_snd_isn, ref_t<int32_t> r_rcv_isn);
+    void synchronizeDrift(CUDT* cu, int64_t udrift, uint64_t newtimebase);
 
     // Property accessors
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);
@@ -653,6 +648,7 @@ public: //API
     static bool setstreamid(SRTSOCKET u, const std::string& sid);
     static std::string getstreamid(SRTSOCKET u);
     static int getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes);
+    static SRT_REJECT_REASON rejectReason(SRTSOCKET s);
     static int setError(const CUDTException& e);
     static int setError(CodeMajor mj, CodeMinor mn, int syserr);
 
@@ -675,18 +671,11 @@ public: // internal API
     static const uint64_t COMM_KEEPALIVE_PERIOD_US = 1*1000*1000;
     static const int32_t COMM_SYN_INTERVAL_US = 10*1000;
 
-    // Input rate constants
-    static const uint64_t
-        SND_INPUTRATE_FAST_START_US = 500*1000,
-        SND_INPUTRATE_RUNNING_US = 1*1000*1000;
-    static const int64_t SND_INPUTRATE_MAX_PACKETS = 2000;
-    static const int SND_INPUTRATE_INITIAL_BPS = 10000000/8;  // 10 Mbps (1.25 MBps)
-
     static const int
         DEF_MSS = 1500,
         DEF_FLIGHT_SIZE = 25600,
         DEF_BUFFER_SIZE = 8192, //Rcv buffer MUST NOT be bigger than Flight Flag size
-        DEF_LINGER = 180,
+        DEF_LINGER = 180,  // 2 minutes
         DEF_UDP_BUFFER_SIZE = 65536,
         DEF_CONNTIMEO = 3000;
 
@@ -732,6 +721,7 @@ public: // internal API
 
     size_t maxPayloadSize() const { return m_iMaxSRTPayloadSize; }
     size_t OPT_PayloadSize() const { return m_zOPT_ExpPayloadSize; }
+    int sndLossLength() { return m_pSndLossList->getLossLength(); }
     uint64_t minNAKInterval() const { return m_ullMinNakInt_tk; }
     int32_t ISN() const { return m_iISN; }
     int32_t peerISN() const { return m_iPeerISN; }
@@ -882,6 +872,7 @@ private:
     /// @param hs [in/out] The handshake information sent by the peer side (in), negotiated value (out).
 
     void acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt);
+    bool runAcceptHook(CUDT* acore, const sockaddr* peer, const CHandShake* hs, const CPacket& hspkt);
 
     /// Close the opened UDT entity.
 
@@ -1068,11 +1059,9 @@ private: // Identification
     HaiCrypt_Secret m_CryptoSecret;
     int m_iSndCryptoKeyLen;
 
-    // XXX Consider removing them. The m_bDataSender may stay here
+    // XXX Consider removing. The m_bDataSender stays here
     // in order to maintain the HS side selection in HSv4.
-    // m_bTwoWayData is unused.
     bool m_bDataSender;
-    bool m_bTwoWayData;
 
     // HSv4 (legacy handshake) support)
     uint64_t m_ullSndHsLastTime_us;	    //Last SRT handshake request time
@@ -1115,6 +1104,7 @@ private:
     volatile bool m_bShutdown;                   // If the peer side has shutdown the connection
     volatile bool m_bBroken;                     // If the connection has been broken
     volatile bool m_bPeerHealth;                 // If the peer status is normal
+    volatile SRT_REJECT_REASON m_RejectReason;
     bool m_bOpened;                              // If the UDT entity has been opened
     int m_iBrokenCounter;                        // a counter (number of GC checks) to let the GC tag this socket as disconnected
 
@@ -1242,6 +1232,18 @@ private: // Receiving related data
     pthread_cond_t m_RcvTsbPdCond;
     bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
 
+    CallbackHolder<srt_listen_callback_fn> m_cbAcceptHook;
+
+    // FORWARDER
+public:
+    static int installAcceptHook(SRTSOCKET lsn, srt_listen_callback_fn* hook, void* opaq);
+private:
+    void installAcceptHook(srt_listen_callback_fn* hook, void* opaq)
+    {
+        m_cbAcceptHook.set(opaq, hook);
+    }
+
+
 private: // synchronization: mutexes and conditions
     pthread_mutex_t m_ConnectionLock;            // used to synchronize connection operation
 
@@ -1295,7 +1297,7 @@ private: // Generation and processing of packets
     int packData(ref_t<CPacket> packet, ref_t<uint64_t> ts, ref_t<sockaddr_any> src_adr);
     int processData(CUnit* unit);
     void processClose();
-    int processConnectRequest(const sockaddr_any& addr, CPacket& packet);
+    SRT_REJECT_REASON processConnectRequest(const sockaddr_any& addr, CPacket& packet);
     static void addLossRecord(std::vector<int32_t>& lossrecord, int32_t lo, int32_t hi);
     int32_t bake(const sockaddr_any& addr, int32_t previous_cookie = 0, int correction = 0);
     int32_t ackDataUpTo(int32_t seq);
@@ -1385,6 +1387,10 @@ private: // Timers
     uint64_t m_ullTargetTime_tk;              // scheduled time of next packet sending
 
     void checkTimers();
+    void checkACKTimer (uint64_t currtime_tk, char debug_decision[10]);
+    void checkNAKTimer(uint64_t currtime_tk, char debug_decision[10]);
+    bool checkExpTimer (uint64_t currtime_tk, const char* debug_decision);  // returns true if the connection is expired
+    void checkRexmitTimer(uint64_t currtime_tk);
 
 public: // For the use of CCryptoControl
     // HaiCrypt configuration
