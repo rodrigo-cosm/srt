@@ -219,6 +219,8 @@ public:
         bool ready_error;
         // Configuration
         int priority;
+    };
+
     struct ConfigItem
     {
         SRT_SOCKOPT so;
@@ -435,18 +437,6 @@ private:
     bool m_selfManaged;
     SRT_GROUP_TYPE m_type;
     CUDTSocket* m_listener; // A "group" can only have one listener.
-    struct BufferedMessage
-    {
-        SRT_MSGCTRL mc;
-        std::vector<char> buffer;
-    };
-    std::deque< BufferedMessage > m_SenderBuffer;
-    int32_t m_iSndOldestMsgNo; // oldest position in the sender buffer
-
-    // THIS function must be called only in a function for a group type
-    // that does use sender buffer.
-    void addMessageToBuffer(const char* buf, size_t len, ref_t<SRT_MSGCTRL> mc);
-
 
 public:
 
