@@ -139,6 +139,16 @@ public:
    /// @return Current size of the data in the sending list.
    void updateInputRate(uint64_t time, int pkts = 0, int bytes = 0);
 
+   // This function is necessary to make sure that a packet that
+   // is ready to send with a sequence matching PUMASK_SEQNO_PROBE
+   // has a follower. Only then is it possible to send two packets
+   // immediately one after another - otherwise the second of the pair
+   // will be sent later by a time required to schedule it, which would
+   // falsify the result of the available bandwidth measurement.
+   bool haveTwoPackets()
+   {
+       return m_pCurrBlock != m_pLastBlock && m_pCurrBlock->m_pNext != m_pLastBlock;
+   }
 
    void resetInputRateSmpPeriod(bool disable = false)
    {

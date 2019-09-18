@@ -7948,52 +7948,80 @@ int CUDT::packData(CPacket& packet, uint64_t& ts_tk)
    }
    else
    {
-      // If no loss, and no packetfilter control packet, pack a new packet.
+       // If no loss, and no packetfilter control packet, pack a new packet.
 
-      // check congestion/flow window limit
-      int cwnd = std::min(int(m_iFlowWindowSize), int(m_dCongestionWindow));
-      int seqdiff = CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo));
-      if (cwnd >= seqdiff)
-      {
-         // XXX Here it's needed to set kflg to msgno_bitset in the block stored in the
-         // send buffer. This should be somehow avoided, the crypto flags should be set
-         // together with encrypting, and the packet should be sent as is, when rexmitting.
-         // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
-         // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
-         kflg = m_pCryptoControl->getSndCryptoFlags();
-         payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo, origintime, kflg);
-         if (payload)
-         {
-            m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
-            //m_pCryptoControl->m_iSndCurrSeqNo = m_iSndCurrSeqNo;
+       // check congestion/flow window limit
+       int cwnd = std::min(int(m_iFlowWindowSize), int(m_dCongestionWindow));
+       int seqdiff = CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo));
+       if (cwnd < seqdiff)
+       {
+           HLOGC(dlog.Debug, log << "packData: CONGESTED: cwnd=min(" << m_iFlowWindowSize << "," << m_dCongestionWindow
+                   << ")=" << cwnd << " seqlen=(" << m_iSndLastAck << "-" << m_iSndCurrSeqNo << ")=" << seqdiff);
+           m_ullTargetTime_tk = 0;
+           m_ullTimeDiff_tk = 0;
+           ts_tk = 0;
+           return 0;
+       }
+       int32_t next_seqno = CSeqNo::incseq(m_iSndCurrSeqNo);
 
-            packet.m_iSeqNo = m_iSndCurrSeqNo;
+       // every 16 (0xF) packets, a packet pair is sent
+       if ((next_seqno & PUMASK_SEQNO_PROBE) == 0)
+       {
+           probe = true;
 
-            // every 16 (0xF) packets, a packet pair is sent
-            if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
-               probe = true;
+           // NOTE: in Live mode it often happens that when a packet is ready
+           // to send, this is the only packet ready to send right now. 
+           // XXX This statement would have to be rephrased in future.
+           // This must embrace the case when you are sending a file and the
+           // data stream is ended, which should be declared by the fact that
+           // the socket is being closed. This case should prevent checking if
+           // there are at least two packets in the buffer because it could be
+           // exactly one and the last packet. Currently leaving it with TSBPD on
+           // with a statement that this means it's Live Mode so there's no EOF here.
+           if (m_bTsbPd)
+           {
+               if (!m_pSndBuffer->haveTwoPackets())
+               {
+                   HLOGC(dlog.Debug, log << "packData: PACKET PAIR expected, but only one packet available. Waiting until the next one.");
+                   // Behave as if there are no available packets.
+                   m_ullTargetTime_tk = 0;
+                   m_ullTimeDiff_tk = 0;
+                   ts_tk = 0;
+                   return 0;
+               }
+               else
+               {
+                   HLOGC(dlog.Debug, log << "packetData: PACKET PAIR expected AND AVAILABLE - sending.");
+               }
 
-            new_packet_packed = true;
-         }
-         else
-         {
-            m_ullTargetTime_tk = 0;
-            m_ullTimeDiff_tk = 0;
-            ts_tk = 0;
-            return 0;
-         }
-      }
-      else
-      {
-          HLOGC(dlog.Debug, log << "packData: CONGESTED: cwnd=min(" << m_iFlowWindowSize << "," << m_dCongestionWindow
-              << ")=" << cwnd << " seqlen=(" << m_iSndLastAck << "-" << m_iSndCurrSeqNo << ")=" << seqdiff);
-         m_ullTargetTime_tk = 0;
-         m_ullTimeDiff_tk = 0;
-         ts_tk = 0;
-         return 0;
-      }
+           }
 
-      reason = "normal";
+       }
+
+
+       // XXX Here it's needed to set kflg to msgno_bitset in the block stored in the
+       // send buffer. This should be somehow avoided, the crypto flags should be set
+       // together with encrypting, and the packet should be sent as is, when rexmitting.
+       // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
+       // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
+       kflg = m_pCryptoControl->getSndCryptoFlags();
+       payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo, origintime, kflg);
+
+       if (payload == 0)
+       {
+           m_ullTargetTime_tk = 0;
+           m_ullTimeDiff_tk = 0;
+           ts_tk = 0;
+           return 0;
+       }
+
+       m_iSndCurrSeqNo = next_seqno;
+
+       packet.m_iSeqNo = m_iSndCurrSeqNo;
+
+       new_packet_packed = true;
+
+       reason = "normal";
    }
 
    // Normally packet.m_iTimeStamp field is set exactly here,
