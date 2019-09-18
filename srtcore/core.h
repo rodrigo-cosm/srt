@@ -347,12 +347,14 @@ public:
     int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     // For Backup, sending all previous packet
     int sendBackupRexmit(CUDT& core, ref_t<SRT_MSGCTRL> r_mc);
 
 
     int recv(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int recvBonding(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     void close();
 
