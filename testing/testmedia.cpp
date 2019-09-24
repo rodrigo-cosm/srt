@@ -989,15 +989,27 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src, SRT_REJECT_REASON re
 {
     int udtResult = udtError.getErrorCode();
     string message = udtError.getErrorMessage();
+    string rejectreason;
     if (udtResult == SRT_ECONNREJ)
     {
-        message += ": ";
-        message += srt_rejectreason_str(reason);
+        rejectreason = srt_rejectreason_str(reason);
+
+        if ( Verbose::on )
+            Verb() << "FAILURE\n" << src << ": [" << udtResult << "] "
+                << "Connection rejected: [" << int(reason) << "]: "
+                << srt_rejectreason_str(reason);
+        else
+            cerr << "\nERROR #" << udtResult
+                << ": Connection rejected: [" << int(reason) << "]: "
+                << srt_rejectreason_str(reason);
     }
-    if ( Verbose::on )
-        Verb() << "FAILURE\n" << src << ": [" << udtResult << "] " << message;
     else
-        cerr << "\nERROR #" << udtResult << ": " << message << endl;
+    {
+        if ( Verbose::on )
+            Verb() << "FAILURE\n" << src << ": [" << udtResult << "] " << message;
+        else
+            cerr << "\nERROR #" << udtResult << ": " << message << endl;
+    }
 
     udtError.clear();
     throw TransmissionError("error: " + src + ": " + message);
