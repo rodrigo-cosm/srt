@@ -720,6 +720,8 @@ void SrtCommon::OpenGroupClient()
         type = SRT_GTYPE_REDUNDANT;
     else if (m_group_type == "backup")
         type = SRT_GTYPE_BACKUP;
+    else if (m_group_type == "bonding")
+        type = SRT_GTYPE_BONDING;
     else
     {
         Error("With //group, type='" + m_group_type + "' undefined");

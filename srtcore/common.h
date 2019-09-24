@@ -779,13 +779,15 @@ public:
 
    inline static int seqoff(int32_t seq1, int32_t seq2)
    {
-      if (abs(seq1 - seq2) < m_iSeqNoTH)
-         return seq2 - seq1;
+      int32_t diff = seq2 - seq1;
+      if (abs(diff) < m_iSeqNoTH)
+         return diff;
 
-      if (seq1 < seq2)
-         return seq2 - seq1 - m_iMaxSeqNo - 1;
+      if (seq1 < seq2) // <-- seq2 is almost max, seq1 is a little >0
+         return diff - m_iMaxSeqNo - 1;
 
-      return seq2 - seq1 + m_iMaxSeqNo + 1;
+      // <-- seq1 is almost max, seq2 is a little >0
+      return diff + m_iMaxSeqNo + 1;
    }
 
    inline static int32_t incseq(int32_t seq)
@@ -884,7 +886,7 @@ public:
     {
     }
 
-    bool operator<(this_t& right)
+    bool operator<(const this_t& right) const
     {
         int32_t ndiff = number - right.number;
         if (ndiff < -HALF)
@@ -900,6 +902,26 @@ public:
         }
 
         return ndiff < 0;
+    }
+
+    bool operator>(const this_t& right) const
+    {
+        return right < *this;
+    }
+
+    bool operator=(const this_t& right) const
+    {
+        return number == right.number;
+    }
+
+    bool operator<=(const this_t& right) const
+    {
+        return !(*this > right);
+    }
+
+    bool operator>=(const this_t& right) const
+    {
+        return !(*this < right);
     }
 
     void operator++(int)

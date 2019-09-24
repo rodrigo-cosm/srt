@@ -565,17 +565,20 @@ private:
 
     struct ReadPos
     {
-        //int32_t sequence;
         std::vector<char> packet;
         SRT_MSGCTRL mctrl;
-        ReadPos(int32_t s): /*sequence(s), */ mctrl(srt_msgctrl_default)
+        ReadPos(int32_t s, SRT_GROUP_TYPE gt): mctrl(srt_msgctrl_default)
         {
-            mctrl.pktseq = s;
+            if (gt == SRT_GTYPE_BONDING)
+                mctrl.msgno = s;
+            else
+                mctrl.pktseq = s;
         }
     };
     std::map<SRTSOCKET, ReadPos> m_Positions;
 
     ReadPos* checkPacketAhead();
+    ReadPos* checkPacketAheadMsgno();
 
     // This is the sequence number of a packet that has been previously
     // delivered. Initially it should be set to -1 so that the sequence read
@@ -600,6 +603,7 @@ private:
     pthread_mutex_t m_RcvDataLock;
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
     volatile int32_t m_iLastSchedMsgNo;
+    size_t m_iBondingRoll;
 public:
 
     // Required after the call on newGroup on the listener side.
@@ -630,6 +634,7 @@ public:
     int baseOffset(SRT_MSGCTRL& mctrl);
     int baseOffset(ReadPos& pos);
     bool seqDiscrepancy(SRT_MSGCTRL& mctrl);
+    bool msgDiscrepancy(SRT_MSGCTRL& mctrl);
 
     bool applyGroupTime(ref_t<uint64_t> r_start_time, ref_t<uint64_t> r_peer_start_time)
     {

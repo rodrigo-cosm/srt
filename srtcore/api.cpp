@@ -1081,7 +1081,7 @@ int CUDTUnited::connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const 
     // For a single socket, just do bind, then connect
 
     bind(s, source_addr);
-    return connectIn(s, target_addr, 0);
+    return connectIn(s, target_addr, -1);
 }
 
 int CUDTUnited::connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn)
@@ -1214,6 +1214,11 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, const sockaddr_any& source_addr, SRT
         */
 
         int isn = g.currentSchedSequence();
+
+        // Don't synchronize ISN in case of bonding groups. Every link
+        // may send their own payloads independently.
+        if (g.type() == SRT_GTYPE_BONDING)
+            isn = -1;
 
         // We got it. Bind the socket, if the source address was set
         if (!source_addr.empty())
