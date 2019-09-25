@@ -14357,7 +14357,7 @@ RETRY_READING:
     {
         if (!m_bOpened || !m_bConnected)
         {
-            LOGC(dlog.Error, log << boolalpha << "group/recv: ERROR opened=" << m_bOpened << " connected=" << m_bConnected);
+            LOGC(dlog.Error, log << boolalpha << "grp/recvBonding: ERROR opened=" << m_bOpened << " connected=" << m_bConnected);
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
         }
     }
@@ -14372,7 +14372,7 @@ RETRY_READING:
             if (size_t(len) < pos->packet.size())
                 throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
 
-            HLOGC(dlog.Debug, log << "group/recv: delivering AHEAD packet %" << pos->mctrl.pktseq << " #" << pos->mctrl.msgno
+            HLOGC(dlog.Debug, log << "grp/recvBonding: delivering AHEAD packet %" << pos->mctrl.pktseq << " #" << pos->mctrl.msgno
                     << ": " << BufferStamp(&pos->packet[0], pos->packet.size()));
             memcpy(buf, &pos->packet[0], pos->packet.size());
             fillGroupData(r_mc, pos->mctrl, out_grpdata, out_grpdata_size);
@@ -14454,7 +14454,7 @@ RETRY_READING:
     vector<SRTSOCKET> read_ready, connect_pending;
 
     {
-        HLOGC(dlog.Debug, log << "group/recv: Reviewing member sockets to epoll-add (locking)");
+        HLOGC(dlog.Debug, log << "grp/recvBonding: Reviewing member sockets to epoll-add (locking)");
         CGuard glock(m_GroupLock, "Group");
         for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
         {
@@ -14540,12 +14540,12 @@ RETRY_READING:
         srt_epoll_add_usock(m_RcvEID, *i, &read_modes);
     }
 
-    HLOGC(dlog.Debug, log << "group/recv: " << ds.str() << " --> EPOLL/SWAIT");
+    HLOGC(dlog.Debug, log << "grp/recvBonding: " << ds.str() << " --> EPOLL/SWAIT");
 #undef HCLOG
 
     if (!still_alive)
     {
-        LOGC(dlog.Error, log << "group/recv: all links broken");
+        LOGC(dlog.Error, log << "grp/recvBonding: all links broken");
         throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
     }
 
@@ -14578,7 +14578,7 @@ RETRY_READING:
     int timeout = m_bSynRecving ? m_iRcvTimeOut : 0;
     int nready = m_pGlobal->m_EPoll.swait(*m_RcvEpolld, sready, timeout, false /*report by retval*/);
 
-    HLOGC(dlog.Debug, log << "group/recv: RDY: "
+    HLOGC(dlog.Debug, log << "grp/recvBonding: RDY: "
             << DisplayEpollResults(sready.rd(), "[R]")
             << DisplayEpollResults(sready.wr(), "[W]")
             << DisplayEpollResults(sready.ex(), "[E]")
@@ -14624,7 +14624,7 @@ RETRY_READING:
     // will be surely empty. This will be checked then same way as when
     // reading from every socket resulted in error.
 
-    HLOGC(dlog.Debug, log << "group/recv: Reviewing read-ready sockets: " << Printable(sready.rd()));
+    HLOGC(dlog.Debug, log << "grp/recvBonding: Reviewing read-ready sockets: " << Printable(sready.rd()));
 
     for (fset_t::const_iterator i = sready.rd().begin(); i != sready.rd().end(); ++i)
     {
@@ -14646,7 +14646,7 @@ RETRY_READING:
             int ndiff = MsgNo(p->mctrl.msgno) - MsgNo(m_RcvBaseMsgNo);
             if (ndiff > 1)
             {
-                HLOGC(dlog.Debug, log << "group/recv: EPOLL: @" << id << " #" << p->mctrl.msgno
+                HLOGC(dlog.Debug, log << "grp/recvBonding: EPOLL: @" << id << " #" << p->mctrl.msgno
 						<< " AHEAD #" << m_RcvBaseMsgNo << ", not reading.");
                 continue;
             }
@@ -14657,7 +14657,7 @@ RETRY_READING:
             // the socket is currently standing.
             pair<pit_t, bool> ee = m_Positions.insert(make_pair(id, ReadPos(ps->core().m_iRcvLastSkipAck, type())));
             p = &(ee.first->second);
-            HLOGC(dlog.Debug, log << "group/recv: EPOLL: @" << id << " %" << p->mctrl.pktseq << " NEW SOCKET INSERTED");
+            HLOGC(dlog.Debug, log << "grp/recvBonding: EPOLL: @" << id << " %" << p->mctrl.pktseq << " NEW SOCKET INSERTED");
         }
 
         // Read from this socket stubbornly, until:
@@ -14678,18 +14678,18 @@ RETRY_READING:
                 // We have already the data, so this must fall on the floor
                 char lostbuf[SRT_LIVE_MAX_PLSIZE];
                 stat = ps->core().receiveMessage(lostbuf, SRT_LIVE_MAX_PLSIZE, Ref(mctrl), CUDTUnited::ERH_RETURN);
-                HLOGC(dlog.Debug, log << "group/recv: @" << id << " IGNORED data with %" << mctrl.pktseq << " #" << mctrl.msgno
+                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " IGNORED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                         << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(lostbuf, stat)));
             }
             else
             {
                 stat = ps->core().receiveMessage(buf, len, Ref(mctrl), CUDTUnited::ERH_RETURN);
-                HLOGC(dlog.Debug, log << "group/recv: @" << id << " EXTRACTED data with %" << mctrl.pktseq << " #" << mctrl.msgno
+                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " EXTRACTED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                         << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(buf, stat)));
             }
             if (stat == 0)
             {
-                HLOGC(dlog.Debug, log << "group/recv: SPURIOUS epoll, ignoring");
+                HLOGC(dlog.Debug, log << "grp/recvBonding: SPURIOUS epoll, ignoring");
                 // This is returned in case of "again". In case of errors, we have SRT_ERROR.
                 // Do not treat this as spurious, just stop reading.
                 break;
@@ -14697,7 +14697,7 @@ RETRY_READING:
 
             if (stat == SRT_ERROR)
             {
-                HLOGC(dlog.Debug, log << "group/recv: @" << id << ": " << srt_getlasterror_str());
+                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << ": " << srt_getlasterror_str());
                 broken.insert(ps);
                 break;
             }
@@ -14722,7 +14722,7 @@ RETRY_READING:
                 // This error should be returned if the link turns out
                 // to be the only one, or set to the group data.
                 // err = SRT_ESECFAIL;
-                LOGC(dlog.Error, log << "group/recv: @" << id << ": SEQUENCE DISCREPANCY: base=%"
+                LOGC(dlog.Error, log << "grp/recvBonding: @" << id << ": SEQUENCE DISCREPANCY: base=%"
                         << m_RcvBaseSeqNo << " vs pkt=%" << mctrl.pktseq << ", setting ESECFAIL");
                 broken.insert(ps);
                 break;
@@ -14740,7 +14740,7 @@ RETRY_READING:
                 int ndiff = MsgNo(mctrl.msgno) - MsgNo(m_RcvBaseMsgNo);
                 if (ndiff <= 0)
                 {
-                    HLOGC(dlog.Debug, log << "group/recv: @" << id << " #" << mctrl.msgno
+                    HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno
 							<< " BEHIND base=#" << m_RcvBaseMsgNo << " - discarding");
                     // The sequence is recorded, the packet has to be discarded.
                     // That's all.
@@ -14767,11 +14767,11 @@ RETRY_READING:
 
             if (output_size)
             {
-                HLOGC(dlog.Debug, log << "group/recv: @" << id << " #" << mctrl.msgno << " REDUNDANT");
+                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno << " REDUNDANT");
                 break;
             }
 
-            HLOGC(dlog.Debug, log << "group/recv: @" << id << " #" << mctrl.msgno << " DELIVERING");
+            HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno << " DELIVERING");
             output_size = stat;
             fillGroupData(r_mc, mctrl, out_grpdata, out_grpdata_size);
 
@@ -14787,7 +14787,7 @@ RETRY_READING:
         std::ostringstream brks;
         for (set<CUDTSocket*>::iterator b = broken.begin(); b != broken.end(); ++b)
             brks << "@" << (*b)->m_SocketID << " ";
-        LOGC(dlog.Debug, log << "group/recv: REMOVING BROKEN: " << brks.str());
+        LOGC(dlog.Debug, log << "grp/recvBonding: REMOVING BROKEN: " << brks.str());
     }
 #endif
 
@@ -14803,7 +14803,7 @@ RETRY_READING:
     if (broken.size() >= size) // This > is for sanity check
     {
         // All broken
-        HLOGC(dlog.Debug, log << "group/recv: All sockets broken");
+        HLOGC(dlog.Debug, log << "grp/recvBonding: All sockets broken");
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
 
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -14841,11 +14841,11 @@ RETRY_READING:
             m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
         }
 
-        HLOGC(dlog.Debug, log << "group/recv: successfully extacted packet size=" << output_size << " - returning");
+        HLOGC(dlog.Debug, log << "grp/recvBonding: successfully extacted packet size=" << output_size << " - returning");
         return output_size;
     }
 
-    HLOGC(dlog.Debug, log << "group/recv: NOT extracted anything - checking for a need to kick kangaroos");
+    HLOGC(dlog.Debug, log << "grp/recvBonding: NOT extracted anything - checking for a need to kick kangaroos");
 
     // Check if we have any sockets left :D
 
@@ -14936,13 +14936,13 @@ RETRY_READING:
             return len;
         }
 
-        HLOGC(dlog.Debug, log << "group/recv: "
+        HLOGC(dlog.Debug, log << "grp/recvBonding: "
                 << (elephants.empty() ? "NO LINKS REPORTED ANY FRESHER PACKET." : "ALL LINKS ELEPHANTS.")
                 << " Re-polling.");
     }
     else
     {
-        HLOGC(dlog.Debug, log << "group/recv: POSITIONS EMPTY - Re-polling.");
+        HLOGC(dlog.Debug, log << "grp/recvBonding: POSITIONS EMPTY - Re-polling.");
     }
 
     goto RETRY_READING;
