@@ -14962,7 +14962,6 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // for which NO ITERATORS ARE INVALIDATED after a node at particular
     // iterator has been removed, except for that iterator itself.
     vector<gli_t> wipeme;
-    vector<gli_t> idlers;
     vector<gli_t> pending;
     SRT_MSGCTRL& mc = *r_mc;
 
@@ -15049,14 +15048,9 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 continue;
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendBonding: socket in IDLE state: @" << d->id << " - will activate it");
-            // This is idle, we'll take care of them next time
-            // Might be that:
-            // - this socket is idle, while some NEXT socket is running
-            // - we need at least one running socket to work BEFORE activating the idle one.
-            // - if ALL SOCKETS ARE IDLE, then we simply activate the first from the list,
-            //   and all others will be activated using the ISN from the first one.
-            idlers.push_back(d);
+            HLOGC(dlog.Debug, log << "grp/sendBonding: socket in IDLE state: @" << d->id << " - ACTIVATING it");
+            d->sndstate = GST_RUNNING;
+            sendable.push_back(d);
             continue;
         }
 
@@ -15103,6 +15097,8 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         // Lift the group lock for a while, to avoid possible deadlocks.
         InvertedGuard ug(&m_GroupLock, "Group");
+
+        HLOGC(dlog.Debug, log << "grp/sendBonding: SENDING #" << mc.msgno << " through link [" << m_iBondingRoll << "]");
 
         // NOTE: EXCEPTION PASSTHROUGH.
         stat = ps->core().sendmsg2(buf, len, r_mc);
