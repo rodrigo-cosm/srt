@@ -564,10 +564,12 @@ private:
 
     struct ReadPos
     {
-        int32_t sequence;
         std::vector<char> packet;
         SRT_MSGCTRL mctrl;
-        ReadPos(int32_t s): sequence(s), mctrl(srt_msgctrl_default) {}
+        ReadPos(int32_t s): mctrl(srt_msgctrl_default)
+        {
+            mctrl.pktseq = s;
+        }
     };
     std::map<SRTSOCKET, ReadPos> m_Positions;
 

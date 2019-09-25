@@ -3571,7 +3571,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
     m_ConnReq.m_iID = m_SocketID;
     CIPAddress::ntop(serv_addr, m_ConnReq.m_piPeerIP);
 
-    if ( forced_isn == 0 )
+    if (forced_isn == -1)
     {
         // Random Initial Sequence Number (normal mode)
         srand((unsigned int)CTimer::getTime());
@@ -10778,8 +10778,8 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
         m_bOpened(false),
         m_bConnected(false),
         m_bClosing(false),
-        m_iLastSchedSeqNo(0),
-        m_iLastSchedMsgNo(0)
+        m_iLastSchedSeqNo(-1),
+        m_iLastSchedMsgNo(-1)
 {
     CGuard::createMutex(m_GroupLock);
     CGuard::createMutex(m_RcvDataLock);
@@ -12668,10 +12668,10 @@ RETRY_READING:
             // x = 0: the socket should be ready to get the exactly next packet
             // x = 1: the case is already handled by GroupCheckPacketAhead.
             // x > 1: AHEAD. DO NOT READ.
-            int seqdiff = CSeqNo::seqcmp(p->sequence, m_RcvBaseSeqNo);
+            int seqdiff = CSeqNo::seqcmp(p->mctrl.pktseq, m_RcvBaseSeqNo);
             if (seqdiff > 1)
             {
-                HLOGC(dlog.Debug, log << "group/recv: EPOLL: @" << id << " %" << p->sequence
+                HLOGC(dlog.Debug, log << "group/recv: EPOLL: @" << id << " %" << p->mctrl.pktseq
 						<< " AHEAD %" << m_RcvBaseSeqNo << ", not reading.");
                 continue;
             }
@@ -12682,7 +12682,7 @@ RETRY_READING:
             // the socket is currently standing.
             pair<pit_t, bool> ee = m_Positions.insert(make_pair(id, ReadPos(ps->core().m_iRcvLastSkipAck)));
             p = &(ee.first->second);
-            HLOGC(dlog.Debug, log << "group/recv: EPOLL: @" << id << " %" << p->sequence << " NEW SOCKET INSERTED");
+            HLOGC(dlog.Debug, log << "group/recv: EPOLL: @" << id << " %" << p->mctrl.pktseq << " NEW SOCKET INSERTED");
         }
 
         // Read from this socket stubbornly, until:
@@ -12757,7 +12757,7 @@ RETRY_READING:
             // would not succeed. Do not insert the buffer here because
             // this is only required when the sequence is ahead; for that
             // it will be fixed later.
-            p->sequence = mctrl.pktseq;
+            p->mctrl.pktseq = mctrl.pktseq;
 
             if (m_RcvBaseSeqNo != -1)
             {
@@ -12905,7 +12905,7 @@ RETRY_READING:
         {
             // NOTE that m_RcvBaseSeqNo in this place wasn't updated
             // because we haven't successfully extracted anything.
-            int seqdiff = CSeqNo::seqcmp(rp->second.sequence, m_RcvBaseSeqNo);
+            int seqdiff = CSeqNo::seqcmp(rp->second.mctrl.pktseq, m_RcvBaseSeqNo);
             if (seqdiff < 0)
             {
                 elephants.insert(rp->first);
@@ -12915,7 +12915,7 @@ RETRY_READING:
             {
                 // If there's already a slowest_kangaroo, seqdiff decides if this one is slower.
                 // Otherwise it is always slower by having no competition.
-                seqdiff = slowest_kangaroo ? CSeqNo::seqcmp(slowest_kangaroo->second.sequence, rp->second.sequence) : 1;
+                seqdiff = slowest_kangaroo ? CSeqNo::seqcmp(slowest_kangaroo->second.mctrl.pktseq, rp->second.mctrl.pktseq) : 1;
                 if (seqdiff > 0)
                 {
                     slowest_kangaroo = &*rp;
@@ -12934,7 +12934,7 @@ RETRY_READING:
             // As we already have the packet delivered by the slowest
             // kangaroo, we can simply return it.
 
-            m_RcvBaseSeqNo = slowest_kangaroo->second.sequence;
+            m_RcvBaseSeqNo = slowest_kangaroo->second.mctrl.pktseq;
             vector<char>& pkt = slowest_kangaroo->second.packet;
             if (size_t(len) < pkt.size())
                 throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
@@ -12990,19 +12990,19 @@ CUDTGroup::ReadPos* CUDTGroup::checkPacketAhead()
         // aren't going to read from it - we have the packet already.
         ReadPos& a = i->second;
 
-        int seqdiff = CSeqNo::seqcmp(a.sequence, m_RcvBaseSeqNo);
+        int seqdiff = CSeqNo::seqcmp(a.mctrl.pktseq, m_RcvBaseSeqNo);
         if ( seqdiff == 1)
         {
             // The very next packet. Return it.
-            m_RcvBaseSeqNo = a.sequence;
+            m_RcvBaseSeqNo = a.mctrl.pktseq;
             HLOGC(dlog.Debug, log << "group/recv: ahead delivery %"
-                    << a.sequence << "#" << a.mctrl.msgno << " from @" << i->first << ")");
+                    << a.mctrl.pktseq << "#" << a.mctrl.msgno << " from @" << i->first << ")");
             out = &a;
         }
         else if (seqdiff < 1 && !a.packet.empty())
         {
             HLOGC(dlog.Debug, log << "group/recv: @" << i->first << " dropping collected ahead %"
-                    << a.sequence << "#" << a.mctrl.msgno << ")");
+                    << a.mctrl.pktseq << "#" << a.mctrl.msgno << ")");
             a.packet.clear();
         }
         // In case when it's >1, keep it in ahead

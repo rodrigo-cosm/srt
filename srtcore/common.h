@@ -884,7 +884,7 @@ public:
     {
     }
 
-    bool operator<(this_t& right)
+    bool operator<(const this_t& right) const
     {
         int32_t ndiff = number - right.number;
         if (ndiff < -HALF)
@@ -900,6 +900,26 @@ public:
         }
 
         return ndiff < 0;
+    }
+
+    bool operator>(const this_t& right) const
+    {
+        return right < *this;
+    }
+
+    bool operator=(const this_t& right) const
+    {
+        return number == right.number;
+    }
+
+    bool operator<=(const this_t& right) const
+    {
+        return !(*this > right);
+    }
+
+    bool operator>=(const this_t& right) const
+    {
+        return !(*this < right);
     }
 
     void operator++(int)
