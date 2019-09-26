@@ -13185,19 +13185,6 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     sendable.reserve(m_Group.size());
 
-    // Always set the same exactly message number for the payload
-    // sent over all links.Regardless whether it will be used to synchronize
-    // the streams or not.
-    if (m_iLastSchedMsgNo != 0)
-    {
-        HLOGC(dlog.Debug, log << "grp/sendBackup: setting message number: " << m_iLastSchedMsgNo);
-        mc.msgno = m_iLastSchedMsgNo;
-    }
-    else
-    {
-        HLOGP(dlog.Debug, "grp/sendBackup: NOT setting message number - waiting for the first successful sending");
-    }
-
     uint64_t oldest_unstable_tk = 0;
 
     // First, check status of every link - no matter if idle or active.
@@ -13482,13 +13469,6 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             none_succeeded = false;
             final_stat = stat;
             ++nsuccessful;
-
-            if (m_iLastSchedMsgNo == 0)
-            {
-                // Initialize this number
-                HLOGC(dlog.Debug, log << "grp/sendBackup: INITIALIZING message number: " << mc.msgno);
-                m_iLastSchedMsgNo = mc.msgno;
-            }
         }
         else if (erc == SRT_EASYNCSND)
         {
@@ -13700,13 +13680,6 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 // for all next iterations in this loop.
                 HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL #" << mc.msgno
                         << " LINK ACTIVATED.");
-
-                if (m_iLastSchedMsgNo == 0)
-                {
-                    // Initialize this number
-                    HLOGC(dlog.Debug, log << "grp/sendBackup: INITIALIZING message number: " << mc.msgno);
-                    m_iLastSchedMsgNo = mc.msgno;
-                }
 
                 if (!d->ps->core().m_ullUnstableSince_tk)
                 {
@@ -14052,15 +14025,6 @@ RetryWaitBlocked:
         // If any operation succeeded, this will not be executed anyway.
 
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
-    }
-
-    // Increase the message number only when at least one succeeded.
-
-    // If m_iLastSchedSeqNo wasn't initialized above, don't touch it.
-    if (m_iLastSchedMsgNo != 0)
-    {
-        m_iLastSchedMsgNo = ++MsgNo(m_iLastSchedMsgNo);
-        HLOGC(dlog.Debug, log << "grp/sendBackup: updated msgno: " << m_iLastSchedMsgNo);
     }
 
     // Now fill in the socket table. Check if the size is enough, if not,
@@ -14981,7 +14945,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // Always set the same exactly message number for the payload
     // sent over all links.Regardless whether it will be used to synchronize
     // the streams or not.
-    if (m_iLastSchedMsgNo != 0)
+    if (m_iLastSchedMsgNo != -1)
     {
         HLOGC(dlog.Debug, log << "grp/sendBonding: setting message number: " << m_iLastSchedMsgNo);
         mc.msgno = m_iLastSchedMsgNo;
@@ -15359,7 +15323,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 }
                 if (stat != -1)
                 {
-                    if (m_iLastSchedMsgNo == 0)
+                    if (m_iLastSchedMsgNo == -1)
                     {
                         // Initialize this number
                         HLOGC(dlog.Debug, log << "grp/sendBonding: INITIALIZING message number: " << mc.msgno);
