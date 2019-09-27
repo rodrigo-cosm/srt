@@ -3161,6 +3161,7 @@ void CUDT::startConnect(const sockaddr* serv_addr, int32_t forced_isn)
     m_iSndLastDataAck = m_iISN;
     m_iSndLastFullAck = m_iISN;
     m_iSndCurrSeqNo = m_iISN - 1;
+    m_iSndNextSeqNo = m_iISN;
     m_iSndLastAck2 = m_iISN;
     m_ullSndLastAck2Time = CTimer::getTime();
 
@@ -4875,6 +4876,7 @@ void CUDT::acceptAndRespond(const sockaddr* peer, CHandShake* hs, const CPacket&
    m_iSndLastDataAck = m_iISN;
    m_iSndLastFullAck = m_iISN;
    m_iSndCurrSeqNo = m_iISN - 1;
+   m_iSndNextSeqNo = m_iISN;
    m_iSndLastAck2 = m_iISN;
    m_ullSndLastAck2Time = CTimer::getTime();
 
@@ -5816,11 +5818,19 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     }
 
     // insert the user buffer into the sending list
-    m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
-    HLOGC(dlog.Debug, log << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size);
 
+    int32_t seqno = m_iSndNextSeqNo;
+    int npkts = m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
+    HLOGC(dlog.Debug, log << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size);
+    m_iSndNextSeqNo = CSeqNo::incseq(seqno, npkts); // npkts should be always 1 in live mode
+
+    bool bw_packet_pair = (seqno & PUMASK_SEQNO_PROBE) == 1;
+
+    HLOGC(dlog.Debug, log << "sendmsg2: " << (bCongestion || bw_packet_pair ? "" : "NOT ")
+            << "rescheduling @" << m_SocketID << " because "
+            << (bCongestion ? "CONGESTION DETECTED" : bw_packet_pair ? "17th packet in order" : "of regular sending"));
     // insert this socket to the snd list if it is not on the list yet
-    m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion));
+    m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion || bw_packet_pair));
 
     if (sndBuffersLeft() < 1) // XXX Not sure if it should test if any space in the buffer, or as requried.
     {

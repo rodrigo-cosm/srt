@@ -138,7 +138,7 @@ CSndBuffer::~CSndBuffer()
    pthread_mutex_destroy(&m_BufLock);
 }
 
-void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_msgno)
+int CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_msgno)
 {
     int32_t& msgno = *r_msgno;
 
@@ -220,6 +220,8 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
     m_iNextMsgNo ++;
     if (m_iNextMsgNo == int32_t(MSGNO_SEQ::mask))
         m_iNextMsgNo = 1;
+
+    return size;
 }
 
 void CSndBuffer::setInputRateSmpPeriod(int period)
