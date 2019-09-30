@@ -5827,8 +5827,9 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     bool bw_packet_pair = (seqno & PUMASK_SEQNO_PROBE) == 1;
 
     HLOGC(dlog.Debug, log << "sendmsg2: " << (bCongestion || bw_packet_pair ? "" : "NOT ")
-            << "rescheduling @" << m_SocketID << " because "
-            << (bCongestion ? "CONGESTION DETECTED" : bw_packet_pair ? "17th packet in order" : "of regular sending"));
+            << "rescheduling @" << m_SocketID << " %" << seqno << " !" << BufferStamp(data, size)
+            << " because " << (bCongestion ? "CONGESTION DETECTED" :
+                    bw_packet_pair ? "17th packet in order" : "of regular sending"));
     // insert this socket to the snd list if it is not on the list yet
     m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion || bw_packet_pair));
 
@@ -8261,13 +8262,20 @@ int CUDT::processData(CUnit* in_unit)
 
    const int pktsz = packet.getLength();
    // Update time information
+   // XXX Note that this adds the byte size of a packet
+   // of which we don't yet know as to whether this has
+   // carried out some useful data or some excessive data
+   // that will be later discarded.
+   // FIXME: before adding this on the rcv time window,
+   // make sure that this packet isn't going to be
+   // effectively discarded, as repeated retransmission,
+   // for example, burdens the link, but doesn't better the speed.
    m_RcvTimeWindow.onPktArrival(pktsz);
 
-   // Check if it is a probing packet pair
-   if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
-      m_RcvTimeWindow.probe1Arrival();
-   else if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 1)
-      m_RcvTimeWindow.probe2Arrival(pktsz);
+   // Conditions and any extra data required for the packet
+   // these functions will extract as needed.
+   m_RcvTimeWindow.probe1Arrival(packet, m_bPeerRexmitFlag);
+   m_RcvTimeWindow.probe2Arrival(packet, m_bPeerRexmitFlag);
 
    CGuard::enterCS(m_StatsLock);
    m_stats.traceBytesRecv += pktsz;

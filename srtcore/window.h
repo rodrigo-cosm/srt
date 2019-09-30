@@ -145,7 +145,8 @@ public:
         m_iMinPktSndInt(1000000),
         m_LastArrTime(),
         m_CurrArrTime(),
-        m_ProbeTime()
+        m_ProbeTime(),
+        m_Probe1Sequence(-1)
     {
         pthread_mutex_init(&m_lockPktWindow, NULL);
         pthread_mutex_init(&m_lockProbeWindow, NULL);
@@ -231,15 +232,48 @@ public:
 
    /// Record the arrival time of the first probing packet.
 
-   void probe1Arrival()
+   void probe1Arrival(const CPacket& pkt, bool rexmitflag)
    {
+       int inorder16 = pkt.m_iSeqNo & PUMASK_SEQNO_PROBE;
+       // Still honor pre-1.2.0 clients that don't support
+       // rexmit flag
+       bool rexmit = pkt.getRexmitFlag() && rexmitflag;
+
+       // we want 16th packet, except retransmitted
+       if (inorder16 != 0 || rexmit)
+       {
+           return;
+       }
+
        m_ProbeTime = CTimer::getTime();
+       m_Probe1Sequence = pkt.m_iSeqNo;
    }
 
    /// Record the arrival time of the second probing packet and the interval between packet pairs.
 
-   void probe2Arrival(int pktsz = 0)
+   void probe2Arrival(const CPacket& pkt, bool rexmitflag)
    {
+       int inorder16 = pkt.m_iSeqNo & PUMASK_SEQNO_PROBE;
+       // Still honor pre-1.2.0 clients that don't support
+       // rexmit flag
+       bool rexmit = pkt.getRexmitFlag() && rexmitflag;
+       // Reject probes that don't refer to the very next packet
+       // towards the one that was lately notified by probe1Arrival.
+       // Otherwise the result can be stupid, including measurement
+       // between regular 16th packet and retransmitted 17th one.
+
+       // Simply, in case when this wasn't called exactly for the
+       // expected packet pair, behave as if the 17th packet was lost.
+
+       if (inorder16 != 1 // other than 17th packet
+               // probe1Arrival wasn't called yet, no start point then
+               || m_Probe1Sequence == -1
+               // not very next towards last 16th
+               || CSeqNo::incseq(m_Probe1Sequence) != pkt.m_iSeqNo
+               // retransmitted
+               || rexmit)
+           return;
+
        // Lock access to the packet Window
        CGuard cg(m_lockProbeWindow);
 
@@ -260,6 +294,7 @@ public:
        // provided the arrival time is proportional to the payload size and skipping
        // the ETH+IP+UDP+SRT header part elliminates the constant packet delivery time influence.
        //
+       size_t pktsz = pkt.getLength();
        m_aProbeWindow[m_iProbeWindowPtr] = pktsz ? timediff_times_pl_size / pktsz : int(timediff);
 
        // OLD CODE BEFORE BSTATS:
@@ -289,6 +324,7 @@ private:
    uint64_t m_LastArrTime;      // last packet arrival time
    uint64_t m_CurrArrTime;      // current packet arrival time
    uint64_t m_ProbeTime;        // arrival time of the first probing packet
+   int32_t m_Probe1Sequence;    // sequence number for which the arrival time was notified
 
 private:
    CPktTimeWindow(const CPktTimeWindow&);
