@@ -464,6 +464,8 @@ private:
 
 public:
 
+   int32_t getTopMsgno();
+
    // @return Wrap check value
    bool getInternalTimeBase(ref_t<uint64_t> tb, ref_t<int64_t> r_udrift);
 

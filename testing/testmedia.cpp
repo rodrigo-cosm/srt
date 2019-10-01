@@ -1998,6 +1998,7 @@ void SrtTarget::Write(const bytevector& data)
 
     if (have_group)
     {
+
         // For listener group this is not necessary. The group information
         // is updated in mctrl.
         UpdateGroupStatus(mctrl.grpdata, mctrl.grpdata_size);
@@ -2014,6 +2015,8 @@ void SrtTarget::Write(const bytevector& data)
             PrintSrtStats(m_sock, need_stats_report, need_bw_report, need_stats_report);
         }
     }
+
+    Verb() << "(#" << mctrl.msgno << " %" << mctrl.pktseq << "  " << BufferStamp(data.data(), data.size()) << ") " << VerbNoEOL;
 
     ++counter;
 }

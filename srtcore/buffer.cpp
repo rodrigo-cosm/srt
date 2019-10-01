@@ -1184,6 +1184,17 @@ uint64_t CRcvBuffer::debugGetDeliveryTime(int offset)
     return getPktTsbPdTime(u->m_Packet.getMsgTimeStamp());
 }
 
+int32_t CRcvBuffer::getTopMsgno()
+{
+    if (m_iStartPos == m_iLastAckPos)
+        return -1; // No message is waiting
+
+    if (!m_pUnit[m_iStartPos])
+        return -1; // pity
+
+    return m_pUnit[m_iStartPos]->m_Packet.getMsgSeq();
+}
+
 bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<int32_t> curpktseq, int upto)
 {
     *r_tsbpdtime = 0;

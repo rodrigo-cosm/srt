@@ -12884,7 +12884,7 @@ RETRY_READING:
             m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
         }
 
-        HLOGC(dlog.Debug, log << "group/recv: successfully extacted packet size=" << output_size << " - returning");
+        HLOGC(dlog.Debug, log << "group/recv: successfully extracted packet size=" << output_size << " - returning");
         return output_size;
     }
 
@@ -13011,15 +13011,16 @@ CUDTGroup::ReadPos* CUDTGroup::checkPacketAhead()
         if ( seqdiff == 1)
         {
             // The very next packet. Return it.
+            // XXX SETTING THIS ONE IS PROBABLY A BUG.
             m_RcvBaseSeqNo = a.mctrl.pktseq;
-            HLOGC(dlog.Debug, log << "group/recv: ahead delivery %"
+            HLOGC(dlog.Debug, log << "group/recv: Base %" << m_RcvBaseSeqNo << " ahead delivery POSSIBLE %"
                     << a.mctrl.pktseq << "#" << a.mctrl.msgno << " from @" << i->first << ")");
             out = &a;
         }
         else if (seqdiff < 1 && !a.packet.empty())
         {
             HLOGC(dlog.Debug, log << "group/recv: @" << i->first << " dropping collected ahead %"
-                    << a.mctrl.pktseq << "#" << a.mctrl.msgno << ")");
+                    << a.mctrl.pktseq << "#" << a.mctrl.msgno << " with base %" << m_RcvBaseSeqNo);
             a.packet.clear();
         }
         // In case when it's >1, keep it in ahead
@@ -13048,15 +13049,14 @@ CUDTGroup::ReadPos* CUDTGroup::checkPacketAheadMsgno()
         if (ndiff == 1)
         {
             // The very next packet. Return it.
-            m_RcvBaseMsgNo = a.mctrl.msgno;
-            HLOGC(dlog.Debug, log << "group/recv: ahead delivery #"
+            HLOGC(dlog.Debug, log << "group/recvBonding/checkPacketAhead: Base: #" << m_RcvBaseMsgNo << " ahead delivery POSSIBLE #"
                     << a.mctrl.msgno << " from @" << i->first);
             out = &a;
         }
         else if (ndiff < 1 && !a.packet.empty())
         {
-            HLOGC(dlog.Debug, log << "group/recv: @" << i->first << " dropping collected ahead #"
-                    << a.mctrl.msgno);
+            HLOGC(dlog.Debug, log << "group/recvBonding/checkPacketAhead: @" << i->first << " dropping collected ahead #"
+                    << a.mctrl.msgno << " with base #" << m_RcvBaseMsgNo);
             a.packet.clear();
         }
         // In case when it's >1, keep it in ahead
@@ -14326,6 +14326,8 @@ RETRY_READING:
         }
     }
 
+    HLOGC(dlog.Debug, log << "grp/recvBonding: START. Buffer size=" << len);
+
     // Check first the ahead packets if you have any to deliver.
     if (m_RcvBaseMsgNo != -1 && !m_Positions.empty())
     {
@@ -14337,11 +14339,12 @@ RETRY_READING:
                 throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
 
             HLOGC(dlog.Debug, log << "grp/recvBonding: delivering AHEAD packet %" << pos->mctrl.pktseq << " #" << pos->mctrl.msgno
-                    << ": " << BufferStamp(&pos->packet[0], pos->packet.size()));
+                    << ": " << BufferStamp(&pos->packet[0], pos->packet.size()) << " - updating base");
             memcpy(buf, &pos->packet[0], pos->packet.size());
             fillGroupData(r_mc, pos->mctrl, out_grpdata, out_grpdata_size);
             len = pos->packet.size();
             pos->packet.clear();
+            m_RcvBaseMsgNo = pos->mctrl.msgno;
 
             // We predict to have only one packet ahead, others are pending to be reported by tsbpd.
             // This will be "re-enabled" if the later check puts any new packet into ahead.
@@ -14618,19 +14621,21 @@ RETRY_READING:
         else
         {
             // The position is not known, so get the position on which
-            // the socket is currently standing.
-            pair<pit_t, bool> ee = m_Positions.insert(make_pair(id, ReadPos(ps->core().m_iRcvLastSkipAck, type())));
+            // the socket is currently standing. Could be unknown, too.
+            pair<pit_t, bool> ee = m_Positions.insert(make_pair(id, ReadPos(ps->core().m_pRcvBuffer->getTopMsgno(), SRT_GTYPE_BONDING)));
             p = &(ee.first->second);
-            HLOGC(dlog.Debug, log << "grp/recvBonding: EPOLL: @" << id << " %" << p->mctrl.pktseq << " NEW SOCKET INSERTED");
+            HLOGC(dlog.Debug, log << "grp/recvBonding: EPOLL: @" << id << " #" << p->mctrl.msgno << " NEW SOCKET INSERTED");
         }
 
         // Read from this socket stubbornly, until:
         // - reading is no longer possible (AGAIN)
         // - the sequence difference is >= 1
 
+        char lostbuf[SRT_LIVE_MAX_PLSIZE];
         for (;;)
         {
             SRT_MSGCTRL mctrl = srt_msgctrl_default;
+            char* used_output = 0;
 
             // Read the data into the user's buffer. This is an optimistic
             // prediction that we'll read the right data. This will be overwritten
@@ -14640,16 +14645,17 @@ RETRY_READING:
             if (output_size)
             {
                 // We have already the data, so this must fall on the floor
-                char lostbuf[SRT_LIVE_MAX_PLSIZE];
                 stat = ps->core().receiveMessage(lostbuf, SRT_LIVE_MAX_PLSIZE, Ref(mctrl), CUDTUnited::ERH_RETURN);
                 HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " IGNORED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                         << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(lostbuf, stat)));
+                used_output = lostbuf;
             }
             else
             {
                 stat = ps->core().receiveMessage(buf, len, Ref(mctrl), CUDTUnited::ERH_RETURN);
                 HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " EXTRACTED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                         << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(buf, stat)));
+                used_output = buf;
             }
             if (stat == 0)
             {
@@ -14718,11 +14724,16 @@ RETRY_READING:
                 if (ndiff > 1)
                 {
                     HLOGC(dlog.Debug, log << "@" << id << " #" << mctrl.msgno
-							<< " AHEAD base=#" << m_RcvBaseMsgNo);
-                    p->packet.assign(buf, buf+stat);
+							<< " AHEAD by " << ndiff << " for base=#" << m_RcvBaseMsgNo << " - recorded !"
+                            << BufferStamp(used_output, stat) << " size=" << stat);
+                    p->packet.assign(used_output, used_output+stat);
                     p->mctrl = mctrl;
                     break; // Don't read from that socket anymore.
                 }
+            }
+            else
+            {
+                HLOGC(dlog.Debug, log << "grp/recvBonding: base not yet set; predicted #" << mctrl.msgno);
             }
 
             // We have seqdiff = 1, or we simply have the very first packet
@@ -14735,7 +14746,8 @@ RETRY_READING:
                 break;
             }
 
-            HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno << " DELIVERING");
+            HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno
+                    << " DELIVERING; next msgno will be #" << mctrl.msgno);
             output_size = stat;
             fillGroupData(r_mc, mctrl, out_grpdata, out_grpdata_size);
 
@@ -14794,6 +14806,7 @@ RETRY_READING:
         }
         else
         {
+            HLOGC(dlog.Debug, log << "grp/recvBonding: new base #" << next_msgno << " - replacing previous #" << m_RcvBaseMsgNo);
             m_RcvBaseMsgNo = next_msgno;
         }
 
