@@ -6357,7 +6357,7 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     mctrl.pktseq = seqno;
 
     // Now seqno is the sequence to which it was scheduled
-    HLOGC(dlog.Debug, log << CONID() << "sock:SENDING (BEFORE) srctime:" << FormatTime(mctrl.srctime)
+    HLOGC(dlog.Debug, log << CONID() << "buf:SENDING (BEFORE) srctime:" << FormatTime(mctrl.srctime)
         << " DATA SIZE: " << size << " sched-SEQUENCE: " << seqno
         << " STAMP: " << BufferStamp(data, size));
 
@@ -6370,9 +6370,9 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     m_iSndNextSeqNo = mctrl.pktseq;
     mctrl.pktseq = seqno;
 
-    HLOGC(dlog.Debug, log << CONID() << "sock:SENDING srctime:" << FormatTime(mctrl.srctime)
-        << " DATA SIZE: " << size << " sched-SEQUENCE: " << orig_seqno << "(>>" << seqno << ")"
-        << " STAMP: " << BufferStamp(data, size));
+    HLOGC(dlog.Debug, log << CONID() << "buf:SENDING srctime:" << FormatTime(mctrl.srctime)
+            << " size=" << size << " #" << mctrl.msgno << " SCHED %" << orig_seqno
+            << "(>> %" << seqno << ") !" << BufferStamp(data, size));
 
     // insert this socket to the snd list if it is not on the list yet
     m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion));
@@ -15063,7 +15063,9 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         m_iBondingRoll = 0;
 
     gli_t d = sendable[m_iBondingRoll];
+    int erc = 0;
 
+    try
     {
         // This must be wrapped in try-catch because on error it throws an exception.
         // Possible return values are only 0, in case when len was passed 0, or a positive
@@ -15080,8 +15082,24 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // NOTE: EXCEPTION PASSTHROUGH.
         stat = ps->core().sendmsg2(buf, len, r_mc);
     }
+    catch (CUDTException& e)
+    {
+        cx = e;
+        stat = -1;
+        erc = e.getErrorCode();
+    }
 
-    sendstates.push_back( (Sendstate) {d, stat, 0});
+    if (stat != -1)
+    {
+        if (m_iLastSchedMsgNo == -1)
+        {
+            // Initialize this number
+            HLOGC(dlog.Debug, log << "grp/sendBonding: INITIALIZING message number: " << mc.msgno);
+            m_iLastSchedMsgNo = mc.msgno;
+        }
+    }
+
+    sendstates.push_back( (Sendstate) {d, stat, erc});
     d->sndresult = stat;
     d->laststatus = d->ps->getStatus();
 
@@ -15388,7 +15406,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // Increase the message number only when at least one succeeded.
 
     // If m_iLastSchedSeqNo wasn't initialized above, don't touch it.
-    if (m_iLastSchedMsgNo != 0)
+    if (m_iLastSchedMsgNo != -1)
     {
         m_iLastSchedMsgNo = ++MsgNo(m_iLastSchedMsgNo);
         HLOGC(dlog.Debug, log << "grp/sendBonding: updated msgno: " << m_iLastSchedMsgNo);

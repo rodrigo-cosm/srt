@@ -170,7 +170,7 @@ void CSndBuffer::addBuffer(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl
 
     HLOGC(dlog.Debug, log << CONID() << "addBuffer: adding "
         << size << " packets (" << len << " bytes) to send, msgno="
-        << (msgno ? msgno : m_iNextMsgNo)
+        << (msgno > 0 ? msgno : m_iNextMsgNo)
         << (inorder ? "" : " NOT") << " in order");
 
     // The sequence number passed to this function is the sequence number
@@ -180,7 +180,7 @@ void CSndBuffer::addBuffer(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl
 
     Block* s = m_pLastBlock;
 
-    if (msgno == 0) // DEFAULT-UNCHANGED msgno supplied
+    if (msgno == -1) // DEFAULT-UNCHANGED msgno supplied
     {
         HLOGC(dlog.Debug, log << "addBuffer: using internally managed msgno=" << m_iNextMsgNo);
         msgno = m_iNextMsgNo;
