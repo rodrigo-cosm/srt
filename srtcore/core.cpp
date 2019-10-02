@@ -3433,7 +3433,7 @@ EConnectStatus CUDT::processAsyncConnectResponse(const CPacket& pkt) ATR_NOEXCEP
     EConnectStatus cst = CONN_CONTINUE;
     CUDTException e;
 
-    CGuard cg(m_ConnectionLock); // FIX
+    CGuard cg(m_ConnectionLock, "conn"); // FIX
     HLOGC(mglog.Debug, log << CONID() << "processAsyncConnectResponse: got response for connect request, processing");
     cst = processConnectResponse(pkt, &e, COM_ASYNCHRO);
 
@@ -6344,7 +6344,7 @@ void CUDT::sample(CPerfMon* perf, bool clear)
    if (m_bBroken || m_bClosing)
       throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
 
-   CGuard statsLock(m_StatsLock);
+   CGuard statsLock(m_StatsLock, "stats");
    uint64_t currtime = CTimer::getTime();
    perf->msTimeStamp = (currtime - m_stats.startTime) / 1000;
 
@@ -8098,7 +8098,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
        // Stats
 
        {
-           CGuard lg(m_StatsLock);
+           CGuard lg(m_StatsLock, "stats");
            ++m_stats.sndFilterExtra;
            ++m_stats.sndFilterExtraTotal;
        }
@@ -8474,7 +8474,7 @@ int CUDT::processData(CUnit* in_unit)
        int diff = CSeqNo::seqoff(m_iRcvCurrPhySeqNo, packet.m_iSeqNo);
        if (diff > 1)
        {
-           CGuard lg(m_StatsLock);
+           CGuard lg(m_StatsLock, "stats");
            int loss = diff - 1; // loss is all that is above diff == 1
            m_stats.traceRcvLoss += loss;
            m_stats.rcvLossTotal += loss;
@@ -8621,7 +8621,7 @@ int CUDT::processData(CUnit* in_unit)
                       // Crypto flags are still set
                       // It will be acknowledged
                       {
-                          CGuard lg(m_StatsLock);
+                          CGuard lg(m_StatsLock, "stats");
                           m_stats.traceRcvUndecrypt += 1;
                           m_stats.traceRcvBytesUndecrypt += pktsz;
                           m_stats.m_rcvUndecryptTotal += 1;
@@ -8760,7 +8760,7 @@ int CUDT::processData(CUnit* in_unit)
                    << " - RECORDING.");
            // if record_loss == false, nothing will be contained here
            // Insert lost sequence numbers to the receiver loss list
-           CGuard lg(m_RcvLossLock);
+           CGuard lg(m_RcvLossLock, "RcvLoss");
            for (loss_seqs_t::iterator i = srt_loss_seqs.begin(); i != srt_loss_seqs.end(); ++i)
            {
                // If loss found, insert them to the receiver loss list
