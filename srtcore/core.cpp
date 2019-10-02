@@ -3432,7 +3432,7 @@ EConnectStatus CUDT::processAsyncConnectResponse(const CPacket& pkt) ATR_NOEXCEP
     EConnectStatus cst = CONN_CONTINUE;
     CUDTException e;
 
-    CGuard cg(m_ConnectionLock); // FIX
+    CGuard cg(m_ConnectionLock, "conn"); // FIX
     HLOGC(mglog.Debug, log << CONID() << "processAsyncConnectResponse: got response for connect request, processing");
     cst = processConnectResponse(pkt, &e, false);
 
@@ -5281,7 +5281,7 @@ bool CUDT::close()
 
    HLOGC(mglog.Debug, log << CONID() << "CLOSING STATE. Acquiring connection lock");
 
-   CGuard cg(m_ConnectionLock);
+   CGuard cg(m_ConnectionLock, "conn");
 
    // Signal the sender and recver if they are waiting for data.
    releaseSynch();
@@ -5453,7 +5453,7 @@ int CUDT::receiveBuffer(char* data, int len)
     if (!m_CongCtl->checkTransArgs(SrtCongestion::STA_BUFFER, SrtCongestion::STAD_RECV, data, len, -1, false))
         throw CUDTException(MJ_NOTSUP, MN_INVALBUFFERAPI, 0);
 
-    CGuard recvguard(m_RecvLock);
+    CGuard recvguard(m_RecvLock, "recv");
 
     if ((m_bBroken || m_bClosing) && !m_pRcvBuffer->isRcvDataReady())
     {
@@ -5917,8 +5917,8 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     if (!m_CongCtl->checkTransArgs(SrtCongestion::STA_MESSAGE, SrtCongestion::STAD_RECV, data, len, -1, false))
         throw CUDTException(MJ_NOTSUP, MN_INVALMSGAPI, 0);
 
-    CGuard recvguard(m_RecvLock);
-    CCondDelegate tscond(m_RcvTsbPdCond, recvguard);
+    CGuard recvguard(m_RecvLock, "recv");
+    CCondDelegate tscond(m_RcvTsbPdCond, recvguard, "RcvTsbPdCond");
 
     /* XXX DEBUG STUFF - enable when required
        char charbool[2] = {'0', '1'};
@@ -6330,7 +6330,7 @@ void CUDT::sample(CPerfMon* perf, bool clear)
    if (m_bBroken || m_bClosing)
       throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
 
-   CGuard statsLock(m_StatsLock);
+   CGuard statsLock(m_StatsLock, "stats");
    uint64_t currtime = CTimer::getTime();
    perf->msTimeStamp = (currtime - m_stats.startTime) / 1000;
 
@@ -7968,7 +7968,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
        // Stats
 
        {
-           CGuard lg(m_StatsLock);
+           CGuard lg(m_StatsLock, "stats");
            ++m_stats.sndFilterExtra;
            ++m_stats.sndFilterExtraTotal;
        }
@@ -8322,7 +8322,7 @@ int CUDT::processData(CUnit* in_unit)
        int diff = CSeqNo::seqoff(m_iRcvCurrPhySeqNo, packet.m_iSeqNo);
        if (diff > 1)
        {
-           CGuard lg(m_StatsLock);
+           CGuard lg(m_StatsLock, "stats");
            int loss = diff - 1; // loss is all that is above diff == 1
            m_stats.traceRcvLoss += loss;
            m_stats.rcvLossTotal += loss;
@@ -8465,7 +8465,7 @@ int CUDT::processData(CUnit* in_unit)
                       // Crypto flags are still set
                       // It will be acknowledged
                       {
-                          CGuard lg(m_StatsLock);
+                          CGuard lg(m_StatsLock, "stats");
                           m_stats.traceRcvUndecrypt += 1;
                           m_stats.traceRcvBytesUndecrypt += pktsz;
                           m_stats.m_rcvUndecryptTotal += 1;
@@ -8580,7 +8580,7 @@ int CUDT::processData(CUnit* in_unit)
                    << " - RECORDING.");
            // if record_loss == false, nothing will be contained here
            // Insert lost sequence numbers to the receiver loss list
-           CGuard lg(m_RcvLossLock);
+           CGuard lg(m_RcvLossLock, "RcvLoss");
            for (loss_seqs_t::iterator i = srt_loss_seqs.begin(); i != srt_loss_seqs.end(); ++i)
            {
                // If loss found, insert them to the receiver loss list
