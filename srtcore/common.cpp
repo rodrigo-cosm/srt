@@ -55,11 +55,7 @@ modified by
 
 #if ENABLE_THREAD_LOGGING
 #include <iostream>
-#ifndef __MINGW__
-   #include <intrin.h>
 #endif
-#endif
-
 #include <string>
 #include <sstream>
 #include <cmath>
