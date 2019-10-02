@@ -104,6 +104,9 @@ m_iIpToS(-1),   /* IPv4 Type of Service or IPv6 Traffic Class [0x00..0xff] (-1:u
 m_iSndBufSize(65536),
 m_iRcvBufSize(65536),
 m_iIpV6Only(-1)
+#ifdef SRT_ENABLE_PKTINFO
+, m_bBindMasked(true)
+#endif
 {
 }
 
@@ -118,6 +121,9 @@ m_iSndBufSize(65536),
 m_iRcvBufSize(65536),
 m_iIpV6Only(-1),
 m_BindAddr(version)
+#ifdef SRT_ENABLE_PKTINFO
+, m_bBindMasked(true)
+#endif
 {
    SRT_ASSERT(version == AF_INET || version == AF_INET6);
    m_iSockAddrSize = (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
