@@ -248,9 +248,6 @@ class FileCC : public SrtCongestionControlBase
 {
     typedef FileCC Me; // Required by SSLOT macro
 
-    // Fields from CCC not used by FileCC
-    int m_iACKPeriod;
-
     // Fields from CUDTCC
     int m_iRCInterval;          // UDT Rate control interval
     uint64_t m_LastRCTime;      // last rate increase time
@@ -270,7 +267,6 @@ public:
 
     FileCC(CUDT* parent)
         : SrtCongestionControlBase(parent)
-        , m_iACKPeriod(CUDT::COMM_SYN_INTERVAL_US)
         , m_iRCInterval(CUDT::COMM_SYN_INTERVAL_US)
         , m_LastRCTime(CTimer::getTime())
         , m_bSlowStart(true)
@@ -315,7 +311,11 @@ public:
         // For FileCC, treat non-full-buffer situation as an end-of-message situation;
         // request ACK to be sent immediately.
         if (pkt.getLength() < m_parent->maxPayloadSize())
+        {
+            // This is not a regular fixed size packet...
+            // an irregular sized packet usually indicates the end of a message, so send an ACK immediately
             return true;
+        }
 
         return false;
     }
@@ -493,13 +493,11 @@ private:
         m_bLoss = true;
 
         const int pktsInFlight = m_parent->RTT() / m_dPktSndPeriod;
-        const int ackSeqno = m_iLastAck;// m_parent->sndLastDataAck();
-        const int sentSeqno = m_parent->sndSeqNo();
         const int numPktsLost = m_parent->sndLossLength();
         const int lost_pcent_x10 = (numPktsLost * 1000) / pktsInFlight;
 
         HLOGC(mglog.Debug, log << "FileSmootherV2: LOSS: "
-            << "sent=" << CSeqNo::seqlen(ackSeqno, sentSeqno) << ", inFlight=" << pktsInFlight
+            << "sent=" << CSeqNo::seqlen(m_iLastAck, m_parent->sndSeqNo()) << ", inFlight=" << pktsInFlight
             << ", lost=" << numPktsLost << " ("
             << lost_pcent_x10 / 10 << "." << lost_pcent_x10 % 10 << "\%)");
         if (lost_pcent_x10 < 20)    // 2.0%
