@@ -91,6 +91,7 @@ written by
 #include <memory>
 #include <iomanip>
 #include <sstream>
+#include <iomanip>
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
@@ -107,9 +108,35 @@ written by
 
 #endif
 
-#if defined(__linux__) || defined(__CYGWIN__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__GNU__)
 
 #	include <endian.h>
+
+// GLIBC-2.8 and earlier does not provide these macros.
+// See http://linux.die.net/man/3/endian
+// From https://gist.github.com/panzi/6856583
+#   if defined(__GLIBC__) \
+      && ( !defined(__GLIBC_MINOR__) \
+         || ((__GLIBC__ < 2) \
+         || ((__GLIBC__ == 2) && (__GLIBC_MINOR__ < 9))) )
+#       include <arpa/inet.h>
+#       if defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)
+
+#           define htole32(x) (x)
+#           define le32toh(x) (x)
+
+#       elif defined(__BYTE_ORDER) && (__BYTE_ORDER == __BIG_ENDIAN)
+
+#           define htole16(x) ((((((uint16_t)(x)) >> 8))|((((uint16_t)(x)) << 8)))
+#           define le16toh(x) ((((((uint16_t)(x)) >> 8))|((((uint16_t)(x)) << 8)))
+
+#           define htole32(x) (((uint32_t)htole16(((uint16_t)(((uint32_t)(x)) >> 16)))) | (((uint32_t)htole16(((uint16_t)(x)))) << 16))
+#           define le32toh(x) (((uint32_t)le16toh(((uint16_t)(((uint32_t)(x)) >> 16)))) | (((uint32_t)le16toh(((uint16_t)(x)))) << 16))
+
+#       else
+#           error Byte Order not supported or not defined.
+#       endif
+#   endif
 
 #elif defined(__APPLE__)
 
@@ -450,6 +477,17 @@ public:
     { return *m_data; }
 };
 
+// This is required for Printable function if you have a container of pairs,
+// but this function has a different definition for C++11 and C++03.
+namespace srt_pair_op
+{
+    template <class Value1, class Value2>
+    std::ostream& operator<<(std::ostream& s, const std::pair<Value1, Value2>& v)
+    {
+        s << "{" << v.first << " " << v.second << "}";
+        return s;
+    }
+}
 
 #if HAVE_CXX11
 
@@ -496,6 +534,7 @@ using UniquePtr = std::unique_ptr<T>;
 template <class Container, class Value = typename Container::value_type, typename... Args> inline
 std::string Printable(const Container& in, Value /*pseudoargument*/, Args&&... args)
 {
+    using namespace srt_pair_op;
     std::ostringstream os;
     Print(os, args...);
     os << "[ ";
@@ -508,6 +547,7 @@ std::string Printable(const Container& in, Value /*pseudoargument*/, Args&&... a
 template <class Container> inline
 std::string Printable(const Container& in)
 {
+    using namespace srt_pair_op;
     using Value = typename Container::value_type;
     return Printable(in, Value());
 }
@@ -526,9 +566,17 @@ auto map_getp(Map& m, const Key& key) -> typename Map::mapped_type*
     return it == m.end() ? nullptr : std::addressof(it->second);
 }
 
+template<typename Map, typename Key>
+auto map_getp(const Map& m, const Key& key) -> typename Map::mapped_type const*
+{
+    auto it = m.find(key);
+    return it == m.end() ? nullptr : std::addressof(it->second);
+}
+
 
 #else
 
+// A primitive one-argument versions of Sprint and Printable
 template <class Arg1>
 inline std::string Sprint(const Arg1& arg)
 {
@@ -540,6 +588,7 @@ inline std::string Sprint(const Arg1& arg)
 template <class Container> inline
 std::string Printable(const Container& in)
 {
+    using namespace srt_pair_op;
     typedef typename Container::value_type Value;
     std::ostringstream os;
     os << "[ ";
@@ -611,13 +660,25 @@ typename Map::mapped_type map_get(Map& m, const Key& key, typename Map::mapped_t
 }
 
 template<typename Map, typename Key>
+typename Map::mapped_type map_get(const Map& m, const Key& key, typename Map::mapped_type def = typename Map::mapped_type())
+{
+    typename Map::const_iterator it = m.find(key);
+    return it == m.end() ? def : it->second;
+}
+
+template<typename Map, typename Key>
 typename Map::mapped_type* map_getp(Map& m, const Key& key)
 {
     typename Map::iterator it = m.find(key);
-    return it == m.end() ? NULL : ref_t<typename Map::mapped_type>::adrof(it->second);
+    return it == m.end() ? (typename Map::mapped_type*)0 : &(it->second);
 }
 
-
+template<typename Map, typename Key>
+typename Map::mapped_type const* map_getp(const Map& m, const Key& key)
+{
+    typename Map::const_iterator it = m.find(key);
+    return it == m.end() ? (typename Map::mapped_type*)0 : &(it->second);
+}
 
 #endif
 
@@ -830,12 +891,8 @@ struct MapProxy
 inline std::string BufferStamp(const char* mem, size_t size)
 {
     using namespace std;
+    char spread[16];
 
-    union
-    {
-        char spread[16];
-        uint32_t testin[4];
-    };
     int n = 16-size;
     if (n > 0)
         memset(spread+16-n, 0, n);
@@ -859,13 +916,10 @@ inline std::string BufferStamp(const char* mem, size_t size)
 
     ostringstream os;
 
-    //os << hex << uppercase << setfill('0') << setw(8) << testin[3] << testin[2] << testin[1] << testin[0];
-    //os << "|";
     os << hex << uppercase << setfill('0') << setw(8) << sum;
 
     return os.str();
 }
-
 
 template <class OutputIterator>
 inline void Split(const std::string & str, char delimiter, OutputIterator tokens)
@@ -885,6 +939,28 @@ inline void Split(const std::string & str, char delimiter, OutputIterator tokens
                 (end == std::string::npos) ? std::string::npos : end - start);
         ++tokens;
     } while (end != std::string::npos);
+}
+
+inline std::string SelectNot(const std::string& unwanted, const std::string& s1, const std::string& s2)
+{
+    if (s1 == unwanted)
+        return s2; // might be unwanted, too, but then, there's nothing you can do anyway
+    if (s2 == unwanted)
+        return s1;
+
+    // Both have wanted values, so now compare if they are same
+    if (s1 == s2)
+        return s1; // occasionally there's a winner
+
+    // Irresolvable situation.
+    return std::string();
+}
+
+inline std::string SelectDefault(const std::string& checked, const std::string& def)
+{
+    if (checked == "")
+        return def;
+    return checked;
 }
 
 template <class It>

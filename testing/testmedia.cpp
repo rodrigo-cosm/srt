@@ -44,6 +44,7 @@ volatile bool transmit_throw_on_interrupt = false;
 int transmit_bw_report = 0;
 unsigned transmit_stats_report = 0;
 size_t transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
+bool transmit_printformat_json = false;
 srt_listen_callback_fn* transmit_accept_hook_fn = nullptr;
 void* transmit_accept_hook_op = nullptr;
 // Do not unblock. Copy this to an app that uses applog and set appropriate name.
@@ -51,7 +52,7 @@ void* transmit_accept_hook_op = nullptr;
 
 std::shared_ptr<SrtStatsWriter> transmit_stats_writer;
 
-string DirectionName(SRT_EPOLL_OPT direction)
+string DirectionName(SRT_EPOLL_T direction)
 {
     string dir_name;
     if (direction)

@@ -30,6 +30,10 @@
    #include <ws2ipdef.h>
    #include <windows.h>
 
+#ifndef __MINGW__
+   #include <intrin.h>
+#endif
+
    #ifdef SRT_IMPORT_TIME
    #include <win/wintime.h>
    #endif
@@ -90,9 +94,6 @@
 #include <fcntl.h>
 
 #ifdef __cplusplus
-#include <cerrno>
-#include <cstring>
-#include <cstdlib>
 #else
 #include <errno.h>
 #include <string.h>

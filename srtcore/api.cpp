@@ -237,6 +237,8 @@ int CUDTUnited::startup()
          throw CUDTException(MJ_SETUP, MN_NONE,  WSAGetLastError());
    #endif
 
+   PacketFilter::globalInit();
+
    //init CTimer::EventLock
 
    if (m_bGCStatus)
@@ -1504,6 +1506,20 @@ int CUDTUnited::epoll_wait(
    return m_EPoll.wait(eid, readfds, writefds, msTimeOut, lrfds, lwfds);
 }
 
+int CUDTUnited::epoll_uwait(
+   const int eid,
+   SRT_EPOLL_EVENT* fdsSet,
+   int fdsSize, 
+   int64_t msTimeOut)
+{
+   return m_EPoll.uwait(eid, fdsSet, fdsSize, msTimeOut);
+}
+
+int32_t CUDTUnited::epoll_set(int eid, int32_t flags)
+{
+    return m_EPoll.setflags(eid, flags);
+}
+
 int CUDTUnited::epoll_release(const int eid)
 {
    return m_EPoll.release(eid);
@@ -2239,7 +2255,8 @@ int CUDT::connect(
    }
 }
 
-int CUDT::connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn)
+int CUDT::connect(
+   SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn)
 {
    try
    {
@@ -2326,7 +2343,8 @@ int CUDT::getsockname(SRTSOCKET u, sockaddr* name, int* namelen)
    }
 }
 
-int CUDT::getsockopt(SRTSOCKET u, int, SRT_SOCKOPT optname, void* optval, int* optlen)
+int CUDT::getsockopt(
+   SRTSOCKET u, int, SRT_SOCKOPT optname, void* optval, int* optlen)
 {
    if (!optval || !optlen)
    {
@@ -2811,6 +2829,52 @@ int CUDT::epoll_wait(
    }
 }
 
+int CUDT::epoll_uwait(
+   const int eid,
+   SRT_EPOLL_EVENT* fdsSet,
+   int fdsSize,
+   int64_t msTimeOut)
+{
+   try
+   {
+      return s_UDTUnited.epoll_uwait(eid, fdsSet, fdsSize, msTimeOut);
+   }
+   catch (CUDTException e)
+   {
+      s_UDTUnited.setError(new CUDTException(e));
+      return ERROR;
+   }
+   catch (std::exception& ee)
+   {
+      LOGC(mglog.Fatal, log << "epoll_uwait: UNEXPECTED EXCEPTION: "
+         << typeid(ee).name() << ": " << ee.what());
+      s_UDTUnited.setError(new CUDTException(MJ_UNKNOWN, MN_NONE, 0));
+      return ERROR;
+   }
+}
+
+int32_t CUDT::epoll_set(
+   const int eid,
+   int32_t flags)
+{
+   try
+   {
+      return s_UDTUnited.epoll_set(eid, flags);
+   }
+   catch (CUDTException e)
+   {
+      s_UDTUnited.setError(new CUDTException(e));
+      return ERROR;
+   }
+   catch (std::exception& ee)
+   {
+      LOGC(mglog.Fatal, log << "epoll_set: UNEXPECTED EXCEPTION: "
+         << typeid(ee).name() << ": " << ee.what());
+      s_UDTUnited.setError(new CUDTException(MJ_UNKNOWN, MN_NONE, 0));
+      return ERROR;
+   }
+}
+
 int CUDT::epoll_release(const int eid)
 {
    try
@@ -3248,6 +3312,11 @@ int epoll_wait2(
       set_result(lwval, lwnum, lwfds);
    }
    return ret;
+}
+
+int epoll_uwait(int eid, SRT_EPOLL_EVENT* fdsSet, int fdsSize, int64_t msTimeOut)
+{
+   return CUDT::epoll_uwait(eid, fdsSet, fdsSize, msTimeOut);
 }
 
 int epoll_release(int eid)
