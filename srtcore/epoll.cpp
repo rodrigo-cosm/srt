@@ -132,125 +132,29 @@ int CEPoll::clear_usocks(int eid)
    if (p == m_mPolls.end())
       throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
 
-   CEPollDesc& d= p->second;
+   CEPollDesc& d = p->second;
 
-   d.m_sUDTSocksIn.clear();
-   d.m_sUDTSocksOut.clear();
-   d.m_sUDTSocksEx.clear();
-
-   d.clear_state();
+   d.clearAll();
 
    return 0;
 }
 
-namespace
-{
-template<int event_type>
-inline void prv_update_usock(CEPollDesc& d, SRTSOCKET u, int flags)
-{
-    set<SRTSOCKET>& subscribers = d.*(CEPollET<event_type>::subscribers());
-    set<SRTSOCKET>& eventsinks = d.*(CEPollET<event_type>::eventsinks());
-
-    if (IsSet(flags, event_type))
-    {
-        // Add the socket to the subscribers (m_sUDTSocksIn etc.)
-        subscribers.insert(u);
-    }
-    else
-    {
-        // Remove the socket from the subscribers, AND
-        // also remove it from eventsink, as when the socket
-        // was subscribed already, but is not present in this
-        // call's flags, the user is no longer interested in
-        // the events represented by event flags that are not to be set.
-        subscribers.erase(u);
-        eventsinks.erase(u);
-    }
-}
-
-template<int event_type>
-inline void prv_clear_ready_usocks(CEPollDesc& d, int event_type_match)
-{
-    if (event_type_match != event_type)
-        return;
-
-    set<SRTSOCKET>& subscribers = d.*(CEPollET<event_type>::subscribers());
-    set<SRTSOCKET>& eventsinks = d.*(CEPollET<event_type>::eventsinks());
-
-    // Remove from subscribers all sockets that were found in eventsinks
-    set<SRTSOCKET> without;
-    std::set_difference(subscribers.begin(), subscribers.end(),
-            eventsinks.begin(), eventsinks.end(), std::inserter(without, without.begin()));
-
-    HLOGC(mglog.Debug, log << "EID " << d.m_iID << ": removing " << CEPollET<event_type>::name() << "-ready socekts: "
-            << Printable(eventsinks));
-
-    eventsinks.clear();
-    swap(subscribers, without);
-}
-
-}
 
 void CEPoll::clear_ready_usocks(CEPollDesc& d, int direction)
 {
-   CGuard pg(m_EPollLock, "EPoll");
+    if ((direction & ~SRT_EPOLL_EVENTTYPES) != 0)
+    {
+        // This is internal function, so simply report an IPE on incorrect usage.
+        LOGC(dlog.Error, log << "CEPoll::clear_ready_usocks: IPE, event flags exceed event types: " << direction);
+        return;
+    }
+    CGuard pg(m_EPollLock, "EPoll");
 
-
-   // The call encloses both checking if direction == SRT_EPOLL_*
-   // and the actual activity to perform. The function is inline so
-   // this series should expand into a condition check and execution
-   // only when the direction matches given symbol.
-   //
-   // This can be also further optimized by making an array where only
-   // index of 1, 4 and 8 are filled, others are zero.
-
-   prv_clear_ready_usocks<SRT_EPOLL_IN>(d, direction);
-   prv_clear_ready_usocks<SRT_EPOLL_OUT>(d, direction);
-   prv_clear_ready_usocks<SRT_EPOLL_ERR>(d, direction);
-}
-
-int CEPoll::add_usock(const int eid, const SRTSOCKET& u, const int* events)
-{
-   CGuard pg(m_EPollLock, "EPoll");
-
-   map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
-   if (p == m_mPolls.end())
-      throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
-#if ENABLE_HEAVY_LOGGING
-   string modes;
-   if (!events)
-       modes = "all ";
-   else
-   {
-       int mx[3] = {SRT_EPOLL_IN, SRT_EPOLL_OUT, SRT_EPOLL_ERR};
-       string nam[3] = { "in", "out", "err" };
-       for (int i = 0; i < 3; ++i)
-           if (*events & mx[i])
-           {
-               modes += nam[i];
-               modes += " ";
-           }
-   }
-
-   LOGC(mglog.Debug, log << "srt_epoll_add_usock(" << eid << ") @" << u << " modes: " << modes);
-#endif
-
-   int ef = events ? *events : (SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR);
-   CEPollDesc& d = p->second;
-
-   // Changes done here:
-   // 1. Connecting timeout not signalled without EPOLL_ERR 
-   // 2. You can use 'add_usock' also in order to CHANGE event spec
-   //    on a socket that is already added to the epoll container.
-   //    If particular even type is no longer to be tracked on that
-   //    socket, it will be removed from subscribers and from event
-   //    information stored so far in the event sink, if any.
-
-   prv_update_usock<SRT_EPOLL_IN>(d, u, ef);
-   prv_update_usock<SRT_EPOLL_OUT>(d, u, ef);
-   prv_update_usock<SRT_EPOLL_ERR>(d, u, ef);
-
-   return 0;
+    CEPollDesc::enotice_t::iterator i = d.enotice_begin();
+    while (i != d.enotice_end())
+    {
+        d.clearEvent(i++, direction);
+    }
 }
 
 int CEPoll::add_ssock(const int eid, const SYSSOCKET& s, const int* events)
@@ -321,32 +225,6 @@ int CEPoll::add_ssock(const int eid, const SYSSOCKET& s, const int* events)
    return 0;
 }
 
-int CEPoll::remove_usock(const int eid, const SRTSOCKET& u)
-{
-   CGuard pg(m_EPollLock, "EPoll");
-
-   map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
-   if (p == m_mPolls.end())
-      throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
-
-   HLOGC(mglog.Debug, log << "srt_epoll_remove_usock(" << eid << "): removed @" << u);
-
-   p->second.m_sUDTSocksIn.erase(u);
-   p->second.m_sUDTSocksOut.erase(u);
-   p->second.m_sUDTSocksEx.erase(u);
-
-   /*
-   * We are no longer interested in signals from this socket
-   * If some are up, they will unblock EPoll forever.
-   * Clear them.
-   */
-   p->second.m_sUDTReads.erase(u);
-   p->second.m_sUDTWrites.erase(u);
-   p->second.m_sUDTExcepts.erase(u);
-
-   return 0;
-}
-
 int CEPoll::remove_ssock(const int eid, const SYSSOCKET& s)
 {
    CGuard pg(m_EPollLock, "EPoll");
@@ -380,41 +258,41 @@ int CEPoll::remove_ssock(const int eid, const SYSSOCKET& s)
 // Need this to atomically modify polled events (ex: remove write/keep read)
 int CEPoll::update_usock(const int eid, const SRTSOCKET& u, const int* events)
 {
-   CGuard pg(m_EPollLock, "EPoll");
+    CGuard pg(m_EPollLock, "EPoll");
 
-   map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
-   if (p == m_mPolls.end())
-      throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
+    map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
+    if (p == m_mPolls.end())
+        throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
 
-   if (!events || (*events & SRT_EPOLL_IN))
-      p->second.m_sUDTSocksIn.insert(u);
-   else
-   {
-      p->second.m_sUDTSocksIn.erase(u);
-      /*
-      * We are no longer interested in this event from this socket
-      * If some are up, they will unblock EPoll forever.
-      * Clear them.
-      */
-      p->second.m_sUDTReads.erase(u);
-   }
-
-   if (!events || (*events & SRT_EPOLL_OUT))
-      p->second.m_sUDTSocksOut.insert(u);
-   else
-   {
-      p->second.m_sUDTSocksOut.erase(u);
-      p->second.m_sUDTWrites.erase(u);
-   }
-   if (!events || (*events & SRT_EPOLL_ERR))
-      p->second.m_sUDTSocksEx.insert(u);
-   else
-   {
-      p->second.m_sUDTSocksEx.erase(u);
-      p->second.m_sUDTExcepts.erase(u);
-   }
-
-   return 0;
+    int32_t evts = events ? *events : uint32_t(SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR);
+    bool edgeTriggered = evts & SRT_EPOLL_ET;
+    evts &= ~SRT_EPOLL_ET;
+    if (evts)
+    {
+        pair<CEPollDesc::ewatch_t::iterator, bool> iter_new = p->second.addWatch(u, evts, edgeTriggered);
+        CEPollDesc::Wait& wait = iter_new.first->second;
+        int newstate = wait.watch & wait.state;
+        if (newstate)
+        {
+            p->second.addEventNotice(wait, u, newstate);
+        }
+        else if (!iter_new.second) // if it was freshly added, no notice object exists
+        {
+            // This removes the event notice entry, but leaves the subscription
+            p->second.removeEvents(wait);
+        }
+    }
+    else if (edgeTriggered)
+    {
+        // Specified only SRT_EPOLL_ET flag, but no event flag. Error.
+        throw CUDTException(MJ_NOTSUP, MN_INVAL);
+    }
+    else
+    {
+        // Update with no events means to remove subscription
+        p->second.removeSubscription(u);
+    }
+    return 0;
 }
 
 int CEPoll::update_ssock(const int eid, const SYSSOCKET& s, const int* events)
@@ -482,177 +360,268 @@ int CEPoll::update_ssock(const int eid, const SYSSOCKET& s, const int* events)
    return 0;
 }
 
-int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefds, int64_t msTimeOut, set<SYSSOCKET>* lrfds, set<SYSSOCKET>* lwfds)
+int CEPoll::setflags(const int eid, int32_t flags)
 {
-   // if all fields is NULL and waiting time is infinite, then this would be a deadlock
-   if (!readfds && !writefds && !lrfds && !lwfds && (msTimeOut < 0))
-      throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
-
-   // Clear these sets in case the app forget to do it.
-   if (readfds) readfds->clear();
-   if (writefds) writefds->clear();
-   if (lrfds) lrfds->clear();
-   if (lwfds) lwfds->clear();
-
-   int total = 0;
-
-   int64_t entertime = CTimer::getTime();
-   while (true)
-   {
-      CGuard::enterCS(m_EPollLock, "EPoll");
-
-      map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
-      if (p == m_mPolls.end())
-      {
-         CGuard::leaveCS(m_EPollLock, "EPoll");
-         LOGC(mglog.Error, log << "EID:" << eid << " INVALID.");
-         throw CUDTException(MJ_NOTSUP, MN_EIDINVAL, 0);
-      }
-
-      if (p->second.m_sUDTSocksIn.empty() && p->second.m_sUDTSocksOut.empty() && p->second.m_sLocals.empty() && (msTimeOut < 0))
-      {
-         // no socket is being monitored, this may be a deadlock
-         CGuard::leaveCS(m_EPollLock, "EPoll");
-         LOGC(mglog.Error, log << "EID:" << eid << " no sockets to check, this would deadlock");
-         throw CUDTException(MJ_NOTSUP, MN_EEMPTY, 0);
-      }
-
-      // Sockets with exceptions are returned to both read and write sets.
-      if ((NULL != readfds) && (!p->second.m_sUDTReads.empty() || !p->second.m_sUDTExcepts.empty()))
-      {
-         *readfds = p->second.m_sUDTReads;
-         for (set<SRTSOCKET>::const_iterator i = p->second.m_sUDTExcepts.begin(); i != p->second.m_sUDTExcepts.end(); ++ i)
-            readfds->insert(*i);
-         total += p->second.m_sUDTReads.size() + p->second.m_sUDTExcepts.size();
-      }
-      if ((NULL != writefds) && (!p->second.m_sUDTWrites.empty() || !p->second.m_sUDTExcepts.empty()))
-      {
-         *writefds = p->second.m_sUDTWrites;
-         for (set<SRTSOCKET>::const_iterator i = p->second.m_sUDTExcepts.begin(); i != p->second.m_sUDTExcepts.end(); ++ i)
-            writefds->insert(*i);
-         total += p->second.m_sUDTWrites.size() + p->second.m_sUDTExcepts.size();
-      }
-
-      if (lrfds || lwfds)
-      {
-         #ifdef LINUX
-         const int max_events = p->second.m_sLocals.size();
-         epoll_event ev[max_events];
-         int nfds = ::epoll_wait(p->second.m_iLocalID, ev, max_events, 0);
-
-         for (int i = 0; i < nfds; ++ i)
-         {
-            if ((NULL != lrfds) && (ev[i].events & EPOLLIN))
-            {
-               lrfds->insert(ev[i].data.fd);
-               ++ total;
-            }
-            if ((NULL != lwfds) && (ev[i].events & EPOLLOUT))
-            {
-               lwfds->insert(ev[i].data.fd);
-               ++ total;
-            }
-         }
-         #elif defined(BSD) || defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
-         struct timespec tmout = {0, 0};
-         const int max_events = p->second.m_sLocals.size();
-         struct kevent ke[max_events];
-
-         int nfds = kevent(p->second.m_iLocalID, NULL, 0, ke, max_events, &tmout);
-
-         for (int i = 0; i < nfds; ++ i)
-         {
-            if ((NULL != lrfds) && (ke[i].filter == EVFILT_READ))
-            {
-               lrfds->insert(ke[i].ident);
-               ++ total;
-            }
-            if ((NULL != lwfds) && (ke[i].filter == EVFILT_WRITE))
-            {
-               lwfds->insert(ke[i].ident);
-               ++ total;
-            }
-         }
-         #else
-         //currently "select" is used for all non-Linux platforms.
-         //faster approaches can be applied for specific systems in the future.
-
-         //"select" has a limitation on the number of sockets
-         int max_fd = 0;
-
-         fd_set readfds;
-         fd_set writefds;
-         FD_ZERO(&readfds);
-         FD_ZERO(&writefds);
-
-         for (set<SYSSOCKET>::const_iterator i = p->second.m_sLocals.begin(); i != p->second.m_sLocals.end(); ++ i)
-         {
-            if (lrfds)
-               FD_SET(*i, &readfds);
-            if (lwfds)
-               FD_SET(*i, &writefds);
-            if (*i > max_fd)
-              max_fd = *i;
-        }
-
-         timeval tv;
-         tv.tv_sec = 0;
-         tv.tv_usec = 0;
-         if (::select(max_fd + 1, &readfds, &writefds, NULL, &tv) > 0)
-         {
-            for (set<SYSSOCKET>::const_iterator i = p->second.m_sLocals.begin(); i != p->second.m_sLocals.end(); ++ i)
-            {
-               if (lrfds && FD_ISSET(*i, &readfds))
-               {
-                  lrfds->insert(*i);
-                  ++ total;
-               }
-               if (lwfds && FD_ISSET(*i, &writefds))
-               {
-                  lwfds->insert(*i);
-                  ++ total;
-               }
-            }
-         }
-         #endif
-      }
-
-      CGuard::leaveCS(m_EPollLock, "EPoll");
-
-      if (total > 0)
-         return total;
-
-      if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
-      {
-          HLOGC(mglog.Debug, log << "EID:" << eid << ": TIMEOUT.");
-          throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
-      }
-
-      CTimer::waitForEvent();
-   }
-
-   return 0;
-}
-
-const CEPollDesc& CEPoll::access(int eid)
-{
-    CGuard lg(m_EPollLock, "EPoll");
-
+    CGuard pg(m_EPollLock, "EPoll");
     map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
     if (p == m_mPolls.end())
+        throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
+    CEPollDesc& ed = p->second;
+
+    int32_t oflags = ed.flags();
+
+    if (flags == -1)
+        return oflags;
+
+    if (flags == 0)
     {
-        LOGC(mglog.Error, log << "EID:" << eid << " INVALID.");
-        throw CUDTException(MJ_NOTSUP, MN_EIDINVAL, 0);
+        ed.clr_flags(~int32_t());
+    }
+    else
+    {
+        ed.set_flags(flags);
     }
 
-    return p->second;
+    return oflags;
 }
 
-int CEPoll::swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut, bool report_by_exception)
+int CEPoll::uwait(const int eid, SRT_EPOLL_EVENT* fdsSet, int fdsSize, int64_t msTimeOut)
+{
+    // It is allowed to call this function witn fdsSize == 0
+    // and therefore also NULL fdsSet. This will then only report
+    // the number of ready sockets, just without information which.
+    if (fdsSize < 0 || (fdsSize > 0 && !fdsSet))
+        throw CUDTException(MJ_NOTSUP, MN_INVAL);
+
+    int64_t entertime = CTimer::getTime();
+
+    while (true)
+    {
+        {
+            CGuard pg(m_EPollLock, "EPoll");
+            map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
+            if (p == m_mPolls.end())
+                throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
+            CEPollDesc& ed = p->second;
+
+            if (!ed.flags(SRT_EPOLL_ENABLE_EMPTY) && ed.watch_empty())
+            {
+                // Empty EID is not allowed, report error.
+                throw CUDTException(MJ_NOTSUP, MN_EEMPTY);
+            }
+
+            if (ed.flags(SRT_EPOLL_ENABLE_OUTPUTCHECK) && (fdsSet == NULL || fdsSize == 0))
+            {
+                // Empty EID is not allowed, report error.
+                throw CUDTException(MJ_NOTSUP, MN_INVAL);
+            }
+
+            if (!ed.m_sLocals.empty())
+            {
+                // XXX Add error log
+                // uwait should not be used with EIDs subscribed to system sockets
+                throw CUDTException(MJ_NOTSUP, MN_INVAL);
+            }
+
+            int total = 0; // This is a list, so count it during iteration
+            CEPollDesc::enotice_t::iterator i = ed.enotice_begin();
+            while (i != ed.enotice_end())
+            {
+                int pos = total; // previous past-the-end position
+                ++total;
+
+                if (total > fdsSize)
+                    break;
+
+                fdsSet[pos] = *i;
+
+                ed.checkEdge(i++); // NOTE: potentially deletes `i`
+            }
+            if (total)
+                return total;
+        }
+
+        if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
+            break; // official wait does: throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
+
+        CTimer::waitForEvent();
+    }
+
+    return 0;
+}
+
+int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefds, int64_t msTimeOut, set<SYSSOCKET>* lrfds, set<SYSSOCKET>* lwfds)
+{
+    // if all fields is NULL and waiting time is infinite, then this would be a deadlock
+    if (!readfds && !writefds && !lrfds && !lwfds && (msTimeOut < 0))
+        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+
+    // Clear these sets in case the app forget to do it.
+    if (readfds) readfds->clear();
+    if (writefds) writefds->clear();
+    if (lrfds) lrfds->clear();
+    if (lwfds) lwfds->clear();
+
+    int total = 0;
+
+    int64_t entertime = CTimer::getTime();
+    while (true)
+    {
+        {
+            CGuard epollock(m_EPollLock, "EPoll");
+
+            map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
+            if (p == m_mPolls.end())
+            {
+         LOGC(mglog.Error, log << "EID:" << eid << " INVALID.");
+                throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
+            }
+
+            CEPollDesc& ed = p->second;
+
+            if (!ed.flags(SRT_EPOLL_ENABLE_EMPTY) && ed.watch_empty() && ed.m_sLocals.empty())
+            {
+                // Empty EID is not allowed, report error.
+                //throw CUDTException(MJ_NOTSUP, MN_INVAL);
+                LOGC(mglog.Error, log << "EID:" << eid << " no sockets to check, this would deadlock");
+                throw CUDTException(MJ_NOTSUP, MN_EEMPTY, 0);
+            }
+
+            if (ed.flags(SRT_EPOLL_ENABLE_OUTPUTCHECK))
+            {
+                // Empty report is not allowed, report error.
+                if (!ed.m_sLocals.empty() && (!lrfds || !lwfds))
+                    throw CUDTException(MJ_NOTSUP, MN_INVAL);
+
+                if (!ed.watch_empty() && (!readfds || !writefds))
+                    throw CUDTException(MJ_NOTSUP, MN_INVAL);
+            }
+
+            // Sockets with exceptions are returned to both read and write sets.
+            for (CEPollDesc::enotice_t::iterator it = ed.enotice_begin(), it_next = it; it != ed.enotice_end(); it = it_next)
+            {
+                ++it_next;
+                if (readfds && ((it->events & UDT_EPOLL_IN) || (it->events & UDT_EPOLL_ERR)))
+                {
+                    if (readfds->insert(it->fd).second)
+                        ++total;
+                }
+
+                if (writefds && ((it->events & UDT_EPOLL_OUT) || (it->events & UDT_EPOLL_ERR)))
+                {
+                    if (writefds->insert(it->fd).second)
+                        ++total;
+                }
+
+                ed.checkEdge(it); // NOTE: potentially erases 'it'.
+            }
+
+            if (lrfds || lwfds)
+            {
+#ifdef LINUX
+                const int max_events = ed.m_sLocals.size();
+                epoll_event ev[max_events];
+                int nfds = ::epoll_wait(ed.m_iLocalID, ev, max_events, 0);
+
+                for (int i = 0; i < nfds; ++ i)
+                {
+                    if ((NULL != lrfds) && (ev[i].events & EPOLLIN))
+                    {
+                        lrfds->insert(ev[i].data.fd);
+                        ++ total;
+                    }
+                    if ((NULL != lwfds) && (ev[i].events & EPOLLOUT))
+                    {
+                        lwfds->insert(ev[i].data.fd);
+                        ++ total;
+                    }
+                }
+#elif defined(BSD) || defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
+                struct timespec tmout = {0, 0};
+                const int max_events = ed.m_sLocals.size();
+                struct kevent ke[max_events];
+
+                int nfds = kevent(ed.m_iLocalID, NULL, 0, ke, max_events, &tmout);
+
+                for (int i = 0; i < nfds; ++ i)
+                {
+                    if ((NULL != lrfds) && (ke[i].filter == EVFILT_READ))
+                    {
+                        lrfds->insert(ke[i].ident);
+                        ++ total;
+                    }
+                    if ((NULL != lwfds) && (ke[i].filter == EVFILT_WRITE))
+                    {
+                        lwfds->insert(ke[i].ident);
+                        ++ total;
+                    }
+                }
+#else
+                //currently "select" is used for all non-Linux platforms.
+                //faster approaches can be applied for specific systems in the future.
+
+                //"select" has a limitation on the number of sockets
+                int max_fd = 0;
+
+                fd_set readfds;
+                fd_set writefds;
+                FD_ZERO(&readfds);
+                FD_ZERO(&writefds);
+
+                for (set<SYSSOCKET>::const_iterator i = ed.m_sLocals.begin(); i != ed.m_sLocals.end(); ++ i)
+                {
+                    if (lrfds)
+                        FD_SET(*i, &readfds);
+                    if (lwfds)
+                        FD_SET(*i, &writefds);
+                    if ((int)*i > max_fd)
+                        max_fd = *i;
+                }
+
+                timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 0;
+                if (::select(max_fd + 1, &readfds, &writefds, NULL, &tv) > 0)
+                {
+                    for (set<SYSSOCKET>::const_iterator i = ed.m_sLocals.begin(); i != ed.m_sLocals.end(); ++ i)
+                    {
+                        if (lrfds && FD_ISSET(*i, &readfds))
+                        {
+                            lrfds->insert(*i);
+                            ++ total;
+                        }
+                        if (lwfds && FD_ISSET(*i, &writefds))
+                        {
+                            lwfds->insert(*i);
+                            ++ total;
+                        }
+                    }
+                }
+#endif
+            }
+
+        } // END-LOCK: m_EPollLock
+
+        if (total > 0)
+            return total;
+
+        if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
+      {
+          HLOGC(mglog.Debug, log << "EID:" << eid << ": TIMEOUT.");
+            throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
+      }
+
+        CTimer::waitForEvent();
+    }
+
+    return 0;
+}
+
+int CEPoll::swait(CEPollDesc& d, map<SRTSOCKET, int>& st, int64_t msTimeOut, bool report_by_exception)
 {
     {
         CGuard lg(m_EPollLock, "EPoll");
-        if (d.empty() && msTimeOut < 0)
+        if (!d.flags(SRT_EPOLL_ENABLE_EMPTY) && d.watch_empty() && msTimeOut < 0)
         {
             // no socket is being monitored, this may be a deadlock
             LOGC(mglog.Error, log << "EID:" << d.m_iID << " no sockets to check, this would deadlock");
@@ -662,9 +631,7 @@ int CEPoll::swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut, bool
         }
     }
 
-    st.clear_state();
-
-    int total = 0;
+    st.clear();
 
     int64_t entertime = CTimer::getTime();
     while (true)
@@ -678,21 +645,39 @@ int CEPoll::swait(const CEPollDesc& d, SrtPollState& st, int64_t msTimeOut, bool
             // Here we only prevent the pollset be updated simultaneously
             // with unstable reading. 
             CGuard lg(m_EPollLock, "EPoll");
-            total = d.rd().size() + d.wr().size() + d.ex().size();
-            if (total > 0 || msTimeOut == 0)
+
+            if (!d.flags(SRT_EPOLL_ENABLE_EMPTY) && d.watch_empty())
+            {
+                // Empty EID is not allowed, report error.
+                throw CUDTException(MJ_NOTSUP, MN_EEMPTY);
+            }
+
+            if (!d.m_sLocals.empty())
+            {
+                // XXX Add error log
+                // uwait should not be used with EIDs subscribed to system sockets
+                throw CUDTException(MJ_NOTSUP, MN_INVAL);
+            }
+
+            bool empty = d.enotice_empty();
+
+            if (!empty || msTimeOut == 0)
             {
                 // If msTimeOut == 0, it means that we need the information
                 // immediately, we don't want to wait. Therefore in this case
                 // report also when none is ready.
-                st = d;
+                int total = 0; // This is a list, so count it during iteration
+                CEPollDesc::enotice_t::iterator i = d.enotice_begin();
+                while (i != d.enotice_end())
+                {
+                    ++total;
+                    st[i->fd] = i->events;
+                    d.checkEdge(i++); // NOTE: potentially deletes `i`
+                }
 
-                HLOGC(dlog.Debug, log << "EID " << d.m_iID << " rdy=" << total << ": [R]"
-                        << Printable(st.rd()) << " [W]"
-                        << Printable(st.wr()) << " [E]"
-                        << Printable(st.ex()) << " TRACKED: [R]"
-                        << Printable(d.m_sUDTSocksIn) << " [W]"
-                        << Printable(d.m_sUDTSocksOut) << " [E]"
-                        << Printable(d.m_sUDTSocksEx));
+                HLOGC(dlog.Debug, log << "EID " << d.m_iID << " rdy=" << total << ": "
+                        << DisplayEpollResults(st)
+                        << " TRACKED: " << d.DisplayEpollWatch());
                 return total;
             }
             // Don't report any updates because this check happens
@@ -736,71 +721,115 @@ int CEPoll::release(const int eid)
    return 0;
 }
 
-namespace
-{
-template <int event_type> inline
-void update_epoll_sets(int eid SRT_ATR_UNUSED, SRTSOCKET uid, CEPollDesc& d, int flags, bool enable)
-{
-    if (!IsSet(flags, event_type))
-        return;
 
-    set<SRTSOCKET>& watch = d.*(CEPollET<event_type>::subscribers());
-    set<SRTSOCKET>& result = d.*(CEPollET<event_type>::eventsinks());
+int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int events, const bool enable)
+{
+    // As event flags no longer contain only event types, check now.
+    if ((events & ~SRT_EPOLL_EVENTTYPES) != 0)
+    {
+        LOGC(dlog.Fatal, log << "epoll/update: IPE: 'events' parameter shall not contain special flags!");
+        return -1; // still, ignored.
+    }
+
+    vector<int> lost;
+
+    CGuard pg(m_EPollLock, "EPoll");
+    for (set<int>::iterator i = eids.begin(); i != eids.end(); ++ i)
+    {
+        map<int, CEPollDesc>::iterator p = m_mPolls.find(*i);
+        if (p == m_mPolls.end())
+        {
+            HLOGC(dlog.Note, log << "epoll/update: EID " << *i << " was deleted in the meantime");
+            // EID invalid, though still present in the socket's subscriber list
+            // (dangling in the socket). Postpone to fix the subscruption and continue.
+            lost.push_back(*i);
+            continue;
+        }
+
+        CEPollDesc& ed = p->second;
+
+        // Check if this EID is subscribed for this socket.
+        CEPollDesc::Wait* pwait = ed.watch_find(uid);
+        if (!pwait)
+        {
+            // As this is mapped in the socket's data, it should be impossible.
+            continue;
+        }
+
+        // compute new states
+
+        // New state to be set into the permanent state
+        const int newstate = enable ? pwait->state | events // SET event bits if enable
+                              : pwait->state & (~events); // CLEAR event bits
+
+        // compute states changes!
+        int changes = pwait->state ^ newstate; // oldState XOR newState
+        if (!changes)
+            continue; // no changes!
+        // assign new state
+        pwait->state = newstate;
+        // filter change relating what is watching
+        changes &= pwait->watch;
+        if (!changes)
+            continue; // no change watching
+        // set events changes!
+
+        // This function will update the notice object associated with
+        // the given events, that is:
+        // - if enable, it will set event flags, possibly in a new notice object
+        // - if !enable, it will clear event flags, possibly remove notice if resulted in 0
+        ed.updateEventNotice(*pwait, uid, events, enable);
+    }
+
+    for (vector<int>::iterator i = lost.begin(); i != lost.end(); ++ i)
+        eids.erase(*i);
+
+    return 0;
+}
+
+// Debug use only.
 #if ENABLE_HEAVY_LOGGING
-    const char* px = CEPollET<event_type>::name();
+static void PrintEpollEvent(ostream& os, int events)
+{
+    static pair<int, string> namemap [] = {
+        make_pair(SRT_EPOLL_IN, "[R]"),
+        make_pair(SRT_EPOLL_OUT, "[W]"),
+        make_pair(SRT_EPOLL_ERR, "[E]")
+    };
+
+    int N = Size(namemap);
+
+    for (int i = 0; i < N; ++i)
+    {
+        if (events & namemap[i].first)
+            os << namemap[i].second;
+    }
+}
+
+string DisplayEpollResults(const std::map<SRTSOCKET, int>& sockset)
+{
+    typedef map<SRTSOCKET, int> fmap_t;
+    ostringstream os;
+    for (fmap_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
+    {
+        os << "@" << i->first << " ";
+        PrintEpollEvent(os, i->second);
+    }
+
+    return os.str();
+}
+
+string CEPollDesc::DisplayEpollWatch()
+{
+    ostringstream os;
+    for (ewatch_t::const_iterator i = m_USockWatchState.begin(); i != m_USockWatchState.end(); ++i)
+    {
+        os << "@" << i->first << " ";
+        PrintEpollEvent(os, i->second.watch);
+    }
+
+    return os.str();
+}
+
 #endif
 
-    if (enable && watch.count(uid))
-    {
-        result.insert(uid);
-        goto Updated;
-    }
-
-    if (!enable)
-    {
-        result.erase(uid);
-        goto Updated;
-    }
-
-#if ENABLE_HEAVY_LOGGING
-    if (false)
-    {
-Updated: ;
-        LOGC(dlog.Debug, log << "epoll/update: EID " << eid << " @" << uid
-                << " [" << (enable?"+":"-") << px << "] TRACKED:"
-                << Printable(watch));
-    }
-#else
-Updated: ;
-#endif
-}
-}  // namespace
-
-int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, int events, bool enable)
-{
-   CGuard pg(m_EPollLock, "EPoll");
-
-   map<int, CEPollDesc>::iterator p;
-
-   vector<int> lost;
-   for (set<int>::iterator i = eids.begin(); i != eids.end(); ++ i)
-   {
-      p = m_mPolls.find(*i);
-      if (p == m_mPolls.end())
-      {
-         LOGC(dlog.Error, log << "epoll/update: EID " << *i << " was deleted in the meantime");
-         lost.push_back(*i);
-      }
-      else
-      {
-          update_epoll_sets<SRT_EPOLL_IN >(*i, uid, p->second, events, enable);
-          update_epoll_sets<SRT_EPOLL_OUT>(*i, uid, p->second, events, enable);
-          update_epoll_sets<SRT_EPOLL_ERR>(*i, uid, p->second, events, enable);
-      }
-   }
-
-   for (vector<int>::iterator i = lost.begin(); i != lost.end(); ++ i)
-      eids.erase(*i);
-
-   return 0;
-}
