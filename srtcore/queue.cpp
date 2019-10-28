@@ -598,8 +598,8 @@ void *CSndQueue::worker(void *param)
         // it is time to send the next pkt
         sockaddr *addr;
         CPacket   pkt;
-            sockaddr_any source_addr;
-            if (self->m_pSndUList->pop(Ref(addr), Ref(pkt), Ref(source_addr)) < 0)
+        sockaddr_any source_addr;
+        if (self->m_pSndUList->pop(Ref(addr), Ref(pkt), Ref(source_addr)) < 0)
         {
             continue;
 
@@ -617,7 +617,7 @@ void *CSndQueue::worker(void *param)
             HLOGC(dlog.Debug,
                   log << self->CONID() << "chn:SENDING SIZE " << pkt.getLength() << " SEQ: " << pkt.getSeqNo());
         }
-            self->m_pChannel->sendto(addr, pkt, source_addr);
+        self->m_pChannel->sendto(addr, pkt, source_addr);
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         self->m_WorkerStats.lSendTo++;
