@@ -72,7 +72,7 @@ class CUDTSocket
 public:
    CUDTSocket():
        m_Status(SRTS_INIT),
-       m_TimeStamp(0),
+       m_ClosureTimeStamp(0),
        m_SocketID(0),
        m_ListenSocket(0),
        m_PeerID(0),
@@ -94,7 +94,12 @@ public:
 
    SRT_SOCKSTATUS m_Status;                  //< current socket state
 
-   uint64_t m_TimeStamp;                     //< time when the socket is closed
+   /// Time when the socket is closed.
+   /// When the socket is closed, it is not removed immediately from the list
+   /// of sockets in order to prevent other methods from accessing invalid address.
+   /// A timer is started and the socket will be removed after approximately
+   /// 1 second (see CUDTUnited::checkBrokenSockets()).
+   uint64_t m_ClosureTimeStamp;
 
    sockaddr_any m_SelfAddr;                    //< local address of the socket
    sockaddr_any m_PeerAddr;                    //< peer address of the socket
