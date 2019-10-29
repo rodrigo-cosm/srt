@@ -75,7 +75,7 @@ extern LogConfig srt_logger_config;
 
 CUDTSocket::CUDTSocket():
 m_Status(SRTS_INIT),
-m_TimeStamp(0),
+m_ClosureTimeStamp(0),
 m_iIPversion(0),
 m_pSelfAddr(NULL),
 m_pPeerAddr(NULL),
@@ -361,7 +361,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr* peer, CHan
       {
          // last connection from the "peer" address has been broken
          ns->m_Status = SRTS_CLOSED;
-         ns->m_TimeStamp = CTimer::getTime();
+         ns->m_ClosureTimeStamp = CTimer::getTime();
 
          CGuard::enterCS(ls->m_AcceptLock);
          ls->m_pQueuedSockets->erase(ns->m_SocketID);
@@ -530,7 +530,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr* peer, CHan
       SRTSOCKET id = ns->m_SocketID;
       ns->m_pUDT->close();
       ns->m_Status = SRTS_CLOSED;
-      ns->m_TimeStamp = CTimer::getTime();
+      ns->m_ClosureTimeStamp = CTimer::getTime();
       // The mapped socket should be now unmapped to preserve the situation that
       // was in the original UDT code.
       // In SRT additionally the acceptAndRespond() function (it was called probably
@@ -963,7 +963,7 @@ int CUDTUnited::close(const SRTSOCKET u)
       if (s->m_pUDT->m_bBroken)
          return 0;
 
-      s->m_TimeStamp = CTimer::getTime();
+      s->m_ClosureTimeStamp = CTimer::getTime();
       s->m_pUDT->m_bBroken = true;
 
       // Change towards original UDT: 
@@ -1012,7 +1012,7 @@ int CUDTUnited::close(const SRTSOCKET u)
        // in order to prevent other methods from accessing invalid address
        // a timer is started and the socket will be removed after approximately
        // 1 second
-       s->m_TimeStamp = CTimer::getTime();
+       s->m_ClosureTimeStamp = CTimer::getTime();
 
        m_Sockets.erase(s->m_SocketID);
        m_ClosedSockets[s->m_SocketID] = s;
@@ -1514,7 +1514,7 @@ void CUDTUnited::checkBrokenSockets()
       {
          if (s->m_Status == SRTS_LISTENING)
          {
-            uint64_t elapsed = CTimer::getTime() - s->m_TimeStamp;
+            uint64_t elapsed = CTimer::getTime() - s->m_ClosureTimeStamp;
             // for a listening socket, it should wait an extra 3 seconds
             // in case a client is connecting
             if (elapsed < 3000000) // XXX MAKE A SYMBOLIC CONSTANT HERE!
@@ -1544,7 +1544,7 @@ void CUDTUnited::checkBrokenSockets()
 
          //close broken connections and start removal timer
          s->m_Status = SRTS_CLOSED;
-         s->m_TimeStamp = CTimer::getTime();
+         s->m_ClosureTimeStamp = CTimer::getTime();
          tbc.push_back(i->first);
          m_ClosedSockets[i->first] = s;
 
@@ -1578,13 +1578,13 @@ void CUDTUnited::checkBrokenSockets()
          {
             j->second->m_pUDT->m_ullLingerExpiration = 0;
             j->second->m_pUDT->m_bClosing = true;
-            j->second->m_TimeStamp = CTimer::getTime();
+            j->second->m_ClosureTimeStamp = CTimer::getTime();
          }
       }
 
       // timeout 1 second to destroy a socket AND it has been removed from
       // RcvUList
-      if ((CTimer::getTime() - j->second->m_TimeStamp > 1000000)
+      if ((CTimer::getTime() - j->second->m_ClosureTimeStamp > 1000000)
          && ((!j->second->m_pUDT->m_pRNode)
             || !j->second->m_pUDT->m_pRNode->m_bOnList))
       {
@@ -1624,7 +1624,7 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
       {
          m_Sockets[*q]->m_pUDT->m_bBroken = true;
          m_Sockets[*q]->m_pUDT->close();
-         m_Sockets[*q]->m_TimeStamp = CTimer::getTime();
+         m_Sockets[*q]->m_ClosureTimeStamp = CTimer::getTime();
          m_Sockets[*q]->m_Status = SRTS_CLOSED;
          m_ClosedSockets[*q] = m_Sockets[*q];
          m_Sockets.erase(*q);
@@ -1930,7 +1930,7 @@ void* CUDTUnited::garbageCollect(void* p)
       i->second->m_pUDT->m_bBroken = true;
       i->second->m_pUDT->close();
       i->second->m_Status = SRTS_CLOSED;
-      i->second->m_TimeStamp = CTimer::getTime();
+      i->second->m_ClosureTimeStamp = CTimer::getTime();
       self->m_ClosedSockets[i->first] = i->second;
 
       // remove from listener's queue
@@ -1953,7 +1953,7 @@ void* CUDTUnited::garbageCollect(void* p)
    for (map<SRTSOCKET, CUDTSocket*>::iterator j = self->m_ClosedSockets.begin();
       j != self->m_ClosedSockets.end(); ++ j)
    {
-      j->second->m_TimeStamp = 0;
+      j->second->m_ClosureTimeStamp = 0;
    }
    CGuard::leaveCS(self->m_GlobControlLock, "GlobControl");
 
@@ -2002,7 +2002,7 @@ SRTSOCKET CUDT::socket(int af, int, int)
       s_UDTUnited.setError(new CUDTException(e));
       return INVALID_SOCK;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return INVALID_SOCK;
@@ -2028,7 +2028,7 @@ int CUDT::bind(SRTSOCKET u, const sockaddr* name, int namelen)
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2054,7 +2054,7 @@ int CUDT::bind(SRTSOCKET u, UDPSOCKET udpsock)
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2079,7 +2079,7 @@ int CUDT::listen(SRTSOCKET u, int backlog)
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2125,7 +2125,7 @@ int CUDT::connect(
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2256,7 +2256,7 @@ int CUDT::send(SRTSOCKET u, const char* buf, int len, int)
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2305,7 +2305,7 @@ int CUDT::sendmsg(
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2332,7 +2332,7 @@ int CUDT::sendmsg2(
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2400,7 +2400,7 @@ int64_t CUDT::sendfile(
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2458,7 +2458,7 @@ int CUDT::select(
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2494,7 +2494,7 @@ int CUDT::selectEx(
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (bad_alloc)
+   catch (bad_alloc&)
    {
       s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return ERROR;
@@ -2688,12 +2688,12 @@ int CUDT::epoll_uwait(
    {
       return s_UDTUnited.epoll_uwait(eid, fdsSet, fdsSize, msTimeOut);
    }
-   catch (CUDTException e)
+   catch (const CUDTException& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (std::exception& ee)
+   catch (const std::exception& ee)
    {
       LOGC(mglog.Fatal, log << "epoll_uwait: UNEXPECTED EXCEPTION: "
          << typeid(ee).name() << ": " << ee.what());
@@ -2710,12 +2710,12 @@ int32_t CUDT::epoll_set(
    {
       return s_UDTUnited.epoll_set(eid, flags);
    }
-   catch (CUDTException e)
+   catch (const CUDTException& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;
    }
-   catch (std::exception& ee)
+   catch (const std::exception& ee)
    {
       LOGC(mglog.Fatal, log << "epoll_set: UNEXPECTED EXCEPTION: "
          << typeid(ee).name() << ": " << ee.what());
