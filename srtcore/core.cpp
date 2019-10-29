@@ -6893,7 +6893,7 @@ void CUDT::initSynch()
     CGuard::createMutex(m_RecvAckLock);
     CGuard::createMutex(m_RcvBufferLock);
     CGuard::createMutex(m_ConnectionLock);
-    pthread_mutex_init(&m_StatsLock, NULL);
+    CGuard::createMutex(m_StatsLock);
 
     memset(&m_RcvTsbPdThread, 0, sizeof m_RcvTsbPdThread);
     CGuard::createCond(m_RcvTsbPdCond);
