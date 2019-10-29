@@ -7354,8 +7354,8 @@ void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
 
     if (m_bSynSending)
     {
-        CGuard lk(m_SendBlockLock);
-        pthread_cond_signal(&m_SendBlockCond);
+        CCondDelegate cc(m_SendBlockCond, m_SendBlockLock, CCondDelegate::NOLOCK, "SendBlock", "SendBlock");
+        cc.lock_signal();
     }
 
     const int64_t currtime = CTimer::getTime();
