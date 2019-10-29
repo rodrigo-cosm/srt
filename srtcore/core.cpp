@@ -130,8 +130,7 @@ const int       UDT::ERROR        = CUDT::ERROR;
 
 // SRT Version constants
 #define SRT_VERSION_UNK 0
-#define SRT_VERSION_MAJ1 0x010000 /* Version 1 major */
-
+#define SRT_VERSION_MAJ1 0x010000           /* Version 1 major */
 #define SRT_VERSION_MAJ(v) (0xFF0000 & (v)) /* Major number ensuring backward compatibility */
 #define SRT_VERSION_MIN(v) (0x00FF00 & (v))
 #define SRT_VERSION_PCH(v) (0x0000FF & (v))
@@ -230,7 +229,7 @@ CUDT::CUDT()
     m_bSynRecving     = true;
     m_iFlightFlagSize = 25600;
     m_iSndBufSize     = 8192;
-    m_iRcvBufSize = 8192; // Rcv buffer MUST NOT be bigger than Flight Flag size
+    m_iRcvBufSize     = 8192; // Rcv buffer MUST NOT be bigger than Flight Flag size
 
     // Linger: LIVE mode defaults, please refer to `SRTO_TRANSTYPE` option
     // for other modes.
@@ -3953,8 +3952,8 @@ EConnectStatus CUDT::processRendezvous(
         HLOGC(mglog.Debug,
               log << "processRendezvous: rsp=AGREEMENT, reporting ACCEPT and sending just this one, REQ-TIME HIGH ("
                   << now << ").");
-        m_pSndQueue->sendto(serv_addr, rpkt, m_SourceAddr);
 
+        m_pSndQueue->sendto(serv_addr, rpkt, m_SourceAddr);
         return CONN_ACCEPT;
     }
 
@@ -4757,7 +4756,7 @@ void* CUDT::tsbpd(void* param)
         uint64_t tsbpdtime       = 0;
         bool     rxready         = false;
 
-        CGuard::enterCS(self->m_AckLock, "ack");
+        CGuard::enterCS(self->m_RcvBufferLock, "RecvBuffer");
 
 #ifdef SRT_ENABLE_RCVBUFSZ_MAVG
         self->m_pRcvBuffer->updRcvAvgDataSize(CTimer::getTime());
@@ -4766,7 +4765,7 @@ void* CUDT::tsbpd(void* param)
         if (self->m_bTLPktDrop)
         {
             int32_t skiptoseqno = -1;
-            bool passack = true; // Get next packet to wait for even if not acked
+            bool    passack     = true; // Get next packet to wait for even if not acked
 
             rxready = self->m_pRcvBuffer->getRcvFirstMsg(
                 Ref(tsbpdtime), Ref(passack), Ref(skiptoseqno), Ref(current_pkt_seq));
@@ -4805,7 +4804,8 @@ void* CUDT::tsbpd(void* param)
                     self->m_stats.traceRcvBytesDrop += seqlen * avgpayloadsz;
                     CGuard::leaveCS(self->m_StatsLock);
 
-                    self->unlose(self->m_iRcvLastSkipAck, CSeqNo::decseq(skiptoseqno)); // remove(from,to-inclusive)
+                    self->dropFromLossLists(self->m_iRcvLastSkipAck,
+                                            CSeqNo::decseq(skiptoseqno)); // remove(from,to-inclusive)
                     self->m_pRcvBuffer->skipData(seqlen);
 
                     self->m_iRcvLastSkipAck = skiptoseqno;
@@ -4838,7 +4838,7 @@ void* CUDT::tsbpd(void* param)
         {
             rxready = self->m_pRcvBuffer->isRcvDataReady(Ref(tsbpdtime), Ref(current_pkt_seq));
         }
-        CGuard::leaveCS(self->m_AckLock, "ack");
+        CGuard::leaveCS(self->m_RcvBufferLock, "RecvBuffer");
 
         if (rxready)
         {
@@ -5125,7 +5125,6 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
                   << " sourceIP=" << SockaddrToString(m_SourceAddr));
     }
 #endif
-
     // NOTE: BLOCK THIS instruction in order to cause the final
     // handshake to be missed and cause the problem solved in PR #417.
     // When missed this message, the caller should not accept packets
@@ -5454,10 +5453,11 @@ bool CUDT::close()
     CGuard sendguard(m_SendLock, "send");
     CGuard recvguard(m_RecvLock, "recv");
 
-    CGuard::enterCS(m_AckLock, "ack");
-    /* Release CCryptoControl internals (crypto context) under AckLock in case decrypt is in progress */
+    // Locking m_RcvBufferLock to protect calling to m_pCryptoControl->decrypt(Ref(packet))
+    // from the processData(...) function while resetting Crypto Control.
+    CGuard::enterCS(m_RcvBufferLock, "RcvBuffer");
     m_pCryptoControl.reset();
-    CGuard::leaveCS(m_AckLock, "ack");
+    CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
 
     m_lSrtVersion            = SRT_DEF_VERSION;
     m_lPeerSrtVersion        = SRT_VERSION_UNK;
@@ -5608,7 +5608,6 @@ int CUDT::receiveBuffer(char* data, int len)
 
     CCondDelegate rcond(m_RecvDataCond, recvguard, "RecvDataCond");
     CCondDelegate tscond(m_RcvTsbPdCond, recvguard, "RcvTsbPdCond");
-
     if (!m_pRcvBuffer->isRcvDataReady())
     {
         if (!m_bSynRecving)
@@ -5710,7 +5709,7 @@ void CUDT::checkNeedDrop(ref_t<bool> bCongestion)
     if (threshold_ms && timespan_ms > threshold_ms)
     {
         // protect packet retransmission
-        CGuard::enterCS(m_AckLock, "ack");
+        CGuard::enterCS(m_RecvAckLock, "RecvAck");
         int dbytes;
         int dpkts = m_pSndBuffer->dropLateData(dbytes, CTimer::getTime() - (threshold_ms * 1000));
         if (dpkts > 0)
@@ -5745,7 +5744,7 @@ void CUDT::checkNeedDrop(ref_t<bool> bCongestion)
                       << dpkts << " pkts," << dbytes << " bytes," << timespan_ms << " ms");
         }
         *bCongestion = true;
-        CGuard::leaveCS(m_AckLock, "ack");
+        CGuard::leaveCS(m_RecvAckLock, "RecvAck");
     }
     else if (timespan_ms > (m_iPeerTsbPdDelay_ms / 2))
     {
@@ -5844,11 +5843,14 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         // delay the EXP timer to avoid mis-fired timeout
         uint64_t currtime_tk;
         CTimer::rdtsc(currtime_tk);
-        // (fix keepalive) m_ullLastRspTime_tk = currtime_tk;
-        m_ullLastRspAckTime_tk = currtime_tk;
-        m_iReXmitCount         = 1;
+
+        CGuard ack_lock(m_RecvAckLock);
+        m_ullLastRspAckTime_tk = currtime_tk; // (fix keepalive)
+        m_iReXmitCount         = 1; // can be modified in checkRexmitTimer and processCtrlAck (receiver's thread)
     }
 
+    // checkNeedDrop(...) may lock m_RecvAckLock
+    // to modify m_pSndBuffer and m_pSndLossList
     checkNeedDrop(Ref(bCongestion));
 
     int minlen = 1; // Minimum sender buffer space required for STREAM API
@@ -5865,38 +5867,35 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         // XXX Check if this needs to be removed, or put to an 'else' condition for m_bTLPktDrop.
         if (!m_bSynSending)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
-        else
+
         {
+            // wait here during a blocking sending
+            CGuard        sendblock_lock(m_SendBlockLock, "sendblock");
+            CCondDelegate sendcond(m_SendBlockCond, sendblock_lock, "SendBlockCond");
+
+            if (m_iSndTimeOut < 0)
             {
-                // wait here during a blocking sending
-                CGuard        sendblock_lock(m_SendBlockLock, "sendblock");
-                CCondDelegate sendcond(m_SendBlockCond, sendblock_lock, "SendBlockCond");
-
-                if (m_iSndTimeOut < 0)
-                {
-                    while (stillConnected() && sndBuffersLeft() < minlen && m_bPeerHealth)
-                        sendcond.wait();
-                }
-                else
-                {
-                    uint64_t exptime = CTimer::getTime() + m_iSndTimeOut * uint64_t(1000);
-
-                    while (stillConnected() && sndBuffersLeft() < minlen && m_bPeerHealth &&
-                           exptime > CTimer::getTime())
-                        sendcond.wait_until(exptime);
-                }
+                while (stillConnected() && sndBuffersLeft() < minlen && m_bPeerHealth)
+                    sendcond.wait();
             }
-
-            // check the connection status
-            if (m_bBroken || m_bClosing)
-                throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
-            else if (!m_bConnected)
-                throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
-            else if (!m_bPeerHealth)
+            else
             {
-                m_bPeerHealth = true;
-                throw CUDTException(MJ_PEERERROR);
+                const uint64_t exptime = CTimer::getTime() + m_iSndTimeOut * uint64_t(1000);
+
+                while (stillConnected() && sndBuffersLeft() < minlen && m_bPeerHealth && exptime > CTimer::getTime())
+                    sendcond.wait_until(exptime);
             }
+        }
+
+        // check the connection status
+        if (m_bBroken || m_bClosing)
+            throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
+        else if (!m_bConnected)
+            throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
+        else if (!m_bPeerHealth)
+        {
+            m_bPeerHealth = true;
+            throw CUDTException(MJ_PEERERROR);
         }
 
         /*
@@ -5932,6 +5931,7 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         }
     }
 
+    // If the sender's buffer is empty,
     // record total time used for sending
     if (m_pSndBuffer->getCurrBufSize() == 0)
     {
@@ -5950,18 +5950,23 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         size = min(len, sndBuffersLeft() * m_iMaxSRTPayloadSize);
     }
 
-    // insert the user buffer into the sending list
-    m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
-    HLOGC(dlog.Debug, log << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size);
+    {
+        CGuard recvAckLock(m_RecvAckLock);
+        // insert the user buffer into the sending list
+        // This should be protected by a mutex. m_SendLock does this.
+        m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
+        HLOGC(dlog.Debug, log << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size);
+
+        if (sndBuffersLeft() < 1) // XXX Not sure if it should test if any space in the buffer, or as requried.
+        {
+            // write is not available any more
+            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, false);
+        }
+    }
 
     // insert this socket to the snd list if it is not on the list yet
+    // m_pSndUList->pop may lock CSndUList::m_ListLock and then m_RecvAckLock
     m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion));
-
-    if (sndBuffersLeft() < 1) // XXX Not sure if it should test if any space in the buffer, or as requried.
-    {
-        // write is not available any more
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, false);
-    }
 
 #ifdef SRT_ENABLE_ECN
     if (bCongestion)
@@ -6310,22 +6315,25 @@ int64_t CUDT::sendfile(fstream& ifs, int64_t& offset, int64_t size, int block)
             CGuard::leaveCS(m_StatsLock);
         }
 
-        int64_t sentsize = m_pSndBuffer->addBufferFromFile(ifs, unitsize);
-
-        if (sentsize > 0)
         {
-            tosend -= sentsize;
-            offset += sentsize;
+            CGuard        recvAckLock(m_RecvAckLock);
+            const int64_t sentsize = m_pSndBuffer->addBufferFromFile(ifs, unitsize);
+
+            if (sentsize > 0)
+            {
+                tosend -= sentsize;
+                offset += sentsize;
+            }
+
+            if (sndBuffersLeft() <= 0)
+            {
+                // write is not available any more
+                s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, false);
+            }
         }
 
         // insert this socket to snd list if it is not on the list yet
         m_pSndQueue->m_pSndUList->update(this, CSndUList::DONT_RESCHEDULE);
-    }
-
-    if (sndBuffersLeft() <= 0)
-    {
-        // write is not available any more
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, false);
     }
 
     return size - tosend;
@@ -6882,7 +6890,8 @@ void CUDT::initSynch()
     CGuard::createMutex(m_SendLock);
     CGuard::createMutex(m_RecvLock);
     CGuard::createMutex(m_RcvLossLock);
-    CGuard::createMutex(m_AckLock);
+    CGuard::createMutex(m_RecvAckLock);
+    CGuard::createMutex(m_RcvBufferLock);
     CGuard::createMutex(m_ConnectionLock);
     pthread_mutex_init(&m_StatsLock, NULL);
 
@@ -6899,7 +6908,8 @@ void CUDT::destroySynch()
     CGuard::releaseMutex(m_SendLock);
     CGuard::releaseMutex(m_RecvLock);
     CGuard::releaseMutex(m_RcvLossLock);
-    CGuard::releaseMutex(m_AckLock);
+    CGuard::releaseMutex(m_RecvAckLock);
+    CGuard::releaseMutex(m_RcvBufferLock);
     CGuard::releaseMutex(m_ConnectionLock);
     CGuard::releaseMutex(m_StatsLock);
     CGuard::releaseCond(m_RcvTsbPdCond);
@@ -6963,7 +6973,7 @@ static void DebugAck(string hdr, int prev, int ack)
 static inline void DebugAck(string, int, int) {}
 #endif
 
-void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size)
+void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, int size)
 {
     CPacket  ctrlpkt;
     uint64_t currtime_tk;
@@ -7016,7 +7026,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
 
         // There are new received packets to acknowledge, update related information.
         /* tsbpd thread may also call ackData when skipping packet so protect code */
-        CGuard::enterCS(m_AckLock, "ack");
+        CGuard::enterCS(m_RcvBufferLock, "RcvBuffer");
 
         // IF ack > m_iRcvLastAck
         if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
@@ -7035,7 +7045,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
             // Preventing to call this on zero size makes sense, if it prevents false alerts.
             if (acksize > 0)
                 m_pRcvBuffer->ackData(acksize);
-            CGuard::leaveCS(m_AckLock);
+            CGuard::leaveCS(m_RcvBufferLock);
 
             // If TSBPD is enabled, then INSTEAD OF signaling m_RecvDataCond,
             // signal m_RcvTsbPdCond. This will kick in the tsbpd thread, which
@@ -7065,21 +7075,21 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
                 s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_IN, true);
                 CTimer::triggerEvent();
             }
-            CGuard::enterCS(m_AckLock);
+            CGuard::enterCS(m_RcvBufferLock);
         }
         else if (ack == m_iRcvLastAck)
         {
             // If the ACK was just sent already AND elapsed time did not exceed RTT,
             if ((currtime_tk - m_ullLastAckTime_tk) < ((m_iRTT + 4 * m_iRTTVar) * m_ullCPUFrequency))
             {
-                CGuard::leaveCS(m_AckLock, "ack");
+                CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
                 break;
             }
         }
         else
         {
             // Not possible (m_iRcvCurrSeqNo+1 < m_iRcvLastAck ?)
-            CGuard::leaveCS(m_AckLock, "ack");
+            CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
             break;
         }
 
@@ -7150,7 +7160,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
             ++m_stats.sentACKTotal;
             CGuard::leaveCS(m_StatsLock);
         }
-        CGuard::leaveCS(m_AckLock, "ack");
+        CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
         break;
     }
 
@@ -7275,6 +7285,232 @@ void CUDT::sendCtrl(UDTMessageType pkttype, void* lparam, void* rparam, int size
         m_ullLastSndTime_tk = currtime_tk;
 }
 
+void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
+{
+    // Update sender's loss list and acknowledge packets in the sender's buffer
+    {
+        // m_RecvAckLock protects sender's loss list and epoll
+        CGuard ack_lock(m_RecvAckLock);
+
+        const int offset = CSeqNo::seqoff(m_iSndLastDataAck, ackdata_seqno);
+        // IF distance between m_iSndLastDataAck and ack is nonempty...
+        if (offset <= 0)
+            return;
+
+        // update sending variables
+        m_iSndLastDataAck = ackdata_seqno;
+
+        // remove any loss that predates 'ack' (not to be considered loss anymore)
+        m_pSndLossList->remove(CSeqNo::decseq(m_iSndLastDataAck));
+
+        // acknowledge the sending buffer (remove data that predate 'ack')
+        m_pSndBuffer->ackData(offset);
+
+        // acknowledde any waiting epolls to write
+        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, true);
+    }
+
+    // insert this socket to snd list if it is not on the list yet
+    m_pSndQueue->m_pSndUList->update(this, CSndUList::DONT_RESCHEDULE);
+
+    if (m_bSynSending)
+    {
+        CGuard lk(m_SendBlockLock);
+        pthread_cond_signal(&m_SendBlockCond);
+    }
+
+    const int64_t currtime = CTimer::getTime();
+    // record total time used for sending
+    CGuard::enterCS(m_StatsLock);
+    m_stats.sndDuration += currtime - m_stats.sndDurationCounter;
+    m_stats.m_sndDurationTotal += currtime - m_stats.sndDurationCounter;
+    m_stats.sndDurationCounter = currtime;
+    CGuard::leaveCS(m_StatsLock);
+}
+
+void CUDT::processCtrlAck(const CPacket& ctrlpkt, const uint64_t currtime_tk)
+{
+    const int32_t* ackdata       = (const int32_t*)ctrlpkt.m_pcData;
+    const int32_t  ackdata_seqno = ackdata[ACKD_RCVLASTACK];
+
+    const bool isLiteAck = ctrlpkt.getLength() == (size_t)SEND_LITE_ACK;
+    HLOGC(mglog.Debug,
+          log << CONID() << "ACK covers: " << m_iSndLastDataAck << " - " << ackdata_seqno << " [ACK=" << m_iSndLastAck
+              << "]" << (isLiteAck ? "[LITE]" : "[FULL]"));
+
+    updateSndLossListOnACK(ackdata_seqno);
+
+    // Process a lite ACK
+    if (isLiteAck)
+    {
+        if (CSeqNo::seqcmp(ackdata_seqno, m_iSndLastAck) >= 0)
+        {
+            CGuard ack_lock(m_RecvAckLock);
+            m_iFlowWindowSize -= CSeqNo::seqoff(m_iSndLastAck, ackdata_seqno);
+            m_iSndLastAck = ackdata_seqno;
+
+            // TODO: m_ullLastRspAckTime_tk should be protected with m_RecvAckLock
+            // because the sendmsg2 may want to change it at the same time.
+            m_ullLastRspAckTime_tk = currtime_tk;
+            m_iReXmitCount         = 1; // Reset re-transmit count since last ACK
+        }
+
+        return;
+    }
+
+    // Decide to send ACKACK or not
+    {
+        // Sequence number of the ACK packet
+        const int32_t ack_seqno = ctrlpkt.getAckSeqNo();
+
+        // Send ACK acknowledgement (UMSG_ACKACK).
+        // There can be less ACKACK packets in the stream, than the number of ACK packets.
+        // Only send ACKACK every syn interval or if ACK packet with the sequence number
+        // already acknowledged (with ACKACK) has come again, which probably means ACKACK was lost.
+        const uint64_t now = CTimer::getTime();
+        if ((now - m_ullSndLastAck2Time > (uint64_t)COMM_SYN_INTERVAL_US) || (ack_seqno == m_iSndLastAck2))
+        {
+            sendCtrl(UMSG_ACKACK, &ack_seqno);
+            m_iSndLastAck2       = ack_seqno;
+            m_ullSndLastAck2Time = now;
+        }
+    }
+
+    //
+    // Begin of the new code with TLPKTDROP.
+    //
+
+    // Protect packet retransmission
+    CGuard::enterCS(m_RecvAckLock, "RecvAck");
+
+    // Check the validation of the ack
+    if (CSeqNo::seqcmp(ackdata_seqno, CSeqNo::incseq(m_iSndCurrSeqNo)) > 0)
+    {
+        CGuard::leaveCS(m_RecvAckLock, "RecvAck");
+        // this should not happen: attack or bug
+        LOGC(glog.Error,
+             log << CONID() << "ATTACK/IPE: incoming ack seq " << ackdata_seqno << " exceeds current "
+                 << m_iSndCurrSeqNo << " by " << (CSeqNo::seqoff(m_iSndCurrSeqNo, ackdata_seqno) - 1) << "!");
+        m_bBroken        = true;
+        m_iBrokenCounter = 0;
+        return;
+    }
+
+    if (CSeqNo::seqcmp(ackdata_seqno, m_iSndLastAck) >= 0)
+    {
+        // Update Flow Window Size, must update before and together with m_iSndLastAck
+        m_iFlowWindowSize      = ackdata[ACKD_BUFFERLEFT];
+        m_iSndLastAck          = ackdata_seqno;
+        m_ullLastRspAckTime_tk = currtime_tk; // Should be protected with m_RecvAckLock
+        m_iReXmitCount         = 1;           // Reset re-transmit count since last ACK
+    }
+
+    /*
+     * We must not ignore full ack received by peer
+     * if data has been artificially acked by late packet drop.
+     * Therefore, a distinct ack state is used for received Ack (iSndLastFullAck)
+     * and ack position in send buffer (m_iSndLastDataAck).
+     * Otherwise, when severe congestion causing packet drops (and m_iSndLastDataAck update)
+     * occures, we drop received acks (as duplicates) and do not update stats like RTT,
+     * which may go crazy and stay there, preventing proper stream recovery.
+     */
+
+    if (CSeqNo::seqoff(m_iSndLastFullAck, ackdata_seqno) <= 0)
+    {
+        // discard it if it is a repeated ACK
+        CGuard::leaveCS(m_RecvAckLock, "RecvAck");
+        return;
+    }
+    m_iSndLastFullAck = ackdata_seqno;
+
+    //
+    // END of the new code with TLPKTDROP
+    //
+    CGuard::leaveCS(m_RecvAckLock);
+
+    size_t acksize   = ctrlpkt.getLength(); // TEMPORARY VALUE FOR CHECKING
+    bool   wrongsize = 0 != (acksize % ACKD_FIELD_SIZE);
+    acksize          = acksize / ACKD_FIELD_SIZE; // ACTUAL VALUE
+
+    if (wrongsize)
+    {
+        // Issue a log, but don't do anything but skipping the "odd" bytes from the payload.
+        LOGC(mglog.Error,
+             log << CONID() << "Received UMSG_ACK payload is not evened up to 4-byte based field size - cutting to "
+                 << acksize << " fields");
+    }
+
+    // Start with checking the base size.
+    if (acksize < ACKD_TOTAL_SIZE_SMALL)
+    {
+        LOGC(mglog.Error, log << CONID() << "Invalid ACK size " << acksize << " fields - less than minimum required!");
+        // Ack is already interpreted, just skip further parts.
+        return;
+    }
+    // This check covers fields up to ACKD_BUFFERLEFT.
+
+    // Update RTT
+    // m_iRTT = ackdata[ACKD_RTT];
+    // m_iRTTVar = ackdata[ACKD_RTTVAR];
+    // XXX These ^^^ commented-out were blocked in UDT;
+    // the current RTT calculations are exactly the same as in UDT4.
+    const int rtt = ackdata[ACKD_RTT];
+
+    m_iRTTVar = avg_iir<4>(m_iRTTVar, abs(rtt - m_iRTT));
+    m_iRTT    = avg_iir<8>(m_iRTT, rtt);
+
+    /* Version-dependent fields:
+     * Original UDT (total size: ACKD_TOTAL_SIZE_SMALL):
+     *   ACKD_RCVLASTACK
+     *   ACKD_RTT
+     *   ACKD_RTTVAR
+     *   ACKD_BUFFERLEFT
+     * Additional UDT fields, not always attached:
+     *   ACKD_RCVSPEED
+     *   ACKD_BANDWIDTH
+     * SRT extension version 1.0.2 (bstats):
+     *   ACKD_RCVRATE
+     * SRT extension version 1.0.4:
+     *   ACKD_XMRATE
+     */
+
+    if (acksize > ACKD_TOTAL_SIZE_SMALL)
+    {
+        // This means that ACKD_RCVSPEED and ACKD_BANDWIDTH fields are available.
+        int pktps     = ackdata[ACKD_RCVSPEED];
+        int bandwidth = ackdata[ACKD_BANDWIDTH];
+        int bytesps;
+
+        /* SRT v1.0.2 Bytes-based stats: bandwidth (pcData[ACKD_XMRATE]) and delivery rate (pcData[ACKD_RCVRATE]) in
+         * bytes/sec instead of pkts/sec */
+        /* SRT v1.0.3 Bytes-based stats: only delivery rate (pcData[ACKD_RCVRATE]) in bytes/sec instead of pkts/sec */
+        if (acksize > ACKD_TOTAL_SIZE_UDTBASE)
+            bytesps = ackdata[ACKD_RCVRATE];
+        else
+            bytesps = pktps * m_iMaxSRTPayloadSize;
+
+        m_iBandwidth        = avg_iir<8>(m_iBandwidth, bandwidth);
+        m_iDeliveryRate     = avg_iir<8>(m_iDeliveryRate, pktps);
+        m_iByteDeliveryRate = avg_iir<8>(m_iByteDeliveryRate, bytesps);
+        // XXX not sure if ACKD_XMRATE is of any use. This is simply
+        // calculated as ACKD_BANDWIDTH * m_iMaxSRTPayloadSize.
+
+        // Update Estimated Bandwidth and packet delivery rate
+        // m_iRcvRate = m_iDeliveryRate;
+        // ^^ This has been removed because with the SrtCongestion class
+        // instead of reading the m_iRcvRate local field this will read
+        // cudt->deliveryRate() instead.
+    }
+
+    checkSndTimers(REGEN_KM);
+    updateCC(TEV_ACK, ackdata_seqno);
+
+    CGuard::enterCS(m_StatsLock);
+    ++m_stats.recvACK;
+    ++m_stats.recvACKTotal;
+    CGuard::leaveCS(m_StatsLock);
+}
+
 void CUDT::processCtrl(CPacket& ctrlpkt)
 {
     // Just heard from the peer, reset the expiration count.
@@ -7291,263 +7527,8 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
     switch (ctrlpkt.getType())
     {
     case UMSG_ACK: // 010 - Acknowledgement
-    {
-        int32_t  ack;
-        int32_t* ackdata = (int32_t*)ctrlpkt.m_pcData;
-
-        // process a lite ACK
-        if (ctrlpkt.getLength() == (size_t)SEND_LITE_ACK)
-        {
-            ack = *ackdata;
-            if (CSeqNo::seqcmp(ack, m_iSndLastAck) >= 0)
-            {
-                m_iFlowWindowSize -= CSeqNo::seqoff(m_iSndLastAck, ack);
-                HLOGC(mglog.Debug,
-                      log << CONID() << "ACK covers: " << m_iSndLastDataAck << " - " << ack << " [ACK=" << m_iSndLastAck
-                          << "] (FLW: " << m_iFlowWindowSize << ") [LITE]");
-
-                m_iSndLastAck          = ack;
-                m_ullLastRspAckTime_tk = currtime_tk;
-                m_iReXmitCount         = 1; // Reset re-transmit count since last ACK
-            }
-
-            break;
-        }
-
-        // read ACK seq. no.
-        ack = ctrlpkt.getAckSeqNo();
-
-        // send ACK acknowledgement
-        // number of ACK2 can be much less than number of ACK
-        uint64_t now = CTimer::getTime();
-        if ((now - m_ullSndLastAck2Time > (uint64_t)COMM_SYN_INTERVAL_US) || (ack == m_iSndLastAck2))
-        {
-            sendCtrl(UMSG_ACKACK, &ack);
-            m_iSndLastAck2       = ack;
-            m_ullSndLastAck2Time = now;
-        }
-
-        // Got data ACK
-        ack = ackdata[ACKD_RCVLASTACK];
-
-        // New code, with TLPKTDROP
-
-        // protect packet retransmission
-        CGuard::enterCS(m_AckLock, "ack");
-
-        // check the validation of the ack
-        if (CSeqNo::seqcmp(ack, CSeqNo::incseq(m_iSndCurrSeqNo)) > 0)
-        {
-            CGuard::leaveCS(m_AckLock, "ack");
-            // this should not happen: attack or bug
-            LOGC(glog.Error,
-                 log << CONID() << "ATTACK/IPE: incoming ack seq " << ack << " exceeds current " << m_iSndCurrSeqNo
-                     << " by " << (CSeqNo::seqoff(m_iSndCurrSeqNo, ack) - 1) << "!");
-            m_bBroken        = true;
-            m_iBrokenCounter = 0;
-            break;
-        }
-
-        if (CSeqNo::seqcmp(ack, m_iSndLastAck) >= 0)
-        {
-            // Update Flow Window Size, must update before and together with m_iSndLastAck
-            m_iFlowWindowSize      = ackdata[ACKD_BUFFERLEFT];
-            m_iSndLastAck          = ack;
-            m_ullLastRspAckTime_tk = currtime_tk;
-            m_iReXmitCount         = 1; // Reset re-transmit count since last ACK
-        }
-
-        /*
-         * We must not ignore full ack received by peer
-         * if data has been artificially acked by late packet drop.
-         * Therefore, a distinct ack state is used for received Ack (iSndLastFullAck)
-         * and ack position in send buffer (m_iSndLastDataAck).
-         * Otherwise, when severe congestion causing packet drops (and m_iSndLastDataAck update)
-         * occures, we drop received acks (as duplicates) and do not update stats like RTT,
-         * which may go crazy and stay there, preventing proper stream recovery.
-         */
-
-        if (CSeqNo::seqoff(m_iSndLastFullAck, ack) <= 0)
-        {
-            // discard it if it is a repeated ACK
-            CGuard::leaveCS(m_AckLock, "ack");
-            break;
-        }
-        m_iSndLastFullAck = ack;
-
-        int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack);
-        // IF distance between m_iSndLastDataAck and ack is nonempty...
-        if (offset > 0)
-        {
-            // acknowledge the sending buffer (remove data that predate 'ack')
-            m_pSndBuffer->ackData(offset);
-
-            const int64_t currtime = CTimer::getTime();
-            // record total time used for sending
-            CGuard::enterCS(m_StatsLock);
-            m_stats.sndDuration += currtime - m_stats.sndDurationCounter;
-            m_stats.m_sndDurationTotal += currtime - m_stats.sndDurationCounter;
-            m_stats.sndDurationCounter = currtime;
-            CGuard::leaveCS(m_StatsLock);
-
-            HLOGC(mglog.Debug,
-                  log << CONID() << "ACK covers: " << m_iSndLastDataAck << " - " << ack << " [ACK=" << m_iSndLastAck
-                      << "] BUFr=" << m_iFlowWindowSize << " RTT=" << ackdata[ACKD_RTT]
-                      << " RTT*=" << ackdata[ACKD_RTTVAR] << " BW=" << ackdata[ACKD_BANDWIDTH]
-                      << " Vrec=" << ackdata[ACKD_RCVSPEED]);
-            // update sending variables
-            m_iSndLastDataAck = ack;
-
-            // remove any loss that predates 'ack' (not to be considered loss anymore)
-            m_pSndLossList->remove(CSeqNo::decseq(m_iSndLastDataAck));
-        }
-
-        /* OLD CODE without TLPKTDROP
-
-              // check the validation of the ack
-              if (CSeqNo::seqcmp(ack, CSeqNo::incseq(m_iSndCurrSeqNo)) > 0)
-              {
-                 //this should not happen: attack or bug
-                 m_bBroken = true;
-                 m_iBrokenCounter = 0;
-                 break;
-              }
-
-              if (CSeqNo::seqcmp(ack, m_iSndLastAck) >= 0)
-              {
-                 // Update Flow Window Size, must update before and together with m_iSndLastAck
-                 m_iFlowWindowSize = ackdata[ACKD_BUFFERLEFT];
-                 m_iSndLastAck = ack;
-                 m_ullLastRspAckTime_tk = currtime_tk;
-                 m_iReXmitCount = 1;       // Reset re-transmit count since last ACK
-              }
-
-              // protect packet retransmission
-              CGuard::enterCS(m_AckLock, "ack");
-
-              int offset = CSeqNo::seqoff(m_iSndLastDataAck, ack);
-              if (offset <= 0)
-              {
-                 // discard it if it is a repeated ACK
-                 CGuard::leaveCS(m_AckLock, "ack");
-                 break;
-              }
-
-              // acknowledge the sending buffer
-              m_pSndBuffer->ackData(offset);
-
-              // record total time used for sending
-              int64_t currtime = currtime_tk/m_ullCPUFrequency;
-
-              m_llSndDuration += currtime - m_llSndDurationCounter;
-              m_llSndDurationTotal += currtime - m_llSndDurationCounter;
-              m_llSndDurationCounter = currtime;
-
-              // update sending variables
-              m_iSndLastDataAck = ack;
-              m_pSndLossList->remove(CSeqNo::decseq(m_iSndLastDataAck));
-
-        #endif  SRT_ENABLE_TLPKTDROP */
-
-        CGuard::leaveCS(m_AckLock, "ack");
-        if (m_bSynSending)
-        {
-            CCondDelegate sc(m_SendBlockCond, m_SendBlockLock, CCondDelegate::NOLOCK, "SendBlock", "SendBlock");
-            sc.lock_signal();
-        }
-
-        // acknowledde any waiting epolls to write
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, true);
-
-        // insert this socket to snd list if it is not on the list yet
-        m_pSndQueue->m_pSndUList->update(this, CSndUList::DONT_RESCHEDULE);
-
-        size_t acksize   = ctrlpkt.getLength(); // TEMPORARY VALUE FOR CHECKING
-        bool   wrongsize = 0 != (acksize % ACKD_FIELD_SIZE);
-        acksize          = acksize / ACKD_FIELD_SIZE; // ACTUAL VALUE
-
-        if (wrongsize)
-        {
-            // Issue a log, but don't do anything but skipping the "odd" bytes from the payload.
-            LOGC(mglog.Error,
-                 log << CONID() << "Received UMSG_ACK payload is not evened up to 4-byte based field size - cutting to "
-                     << acksize << " fields");
-        }
-
-        // Start with checking the base size.
-        if (acksize < ACKD_TOTAL_SIZE_SMALL)
-        {
-            LOGC(mglog.Error,
-                 log << CONID() << "Invalid ACK size " << acksize << " fields - less than minimum required!");
-            // Ack is already interpreted, just skip further parts.
-            break;
-        }
-        // This check covers fields up to ACKD_BUFFERLEFT.
-
-        // Update RTT
-        // m_iRTT = ackdata[ACKD_RTT];
-        // m_iRTTVar = ackdata[ACKD_RTTVAR];
-        // XXX These ^^^ commented-out were blocked in UDT;
-        // the current RTT calculations are exactly the same as in UDT4.
-        int rtt = ackdata[ACKD_RTT];
-
-        m_iRTTVar = avg_iir<4>(m_iRTTVar, abs(rtt - m_iRTT));
-        m_iRTT    = avg_iir<8>(m_iRTT, rtt);
-
-        /* Version-dependent fields:
-         * Original UDT (total size: ACKD_TOTAL_SIZE_SMALL):
-         *   ACKD_RCVLASTACK
-         *   ACKD_RTT
-         *   ACKD_RTTVAR
-         *   ACKD_BUFFERLEFT
-         * Additional UDT fields, not always attached:
-         *   ACKD_RCVSPEED
-         *   ACKD_BANDWIDTH
-         * SRT extension version 1.0.2 (bstats):
-         *   ACKD_RCVRATE
-         * SRT extension version 1.0.4:
-         *   ACKD_XMRATE
-         */
-
-        if (acksize > ACKD_TOTAL_SIZE_SMALL)
-        {
-            // This means that ACKD_RCVSPEED and ACKD_BANDWIDTH fields are available.
-            int pktps     = ackdata[ACKD_RCVSPEED];
-            int bandwidth = ackdata[ACKD_BANDWIDTH];
-            int bytesps;
-
-            /* SRT v1.0.2 Bytes-based stats: bandwidth (pcData[ACKD_XMRATE]) and delivery rate (pcData[ACKD_RCVRATE]) in
-             * bytes/sec instead of pkts/sec */
-            /* SRT v1.0.3 Bytes-based stats: only delivery rate (pcData[ACKD_RCVRATE]) in bytes/sec instead of pkts/sec
-             */
-            if (acksize > ACKD_TOTAL_SIZE_UDTBASE)
-                bytesps = ackdata[ACKD_RCVRATE];
-            else
-                bytesps = pktps * m_iMaxSRTPayloadSize;
-
-            m_iBandwidth        = avg_iir<8>(m_iBandwidth, bandwidth);
-            m_iDeliveryRate     = avg_iir<8>(m_iDeliveryRate, pktps);
-            m_iByteDeliveryRate = avg_iir<8>(m_iByteDeliveryRate, bytesps);
-            // XXX not sure if ACKD_XMRATE is of any use. This is simply
-            // calculated as ACKD_BANDWIDTH * m_iMaxSRTPayloadSize.
-
-            // Update Estimated Bandwidth and packet delivery rate
-            // m_iRcvRate = m_iDeliveryRate;
-            // ^^ This has been removed because with the SrtCongestion class
-            // instead of reading the m_iRcvRate local field this will read
-            // cudt->deliveryRate() instead.
-        }
-
-        checkSndTimers(REGEN_KM);
-        updateCC(TEV_ACK, ack);
-
-        CGuard::enterCS(m_StatsLock);
-        ++m_stats.recvACK;
-        ++m_stats.recvACKTotal;
-        CGuard::leaveCS(m_StatsLock);
-
+        processCtrlAck(ctrlpkt, currtime_tk);
         break;
-    }
 
     case UMSG_ACKACK: // 110 - Acknowledgement of Acknowledgement
     {
@@ -7578,7 +7559,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
         // and if waiting for the lock has caused a delay, the time will be
         // inaccurate. Additionally it won't lock if TSBPD mode is off, and
         // won't update anything. Note that if you set TSBPD mode and use
-        // srt_recvfile (which doesn't make any sense), you'll have e deadlock.
+        // srt_recvfile (which doesn't make any sense), you'll have a deadlock.
         m_pRcvBuffer->addRcvTsbPdDriftSample(ctrlpkt.getMsgTimeStamp(), m_RecvLock);
 
         // update last ACK that has been received by the sender
@@ -7601,7 +7582,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
         // protect packet retransmission
         {
-            CGuard ack_lock(m_AckLock, "ack");
+            CGuard ack_lock(m_RecvAckLock, "RecvAck");
 
             // decode loss list message and insert loss into the sender loss list
             for (int i = 0, n = (int)(ctrlpkt.getLength() / 4); i < n; ++i)
@@ -7845,7 +7826,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
         m_pRcvBuffer->dropMsg(ctrlpkt.getMsgSeq(using_rexmit_flag), using_rexmit_flag);
         CGuard::leaveCS(m_RecvLock, "recv");
 
-        unlose(*(int32_t*)ctrlpkt.m_pcData, *(int32_t*)(ctrlpkt.m_pcData + 4));
+        dropFromLossLists(*(int32_t*)ctrlpkt.m_pcData, *(int32_t*)(ctrlpkt.m_pcData + 4));
 
         // move forward with current recv seq no.
         if ((CSeqNo::seqcmp(*(int32_t*)ctrlpkt.m_pcData, CSeqNo::incseq(m_iRcvCurrSeqNo)) <= 0) &&
@@ -7982,7 +7963,7 @@ void CUDT::updateAfterSrtHandshake(int srt_cmd, int hsv)
 int CUDT::packLostData(CPacket& packet, uint64_t& origintime)
 {
     // protect m_iSndLastDataAck from updating by ACK processing
-    CGuard ackguard(m_AckLock, "ack");
+    CGuard ackguard(m_RecvAckLock, "RecvAck");
 
     while ((packet.m_iSeqNo = m_pSndLossList->getLostSeq()) >= 0)
     {
@@ -8279,7 +8260,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
 
     m_ullTargetTime_tk = ts_tk;
 
-    HLOGC(mglog.Debug, log << "packData: Setting source address: " << SockaddrToString(m_SourceAddr));
+    HLOGC(mglog.Debug, log << "packData: Setting source address: " << SockaddrToString(&m_SourceAddr));
     *r_src_adr = m_SourceAddr;
 
     return payload;
@@ -8492,7 +8473,7 @@ int CUDT::processData(CUnit* in_unit)
         // Start of offset protected section
         // Prevent TsbPd thread from modifying Ack position while adding data
         // offset from RcvLastAck in RcvBuffer must remain valid between seqoff() and addData()
-        CGuard recvbuf_acklock(m_AckLock, "ack");
+        CGuard recvbuf_acklock(m_RcvBufferLock, "RcvBuffer");
 
         // vector<CUnit*> undec_units;
         if (m_PacketFilter)
@@ -8930,20 +8911,15 @@ void CUDT::unlose(const CPacket& packet)
         HLOGF(mglog.Debug, "received reXmitted or belated packet seq %d (distinction not supported by peer)", sequence);
     }
 
-    int initial_loss_ttl = 0;
-    if (m_bPeerRexmitFlag)
-        initial_loss_ttl = m_iReorderTolerance;
-
     // Don't do anything if "belated loss report" feature is not used.
     // In that case the FreshLoss list isn't being filled in at all, the
     // loss report is sent directly.
-
     // Note that this condition blocks two things being done in this function:
     // - remove given sequence from the fresh loss record
     //   (in this case it's empty anyway)
     // - decrease current reorder tolerance based on whether packets come in order
     //   (current reorder tolerance is 0 anyway)
-    if (!initial_loss_ttl)
+    if (m_bPeerRexmitFlag == 0 || m_iReorderTolerance == 0)
         return;
 
     size_t i       = 0;
@@ -9030,21 +9006,17 @@ breakbreak:;
     }
 }
 
-void CUDT::unlose(int32_t from, int32_t to)
+void CUDT::dropFromLossLists(int32_t from, int32_t to)
 {
     CGuard lg(m_RcvLossLock, "rcvloss");
     m_pRcvLossList->remove(from, to);
 
     HLOGF(mglog.Debug, "TLPKTDROP seq %d-%d (%d packets)", from, to, CSeqNo::seqoff(from, to));
 
-    // All code below concerns only "belated lossreport" feature.
-
-    int initial_loss_ttl = 0;
-    if (m_bPeerRexmitFlag)
-        initial_loss_ttl = m_iReorderTolerance;
-
-    if (!initial_loss_ttl)
+    if (m_bPeerRexmitFlag == 0 || m_iReorderTolerance == 0)
         return;
+
+    // All code below concerns only "belated lossreport" feature.
 
     // It's highly unlikely that this is waiting to send a belated UMSG_LOSSREPORT,
     // so treat it rather as a sanity check.
@@ -9599,7 +9571,7 @@ void CUDT::checkRexmitTimer(uint64_t currtime_tk)
     if (retransmit)
     {
         // Sender: Insert all the packets sent after last received acknowledgement into the sender loss list.
-        CGuard acklock(m_AckLock, "ack"); // Protect packet retransmission
+        CGuard acklock(m_RecvAckLock, "RecvAck"); // Protect packet retransmission
         // Resend all unacknowledged packets on timeout, but only if there is no packet in the loss list
         const int32_t csn = m_iSndCurrSeqNo;
         const int     num = m_pSndLossList->insert(m_iSndLastAck, csn);

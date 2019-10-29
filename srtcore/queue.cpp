@@ -470,7 +470,6 @@ CSndQueue::CSndQueue()
     , m_WindowLock()
     , m_WindowCond()
     , m_bClosing(false)
-    , m_ExitCond()
 {
     pthread_cond_init(&m_WindowCond, NULL);
     pthread_mutex_init(&m_WindowLock, NULL);
@@ -536,74 +535,13 @@ void* CSndQueue::worker(void* param)
 
     while (!self->m_bClosing)
     {
-        uint64_t ts = self->m_pSndUList->getNextProcTime();
+        uint64_t next_time = self->m_pSndUList->getNextProcTime();
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         self->m_WorkerStats.lIteration++;
 #endif /* SRT_DEBUG_SNDQ_HIGHRATE */
 
-        if (ts > 0)
-        {
-            // wait until next processing time of the first socket on the list
-            uint64_t currtime;
-            CTimer::rdtsc(currtime);
-
-#if defined(SRT_DEBUG_SNDQ_HIGHRATE)
-            if (self->m_ullDbgTime <= currtime)
-            {
-                fprintf(stdout,
-                        "SndQueue %lu slt:%lu nrp:%lu snt:%lu nrt:%lu ctw:%lu\n",
-                        self->m_WorkerStats.lIteration,
-                        self->m_WorkerStats.lSleepTo,
-                        self->m_WorkerStats.lNotReadyPop,
-                        self->m_WorkerStats.lSendTo,
-                        self->m_WorkerStats.lNotReadyTs,
-                        self->m_WorkerStats.lCondWait);
-                memset(&self->m_WorkerStats, 0, sizeof(self->m_WorkerStats));
-                self->m_ullDbgTime = currtime + self->m_ullDbgPeriod;
-            }
-#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
-
-            THREAD_PAUSED();
-            if (currtime < ts)
-            {
-                self->m_pTimer->sleepto(ts);
-
-#if defined(HAI_DEBUG_SNDQ_HIGHRATE)
-                self->m_WorkerStats.lSleepTo++;
-#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
-            }
-            THREAD_RESUMED();
-
-            // it is time to send the next pkt
-            sockaddr_any addr;
-            CPacket      pkt;
-            sockaddr_any source_addr;
-            if (self->m_pSndUList->pop(Ref(addr), Ref(pkt), Ref(source_addr)) < 0)
-            {
-                continue;
-
-#if defined(SRT_DEBUG_SNDQ_HIGHRATE)
-                self->m_WorkerStats.lNotReadyPop++;
-#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
-            }
-            if (pkt.isControl())
-            {
-                HLOGC(mglog.Debug,
-                      log << self->CONID() << "chn:SENDING: " << MessageTypeStr(pkt.getType(), pkt.getExtendedType()));
-            }
-            else
-            {
-                HLOGC(dlog.Debug,
-                      log << self->CONID() << "chn:SENDING SIZE " << pkt.getLength() << " SEQ: " << pkt.getSeqNo());
-            }
-            self->m_pChannel->sendto(addr, pkt, source_addr);
-
-#if defined(SRT_DEBUG_SNDQ_HIGHRATE)
-            self->m_WorkerStats.lSendTo++;
-#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
-        }
-        else
+        if (next_time <= 0)
         {
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
             self->m_WorkerStats.lNotReadyTs++;
@@ -622,7 +560,68 @@ void* CSndQueue::worker(void* param)
             }
             THREAD_RESUMED();
             pthread_mutex_unlock(&self->m_WindowLock);
+
+            continue;
         }
+
+        // wait until next processing time of the first socket on the list
+        uint64_t currtime;
+        CTimer::rdtsc(currtime);
+
+#if defined(SRT_DEBUG_SNDQ_HIGHRATE)
+        if (self->m_ullDbgTime <= currtime)
+        {
+            fprintf(stdout,
+                    "SndQueue %lu slt:%lu nrp:%lu snt:%lu nrt:%lu ctw:%lu\n",
+                    self->m_WorkerStats.lIteration,
+                    self->m_WorkerStats.lSleepTo,
+                    self->m_WorkerStats.lNotReadyPop,
+                    self->m_WorkerStats.lSendTo,
+                    self->m_WorkerStats.lNotReadyTs,
+                    self->m_WorkerStats.lCondWait);
+            memset(&self->m_WorkerStats, 0, sizeof(self->m_WorkerStats));
+            self->m_ullDbgTime = currtime + self->m_ullDbgPeriod;
+        }
+#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
+
+        THREAD_PAUSED();
+        if (currtime < next_time)
+        {
+            self->m_pTimer->sleepto(next_time);
+
+#if defined(HAI_DEBUG_SNDQ_HIGHRATE)
+            self->m_WorkerStats.lSleepTo++;
+#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
+        }
+        THREAD_RESUMED();
+
+        // it is time to send the next pkt
+        sockaddr_any addr;
+        CPacket      pkt;
+        sockaddr_any source_addr;
+        if (self->m_pSndUList->pop(Ref(addr), Ref(pkt), Ref(source_addr)) < 0)
+        {
+            continue;
+
+#if defined(SRT_DEBUG_SNDQ_HIGHRATE)
+            self->m_WorkerStats.lNotReadyPop++;
+#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
+        }
+        if (pkt.isControl())
+        {
+            HLOGC(mglog.Debug,
+                  log << self->CONID() << "chn:SENDING: " << MessageTypeStr(pkt.getType(), pkt.getExtendedType()));
+        }
+        else
+        {
+            HLOGC(dlog.Debug,
+                  log << self->CONID() << "chn:SENDING SIZE " << pkt.getLength() << " SEQ: " << pkt.getSeqNo());
+        }
+        self->m_pChannel->sendto(addr, pkt, source_addr);
+
+#if defined(SRT_DEBUG_SNDQ_HIGHRATE)
+        self->m_WorkerStats.lSendTo++;
+#endif /* SRT_DEBUG_SNDQ_HIGHRATE */
     }
 
     THREAD_EXIT();
@@ -831,10 +830,10 @@ void CRendezvousQueue::insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& 
     CGuard vg(m_RIDVectorLock, "RIDVector");
 
     CRL r;
-    r.m_iID      = id;
-    r.m_pUDT     = u;
+    r.m_iID        = id;
+    r.m_pUDT       = u;
     r.m_PeerAddr = addr;
-    r.m_ullTTL   = ttl;
+    r.m_ullTTL = ttl;
 
     m_lRendezvousID.push_back(r);
 }
@@ -1019,7 +1018,6 @@ CRcvQueue::CRcvQueue()
     , m_pTimer(NULL)
     , m_iPayloadSize()
     , m_bClosing(false)
-    , m_ExitCond()
     , m_LSLock()
     , m_pListener(NULL)
     , m_pRendezvousQueue(NULL)
