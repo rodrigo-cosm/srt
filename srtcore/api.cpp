@@ -779,7 +779,7 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* addr, int* addrle
       if (s == NULL)
          throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-      CGuard cg(s->m_ControlLock);
+      CGuard cg(s->m_ControlLock, "Control");
 
       // Check if the length of the buffer to fill the name in
       // was large enough.
@@ -1834,7 +1834,7 @@ void* CUDTUnited::garbageCollect(void* p)
 
    THREAD_STATE_INIT("SRT:GC");
 
-   CGuard gcguard(self->m_GCStopLock);
+   CGuard gcguard(self->m_GCStopLock, "GCStop");
 
    while (!self->m_bClosing)
    {

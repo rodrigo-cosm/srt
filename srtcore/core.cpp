@@ -1273,7 +1273,7 @@ void CUDT::clearData()
     m_ullLastAckTime_tk = 0;
 
     // trace information
-    CGuard::enterCS(m_StatsLock);
+    CGuard::enterCS(m_StatsLock, "Stats");
     m_stats.startTime = CTimer::getTime();
     m_stats.sentTotal = m_stats.recvTotal = m_stats.sndLossTotal = m_stats.rcvLossTotal = m_stats.retransTotal =
         m_stats.sentACKTotal = m_stats.recvACKTotal = m_stats.sentNAKTotal = m_stats.recvNAKTotal = 0;
@@ -1315,7 +1315,7 @@ void CUDT::clearData()
     m_stats.traceRcvBytesUndecrypt   = 0;
 
     m_stats.sndDuration = m_stats.m_sndDurationTotal = 0;
-    CGuard::leaveCS(m_StatsLock);
+    CGuard::leaveCS(m_StatsLock, "Stats");
 
     // Resetting these data because this happens when agent isn't connected.
     m_bPeerTsbPd         = false;
@@ -5714,12 +5714,12 @@ void CUDT::checkNeedDrop(ref_t<bool> bCongestion)
         int dpkts = m_pSndBuffer->dropLateData(dbytes, CTimer::getTime() - (threshold_ms * 1000));
         if (dpkts > 0)
         {
-            CGuard::enterCS(m_StatsLock);
+            CGuard::enterCS(m_StatsLock, "Stats");
             m_stats.traceSndDrop += dpkts;
             m_stats.sndDropTotal += dpkts;
             m_stats.traceSndBytesDrop += dbytes;
             m_stats.sndBytesDropTotal += dbytes;
-            CGuard::leaveCS(m_StatsLock);
+            CGuard::leaveCS(m_StatsLock, "Stats");
 
 #if ENABLE_HEAVY_LOGGING
             int32_t realack = m_iSndLastDataAck;
@@ -5935,9 +5935,9 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     // record total time used for sending
     if (m_pSndBuffer->getCurrBufSize() == 0)
     {
-        CGuard::enterCS(m_StatsLock);
+        CGuard::enterCS(m_StatsLock, "Stats");
         m_stats.sndDurationCounter = CTimer::getTime();
-        CGuard::leaveCS(m_StatsLock);
+        CGuard::leaveCS(m_StatsLock, "Stats");
     }
 
     int size = len;
@@ -6310,9 +6310,9 @@ int64_t CUDT::sendfile(fstream& ifs, int64_t& offset, int64_t size, int block)
         // record total time used for sending
         if (m_pSndBuffer->getCurrBufSize() == 0)
         {
-            CGuard::enterCS(m_StatsLock);
+            CGuard::enterCS(m_StatsLock, "Stats");
             m_stats.sndDurationCounter = CTimer::getTime();
-            CGuard::leaveCS(m_StatsLock);
+            CGuard::leaveCS(m_StatsLock, "Stats");
         }
 
         {
@@ -7045,7 +7045,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
             // Preventing to call this on zero size makes sense, if it prevents false alerts.
             if (acksize > 0)
                 m_pRcvBuffer->ackData(acksize);
-            CGuard::leaveCS(m_RcvBufferLock);
+            CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
 
             // If TSBPD is enabled, then INSTEAD OF signaling m_RecvDataCond,
             // signal m_RcvTsbPdCond. This will kick in the tsbpd thread, which
@@ -7075,7 +7075,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
                 s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_IN, true);
                 CTimer::triggerEvent();
             }
-            CGuard::enterCS(m_RcvBufferLock);
+            CGuard::enterCS(m_RcvBufferLock, "RcvBuffer");
         }
         else if (ack == m_iRcvLastAck)
         {
@@ -7155,10 +7155,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
 
             m_ACKWindow.store(m_iAckSeqNo, m_iRcvLastAck);
 
-            CGuard::enterCS(m_StatsLock);
+            CGuard::enterCS(m_StatsLock, "Stats");
             ++m_stats.sentACK;
             ++m_stats.sentACKTotal;
-            CGuard::leaveCS(m_StatsLock);
+            CGuard::leaveCS(m_StatsLock, "Stats");
         }
         CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
         break;
@@ -7184,10 +7184,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
             ctrlpkt.m_iID = m_PeerID;
             nbsent        = m_pSndQueue->sendto(m_PeerAddr, ctrlpkt, m_SourceAddr);
 
-            CGuard::enterCS(m_StatsLock);
+            CGuard::enterCS(m_StatsLock, "Stats");
             ++m_stats.sentNAK;
             ++m_stats.sentNAKTotal;
-            CGuard::leaveCS(m_StatsLock);
+            CGuard::leaveCS(m_StatsLock, "Stats");
         }
         // Call with no arguments - get loss list from internal data.
         else if (m_pRcvLossList->getLossLength() > 0)
@@ -7205,10 +7205,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
                 ctrlpkt.m_iID = m_PeerID;
                 nbsent        = m_pSndQueue->sendto(m_PeerAddr, ctrlpkt, m_SourceAddr);
 
-                CGuard::enterCS(m_StatsLock);
+                CGuard::enterCS(m_StatsLock, "Stats");
                 ++m_stats.sentNAK;
                 ++m_stats.sentNAKTotal;
-                CGuard::leaveCS(m_StatsLock);
+                CGuard::leaveCS(m_StatsLock, "Stats");
             }
 
             delete[] data;
@@ -7321,11 +7321,11 @@ void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
 
     const int64_t currtime = CTimer::getTime();
     // record total time used for sending
-    CGuard::enterCS(m_StatsLock);
+    CGuard::enterCS(m_StatsLock, "Stats");
     m_stats.sndDuration += currtime - m_stats.sndDurationCounter;
     m_stats.m_sndDurationTotal += currtime - m_stats.sndDurationCounter;
     m_stats.sndDurationCounter = currtime;
-    CGuard::leaveCS(m_StatsLock);
+    CGuard::leaveCS(m_StatsLock, "Stats");
 }
 
 void CUDT::processCtrlAck(const CPacket& ctrlpkt, const uint64_t currtime_tk)
@@ -7426,7 +7426,7 @@ void CUDT::processCtrlAck(const CPacket& ctrlpkt, const uint64_t currtime_tk)
     //
     // END of the new code with TLPKTDROP
     //
-    CGuard::leaveCS(m_RecvAckLock);
+    CGuard::leaveCS(m_RecvAckLock, "RecvAck");
 
     size_t acksize   = ctrlpkt.getLength(); // TEMPORARY VALUE FOR CHECKING
     bool   wrongsize = 0 != (acksize % ACKD_FIELD_SIZE);
@@ -7505,10 +7505,10 @@ void CUDT::processCtrlAck(const CPacket& ctrlpkt, const uint64_t currtime_tk)
     checkSndTimers(REGEN_KM);
     updateCC(TEV_ACK, ackdata_seqno);
 
-    CGuard::enterCS(m_StatsLock);
+    CGuard::enterCS(m_StatsLock, "Stats");
     ++m_stats.recvACK;
     ++m_stats.recvACKTotal;
-    CGuard::leaveCS(m_StatsLock);
+    CGuard::leaveCS(m_StatsLock, "Stats");
 }
 
 void CUDT::processCtrl(CPacket& ctrlpkt)
@@ -7624,10 +7624,10 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
                         num = m_pSndLossList->insert(m_iSndLastAck, losslist_hi);
                     }
 
-                    CGuard::enterCS(m_StatsLock);
+                    CGuard::enterCS(m_StatsLock, "Stats");
                     m_stats.traceSndLoss += num;
                     m_stats.sndLossTotal += num;
-                    CGuard::leaveCS(m_StatsLock);
+                    CGuard::leaveCS(m_StatsLock, "Stats");
                 }
                 else if (CSeqNo::seqcmp(losslist[i], m_iSndLastAck) >= 0)
                 {
@@ -7643,10 +7643,10 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
 
                     int num = m_pSndLossList->insert(losslist[i], losslist[i]);
 
-                    CGuard::enterCS(m_StatsLock);
+                    CGuard::enterCS(m_StatsLock, "Stats");
                     m_stats.traceSndLoss += num;
                     m_stats.sndLossTotal += num;
-                    CGuard::leaveCS(m_StatsLock);
+                    CGuard::leaveCS(m_StatsLock, "Stats");
                 }
             }
         }
@@ -7667,10 +7667,10 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
         // the lost packet (retransmission) should be sent out immediately
         m_pSndQueue->m_pSndUList->update(this, CSndUList::DO_RESCHEDULE);
 
-        CGuard::enterCS(m_StatsLock);
+        CGuard::enterCS(m_StatsLock, "Stats");
         ++m_stats.recvNAK;
         ++m_stats.recvNAKTotal;
-        CGuard::leaveCS(m_StatsLock);
+        CGuard::leaveCS(m_StatsLock, "Stats");
 
         break;
     }
@@ -8010,12 +8010,12 @@ int CUDT::packLostData(CPacket& packet, uint64_t& origintime)
         // Therefore unlocking in order not to block other threads.
         ackguard.forceUnlock();
 
-        CGuard::enterCS(m_StatsLock);
+        CGuard::enterCS(m_StatsLock, "Stats");
         ++m_stats.traceRetrans;
         ++m_stats.retransTotal;
         m_stats.traceBytesRetrans += payload;
         m_stats.bytesRetransTotal += payload;
-        CGuard::leaveCS(m_StatsLock);
+        CGuard::leaveCS(m_StatsLock, "Stats");
 
         // Despite the contextual interpretation of packet.m_iMsgNo around
         // CSndBuffer::readData version 2 (version 1 doesn't return -1), in this particular
@@ -8227,12 +8227,12 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
     // different thread than the rest of the signals.
     // m_pSndTimeWindow->onPktSent(packet.m_iTimeStamp);
 
-    CGuard::enterCS(m_StatsLock);
+    CGuard::enterCS(m_StatsLock, "Stats");
     m_stats.traceBytesSent += payload;
     m_stats.bytesSentTotal += payload;
     ++m_stats.traceSent;
     ++m_stats.sentTotal;
-    CGuard::leaveCS(m_StatsLock);
+    CGuard::leaveCS(m_StatsLock, "Stats");
 
     if (probe)
     {
@@ -8380,9 +8380,9 @@ int CUDT::processData(CUnit* in_unit)
     if (pktrexmitflag == 1)
     {
         // This packet was retransmitted
-        CGuard::enterCS(m_StatsLock);
+        CGuard::enterCS(m_StatsLock, "Stats");
         m_stats.traceRcvRetrans++;
-        CGuard::leaveCS(m_StatsLock);
+        CGuard::leaveCS(m_StatsLock, "Stats");
 
 #if ENABLE_HEAVY_LOGGING
         // Check if packet was retransmitted on request or on ack timeout
@@ -8411,12 +8411,12 @@ int CUDT::processData(CUnit* in_unit)
     else if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 1)
         m_RcvTimeWindow.probe2Arrival(pktsz);
 
-    CGuard::enterCS(m_StatsLock);
+    CGuard::enterCS(m_StatsLock, "Stats");
     m_stats.traceBytesRecv += pktsz;
     m_stats.bytesRecvTotal += pktsz;
     ++m_stats.traceRecv;
     ++m_stats.recvTotal;
-    CGuard::leaveCS(m_StatsLock);
+    CGuard::leaveCS(m_StatsLock, "Stats");
 
     typedef vector<pair<int32_t, int32_t> > loss_seqs_t;
     loss_seqs_t                             filter_loss_seqs;
@@ -8521,10 +8521,10 @@ int CUDT::processData(CUnit* in_unit)
                 uint64_t bltime =
                     CountIIR(uint64_t(m_stats.traceBelatedTime) * 1000, CTimer::getTime() - tsbpdtime, 0.2);
 
-                CGuard::enterCS(m_StatsLock);
+                CGuard::enterCS(m_StatsLock, "Stats");
                 m_stats.traceBelatedTime = double(bltime) / 1000.0;
                 m_stats.traceRcvBelated++;
-                CGuard::leaveCS(m_StatsLock);
+                CGuard::leaveCS(m_StatsLock, "Stats");
                 HLOGC(mglog.Debug,
                       log << CONID() << "RECEIVED: seq=" << packet.m_iSeqNo << " offset=" << offset << " (BELATED/"
                           << rexmitstat[pktrexmitflag] << rexmit_reason << ") FLAGS: " << packet.MessageFlagStr());
@@ -8833,9 +8833,9 @@ int CUDT::processData(CUnit* in_unit)
             if (m_iReorderTolerance > 0)
             {
                 m_iReorderTolerance--;
-                CGuard::enterCS(m_StatsLock);
+                CGuard::enterCS(m_StatsLock, "Stats");
                 m_stats.traceReorderDistance--;
-                CGuard::leaveCS(m_StatsLock);
+                CGuard::leaveCS(m_StatsLock, "Stats");
                 HLOGF(mglog.Debug,
                       "ORDERED DELIVERY of 50 packets in a row - decreasing tolerance to %d",
                       m_iReorderTolerance);
@@ -8885,9 +8885,9 @@ void CUDT::unlose(const CPacket& packet)
             HLOGF(mglog.Debug, "received out-of-band packet seq %d", sequence);
 
             const int seqdiff = abs(CSeqNo::seqcmp(m_iRcvCurrSeqNo, packet.m_iSeqNo));
-            CGuard::enterCS(m_StatsLock);
+            CGuard::enterCS(m_StatsLock, "Stats");
             m_stats.traceReorderDistance = max(seqdiff, m_stats.traceReorderDistance);
-            CGuard::leaveCS(m_StatsLock);
+            CGuard::leaveCS(m_StatsLock, "Stats");
             if (seqdiff > m_iReorderTolerance)
             {
                 const int new_tolerance = min(seqdiff, m_iMaxReorderTolerance);
@@ -8992,9 +8992,9 @@ breakbreak:;
                 if (m_iReorderTolerance > 0)
                 {
                     m_iReorderTolerance--;
-                    CGuard::enterCS(m_StatsLock);
+                    CGuard::enterCS(m_StatsLock, "Stats");
                     m_stats.traceReorderDistance--;
-                    CGuard::leaveCS(m_StatsLock);
+                    CGuard::leaveCS(m_StatsLock, "Stats");
                     HLOGF(mglog.Debug,
                           "... reached %d times - decreasing tolerance to %d",
                           m_iConsecEarlyDelivery,
