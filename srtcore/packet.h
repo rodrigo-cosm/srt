@@ -53,12 +53,11 @@ modified by
 #ifndef __UDT_PACKET_H__
 #define __UDT_PACKET_H__
 
-
 #include "udt.h"
 #include "common.h"
 #include "utilities.h"
+#include "packetfilter_api.h"
 #include "netinet_any.h"
-
 
 //////////////////////////////////////////////////////////////////////////////
 // The purpose of the IOVector class is to proide a platform-independet interface
@@ -214,6 +213,7 @@ inline EncryptionKeySpec GetEncryptionKeySpec(int32_t msgno)
 
 const int32_t PUMASK_SEQNO_PROBE = 0xF;
 
+std::string PacketMessageFlagStr(uint32_t msgno_field);
 
 class CChannel;
 
@@ -246,7 +246,7 @@ public:
       /// @param rparam [in] pointer to the second data structure, explained by the packet type.
       /// @param size [in] size of rparam, in number of bytes;
 
-   void pack(UDTMessageType pkttype, int32_t* lparam = NULL, void* rparam = NULL, int size = 0);
+   void pack(UDTMessageType pkttype, const int32_t* lparam = NULL, void* rparam = NULL, int size = 0);
 
       /// Read the packet vector.
       /// @return Pointer to the packet vector.
@@ -278,12 +278,12 @@ public:
    bool isControl() const
    {
        // read bit 0
-       return 0!=  SEQNO_CONTROL::unwrap(m_nHeader[PH_SEQNO]);
+       return 0!=  SEQNO_CONTROL::unwrap(m_nHeader[SRT_PH_SEQNO]);
    }
 
    void setControl(UDTMessageType type)
    {
-       m_nHeader[PH_SEQNO] = SEQNO_CONTROL::mask | SEQNO_MSGTYPE::wrap(type);
+       m_nHeader[SRT_PH_SEQNO] = SEQNO_CONTROL::mask | SEQNO_MSGTYPE::wrap(type);
    }
 
       /// Read the extended packet type.
@@ -301,7 +301,7 @@ public:
    // contains the control message
    int32_t getSeqNo() const
    {
-       return m_nHeader[PH_SEQNO];
+       return m_nHeader[SRT_PH_SEQNO];
    }
 
       /// Read the message boundary flag bit.
@@ -331,26 +331,6 @@ public:
    EncryptionKeySpec getMsgCryptoFlags() const;
    void setMsgCryptoFlags(EncryptionKeySpec spec);
 
-   /*
-      /// Encrypt packet if crypto context present
-      /// @param hcrypto  HaiCrypt handle.
-      /// @retval -1 encryption enabled and failed.
-      /// @retval 0 encryption deferred (parallel processing).
-      /// @retval >0 bytes in packet (clear text, encrypted current or older (deferred) packet).
-
-
-   EncryptionStatus encrypt(HaiCrypt_Handle hcrypto);
-
-      /// Decrypt packet if crypto context present
-      /// @param hcrypto  HaiCrypt handle.
-      /// @retval -1 packet encrypted but no crypto context or decryption failed.
-      /// @retval 0 decryption deferred (parallel processing).
-      /// @retval >0 bytes in packet (clear text oo decrypted current or older (deferred) packet).
-
-
-   EncryptionStatus decrypt(HaiCrypt_Handle hcrypto);
-   */
-
       /// Read the message time stamp.
       /// @return packet header field [2] (bit 0~31, bit 0-26 if SRT_DEBUG_TSBPD_WRAP).
 
@@ -373,18 +353,6 @@ public:
 
    CPacket* clone() const;
 
-   enum PacketHeaderFields
-   {
-       PH_FIRST = 0, // Must be first, this is for loops
-       PH_SEQNO = 0, //< sequence number
-       PH_MSGNO = 1, //< message number
-       PH_TIMESTAMP = 2, //< time stamp
-       PH_ID = 3, //< socket ID
-       // Must be the last value - this is size of all, not a field id
-       PH_SIZE = 4
-   };
-
-   //static const size_t PH_SIZE = 4;
    enum PacketVectorFields
    {
        PV_HEADER = 0,
@@ -399,7 +367,7 @@ protected:
    // DynamicStruct is the same as array of given type and size, just it
    // enforces that you index it using a symbol from symbolic enum type, not by a bare integer.
 
-   typedef DynamicStruct<uint32_t, PH_SIZE, PacketHeaderFields> HEADER_TYPE;
+   typedef DynamicStruct<uint32_t, SRT_PH__SIZE, SrtPktHeaderFields> HEADER_TYPE;
    HEADER_TYPE m_nHeader;  //< The 128-bit header field
 
    // XXX NOTE: iovec here is not portable. On Windows there's a different
@@ -423,7 +391,7 @@ public:
    int32_t& m_iSeqNo;                   // alias: sequence number
    int32_t& m_iMsgNo;                   // alias: message number
    int32_t& m_iTimeStamp;               // alias: timestamp
-   int32_t& m_iID;			// alias: socket ID
+   int32_t& m_iID;                      // alias: socket ID
    char*& m_pcData;                     // alias: data/control information
 
    // Experimental: sometimes these references don't work!
@@ -431,7 +399,7 @@ public:
    char* release();
 
    //static const int m_iPktHdrSize;	// packet header size
-   static const size_t HDR_SIZE = sizeof(HEADER_TYPE); // packet header size = PH_SIZE * sizeof(uint32_t)
+   static const size_t HDR_SIZE = sizeof(HEADER_TYPE); // packet header size = SRT_PH__SIZE * sizeof(uint32_t)
 
    // Used in many computations
    // Actually this can be also calculated as: sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr).
@@ -445,16 +413,20 @@ public:
    // And derived
    static const size_t SRT_MAX_PAYLOAD_SIZE = ETH_MAX_MTU_SIZE - SRT_DATA_HDR_SIZE;
 
+   // Packet interface
+   char* data() { return m_pcData; }
+   const char* data() const { return m_pcData; }
+   size_t size() const { return getLength(); }
+   uint32_t header(SrtPktHeaderFields field) const { return m_nHeader[field]; }
+
 #if ENABLE_LOGGING
-    #define LOGGING_DEPENDENT ;
+   std::string MessageFlagStr() { return PacketMessageFlagStr(m_nHeader[SRT_PH_MSGNO]); }
+   std::string Info();
 #else
-    #define LOGGING_DEPENDENT {return "";}
+   std::string MessageFlagStr() { return ""; }
+   std::string Info() { return ""; }
+
 #endif
-
-   std::string MessageFlagStr() LOGGING_DEPENDENT
-   std::string Info() LOGGING_DEPENDENT
-
-#undef LOGGING_DEPENDENT
 
 };
 

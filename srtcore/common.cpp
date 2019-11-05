@@ -55,9 +55,8 @@ modified by
 
 #if ENABLE_THREAD_LOGGING
 #include <iostream>
-#endif
-
 // #undef ENABLE_THREAD_ASSERT 1
+#endif
 
 #include <string>
 #include <sstream>
