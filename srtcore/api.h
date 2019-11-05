@@ -74,7 +74,7 @@ class CUDTSocket
 public:
    CUDTSocket():
        m_Status(SRTS_INIT),
-       m_TimeStamp(0),
+       m_ClosureTimeStamp(0),
        m_SocketID(0),
        m_ListenSocket(0),
        m_PeerID(0),
@@ -97,7 +97,12 @@ public:
 
    SRT_SOCKSTATUS m_Status;                  //< current socket state
 
-   uint64_t m_TimeStamp;                     //< time when the socket is closed
+   /// Time when the socket is closed.
+   /// When the socket is closed, it is not removed immediately from the list
+   /// of sockets in order to prevent other methods from accessing invalid address.
+   /// A timer is started and the socket will be removed after approximately
+   /// 1 second (see CUDTUnited::checkBrokenSockets()).
+   uint64_t m_ClosureTimeStamp;
 
    sockaddr_any m_SelfAddr;                  //< local address of the socket
    sockaddr_any m_PeerAddr;                  //< peer address of the socket
@@ -228,6 +233,8 @@ public:
    int epoll_remove_ssock(const int eid, const SYSSOCKET s);
    int epoll_update_usock(const int eid, const SRTSOCKET u, const int* events = NULL);
    int epoll_update_ssock(const int eid, const SYSSOCKET s, const int* events = NULL);
+   int epoll_uwait(const int eid, SRT_EPOLL_EVENT* fdsSet, int fdsSize, int64_t msTimeOut);
+   int32_t epoll_set(const int eid, int32_t flags);
    int epoll_release(const int eid);
 
       /// record the UDT exception.
@@ -321,7 +328,7 @@ private:
    static void TLSDestroy(void* e) {if (NULL != e) delete (CUDTException*)e;}
 
 private:
-   friend struct FLookupSocket;
+   friend struct FLookupSocketWithEvent;
 
    void connect_complete(SRTSOCKET u);
    CUDTSocket* locateSocket(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);

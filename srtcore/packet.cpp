@@ -177,10 +177,10 @@ using namespace srt_logging;
 CPacket::CPacket():
 __pad(),
 m_data_owned(false),
-m_iSeqNo((int32_t&)(m_nHeader[PH_SEQNO])),
-m_iMsgNo((int32_t&)(m_nHeader[PH_MSGNO])),
-m_iTimeStamp((int32_t&)(m_nHeader[PH_TIMESTAMP])),
-m_iID((int32_t&)(m_nHeader[PH_ID])),
+m_iSeqNo((int32_t&)(m_nHeader[SRT_PH_SEQNO])),
+m_iMsgNo((int32_t&)(m_nHeader[SRT_PH_MSGNO])),
+m_iTimeStamp((int32_t&)(m_nHeader[SRT_PH_TIMESTAMP])),
+m_iID((int32_t&)(m_nHeader[SRT_PH_ID])),
 m_pcData((char*&)(m_PacketVector[PV_DATA].dataRef()))
 {
     m_nHeader.clear();
@@ -255,7 +255,7 @@ void CPacket::setLength(size_t len)
    m_PacketVector[PV_DATA].setLength(len);
 }
 
-void CPacket::pack(UDTMessageType pkttype, int32_t* lparam, void* rparam, int size)
+void CPacket::pack(UDTMessageType pkttype, const int32_t* lparam, void* rparam, int size)
 {
     // Set (bit-0 = 1) and (bit-1~15 = type)
    setControl(pkttype);
@@ -269,7 +269,7 @@ void CPacket::pack(UDTMessageType pkttype, int32_t* lparam, void* rparam, int si
    case UMSG_ACK: //0010 - Acknowledgement (ACK)
       // ACK packet seq. no.
       if (NULL != lparam)
-         m_nHeader[PH_MSGNO] = *lparam;
+         m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // data ACK seq. no. 
       // optional: RTT (microsends), RTT variance (microseconds) advertised flow window size (packets), and estimated link capacity (packets per second)
@@ -279,7 +279,7 @@ void CPacket::pack(UDTMessageType pkttype, int32_t* lparam, void* rparam, int si
 
    case UMSG_ACKACK: //0110 - Acknowledgement of Acknowledgement (ACK-2)
       // ACK packet seq. no.
-      m_nHeader[PH_MSGNO] = *lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // control info field should be none
       // but "writev" does not allow this
@@ -304,7 +304,7 @@ void CPacket::pack(UDTMessageType pkttype, int32_t* lparam, void* rparam, int si
       if (lparam)
       {
           // XXX EXPERIMENTAL. Pass the 32-bit integer here.
-         m_nHeader[PH_MSGNO] = *lparam;
+         m_nHeader[SRT_PH_MSGNO] = *lparam;
       }
       // control info field should be none
       // but "writev" does not allow this
@@ -327,7 +327,7 @@ void CPacket::pack(UDTMessageType pkttype, int32_t* lparam, void* rparam, int si
 
    case UMSG_DROPREQ: //0111 - Message Drop Request
       // msg id 
-      m_nHeader[PH_MSGNO] = *lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       //first seq no, last seq no
       m_PacketVector[PV_DATA].set(rparam, size);
@@ -336,7 +336,7 @@ void CPacket::pack(UDTMessageType pkttype, int32_t* lparam, void* rparam, int si
 
    case UMSG_PEERERROR: //1000 - Error Signal from the Peer Side
       // Error type
-      m_nHeader[PH_MSGNO] = *lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // control info field should be none
       // but "writev" does not allow this
@@ -348,7 +348,7 @@ void CPacket::pack(UDTMessageType pkttype, int32_t* lparam, void* rparam, int si
       // for extended control packet
       // "lparam" contains the extended type information for bit 16 - 31
       // "rparam" is the control information
-      m_nHeader[PH_SEQNO] |= *lparam;
+      m_nHeader[SRT_PH_SEQNO] |= *lparam;
 
       if (NULL != rparam)
       {
@@ -373,12 +373,12 @@ IOVector* CPacket::getPacketVector()
 
 UDTMessageType CPacket::getType() const
 {
-    return UDTMessageType(SEQNO_MSGTYPE::unwrap(m_nHeader[PH_SEQNO]));
+    return UDTMessageType(SEQNO_MSGTYPE::unwrap(m_nHeader[SRT_PH_SEQNO]));
 }
 
 int CPacket::getExtendedType() const
 {
-    return SEQNO_EXTTYPE::unwrap(m_nHeader[PH_SEQNO]);
+    return SEQNO_EXTTYPE::unwrap(m_nHeader[SRT_PH_SEQNO]);
 }
 
 int32_t CPacket::getAckSeqNo() const
@@ -387,7 +387,7 @@ int32_t CPacket::getAckSeqNo() const
    // This field is used only in UMSG_ACK and UMSG_ACKACK,
    // so 'getAckSeqNo' symbolically defines the only use of it
    // in case of CONTROL PACKET.
-   return m_nHeader[PH_MSGNO];
+   return m_nHeader[SRT_PH_MSGNO];
 }
 
 uint16_t CPacket::getControlFlags() const
@@ -396,40 +396,40 @@ uint16_t CPacket::getControlFlags() const
     // which is not used at all in case when the standard
     // type message is interpreted. This can be used to pass
     // additional special flags.
-    return SEQNO_EXTTYPE::unwrap(m_nHeader[PH_SEQNO]);
+    return SEQNO_EXTTYPE::unwrap(m_nHeader[SRT_PH_SEQNO]);
 }
 
 PacketBoundary CPacket::getMsgBoundary() const
 {
-    return PacketBoundary(MSGNO_PACKET_BOUNDARY::unwrap(m_nHeader[PH_MSGNO]));
+    return PacketBoundary(MSGNO_PACKET_BOUNDARY::unwrap(m_nHeader[SRT_PH_MSGNO]));
 }
 
 bool CPacket::getMsgOrderFlag() const
 {
-    return 0!=  MSGNO_PACKET_INORDER::unwrap(m_nHeader[PH_MSGNO]);
+    return 0!=  MSGNO_PACKET_INORDER::unwrap(m_nHeader[SRT_PH_MSGNO]);
 }
 
 int32_t CPacket::getMsgSeq(bool has_rexmit) const
 {
     if ( has_rexmit )
     {
-        return MSGNO_SEQ::unwrap(m_nHeader[PH_MSGNO]);
+        return MSGNO_SEQ::unwrap(m_nHeader[SRT_PH_MSGNO]);
     }
     else
     {
-        return MSGNO_SEQ_OLD::unwrap(m_nHeader[PH_MSGNO]);
+        return MSGNO_SEQ_OLD::unwrap(m_nHeader[SRT_PH_MSGNO]);
     }
 }
 
 bool CPacket::getRexmitFlag() const
 {
     // return false; //
-    return 0 !=  MSGNO_REXMIT::unwrap(m_nHeader[PH_MSGNO]);
+    return 0 !=  MSGNO_REXMIT::unwrap(m_nHeader[SRT_PH_MSGNO]);
 }
 
 EncryptionKeySpec CPacket::getMsgCryptoFlags() const
 {
-    return EncryptionKeySpec(MSGNO_ENCKEYSPEC::unwrap(m_nHeader[PH_MSGNO]));
+    return EncryptionKeySpec(MSGNO_ENCKEYSPEC::unwrap(m_nHeader[SRT_PH_MSGNO]));
 }
 
 // This is required as the encryption/decryption happens in place.
@@ -437,8 +437,8 @@ EncryptionKeySpec CPacket::getMsgCryptoFlags() const
 // crypto flags after encrypting a packet.
 void CPacket::setMsgCryptoFlags(EncryptionKeySpec spec)
 {
-    int32_t clr_msgno = m_nHeader[PH_MSGNO] & ~MSGNO_ENCKEYSPEC::mask;
-    m_nHeader[PH_MSGNO] = clr_msgno | EncryptionKeyBits(spec);
+    int32_t clr_msgno = m_nHeader[SRT_PH_MSGNO] & ~MSGNO_ENCKEYSPEC::mask;
+    m_nHeader[SRT_PH_MSGNO] = clr_msgno | EncryptionKeyBits(spec);
 }
 
 /*
@@ -488,7 +488,7 @@ EncryptionStatus CPacket::decrypt(HaiCrypt_Handle hcrypto)
    m_PacketVector[PV_DATA].iov_len = rc; // In case clr txt size is different from cipher txt
 
    // Decryption succeeded. Update flags.
-   m_nHeader[PH_MSGNO] &= ~MSGNO_ENCKEYSPEC::mask; // sets EK_NOENC to ENCKEYSPEC bits.
+   m_nHeader[SRT_PH_MSGNO] &= ~MSGNO_ENCKEYSPEC::mask; // sets EK_NOENC to ENCKEYSPEC bits.
 
    return ENCS_CLEAR;
 }
@@ -498,7 +498,7 @@ EncryptionStatus CPacket::decrypt(HaiCrypt_Handle hcrypto)
 uint32_t CPacket::getMsgTimeStamp() const
 {
    // SRT_DEBUG_TSBPD_WRAP may enable smaller timestamp for faster wraparoud handling tests
-   return (uint32_t)m_nHeader[PH_TIMESTAMP] & TIMESTAMP_MASK;
+   return (uint32_t)m_nHeader[SRT_PH_TIMESTAMP] & TIMESTAMP_MASK;
 }
 
 CPacket* CPacket::clone() const
@@ -514,8 +514,8 @@ CPacket* CPacket::clone() const
    return pkt;
 }
 
-#if ENABLE_LOGGING
-std::string CPacket::MessageFlagStr()
+// Useful for debugging
+std::string PacketMessageFlagStr(uint32_t msgno_field)
 {
     using namespace std;
 
@@ -526,10 +526,10 @@ std::string CPacket::MessageFlagStr()
     static const char* const crypto [] = { "EK_NOENC", "EK_EVEN", "EK_ODD", "EK*ERROR" };
     static const char* const rexmit [] = { "SN_ORIGINAL", "SN_REXMIT" };
 
-    out << boundary[int(getMsgBoundary())] << " ";
-    out << order[int(getMsgOrderFlag())] << " ";
-    out << crypto[int(getMsgCryptoFlags())] << " ";
-    out << rexmit[int(getRexmitFlag())];
+    out << boundary[MSGNO_PACKET_BOUNDARY::unwrap(msgno_field)] << " ";
+    out << order[MSGNO_PACKET_INORDER::unwrap(msgno_field)] << " ";
+    out << crypto[MSGNO_ENCKEYSPEC::unwrap(msgno_field)] << " ";
+    out << rexmit[MSGNO_REXMIT::unwrap(msgno_field)];
 
     return out.str();
 }
@@ -563,7 +563,7 @@ std::string CPacket::Info()
         {
             // This is a value that some messages use for some purposes.
             // The "ack seq no" is one of the purposes, used by UMSG_ACK and UMSG_ACKACK.
-            // This is simply the PH_MSGNO field used as a message number in data packets.
+            // This is simply the SRT_PH_MSGNO field used as a message number in data packets.
             os << " ARG: 0x";
             os << std::hex << getAckSeqNo() << " ";
             os << std::dec << getAckSeqNo();
@@ -599,4 +599,3 @@ std::string CPacket::Info()
 
     return os.str();
 }
-#endif

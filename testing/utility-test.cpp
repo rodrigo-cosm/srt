@@ -19,6 +19,16 @@
 #include <common.h>
 #include <packet.h>
 #include <crypto.h>
+#include <common.h>
+
+void ShowDistance(int32_t s1, int32_t s2)
+{
+    using namespace std;
+
+    cout << "s1=" << s1 << "s2=" << s2 << " DISTANCE:\n";
+    cout << "seqcmp -> " << CSeqNo::seqcmp(s1, s2) << endl;
+    cout << "seqoff -> " << CSeqNo::seqoff(s2, s1) << endl;
+}
 
 using namespace std;
 
@@ -211,6 +221,16 @@ int main()
 
     cout << "TESTING: CircularBuffer\n";
     TestCircularBuffer();
+
+    cout << "-------------------------------\n";
+    cout << "SEQUENCES:\n";
+    int32_t s1 = 100, s2 = 200;
+    ShowDistance(s1, s2);
+
+    cout << "GO BACK BY -150:\n";
+    s1 = CSeqNo::decseq(s1, 150);
+    s2 = CSeqNo::decseq(s2, 150);
+    ShowDistance(s1, s2);
 
     return 0;
 }

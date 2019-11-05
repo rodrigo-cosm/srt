@@ -86,6 +86,8 @@ public:
    CSndBuffer(int size = 32, int mss = 1500);
    ~CSndBuffer();
 
+public:
+
       /// Insert a user buffer into the sending list.
       /// For Message control data the following data are used:
       /// INPUT:
@@ -268,6 +270,9 @@ public:
    CRcvBuffer(CUnitQueue* queue, int bufsize_pkts = DEFAULT_SIZE);
    ~CRcvBuffer();
 
+
+public:
+
       /// Write data into the buffer.
       /// @param [in] unit pointer to a data unit containing new packet
       /// @param [in] offset offset from last ACK point.
@@ -327,7 +332,7 @@ public:
       /// Query how many data of the receive buffer is acknowledged.
       /// @param [in] now current time in us.
       /// @return none.
-
+   
    void updRcvAvgDataSize(uint64_t now);
 #endif /* SRT_ENABLE_RCVBUFSZ_MAVG */
 
@@ -456,7 +461,7 @@ private:
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
       /// @return local delivery time (usec)
 
-   uint64_t getTsbPdTimeBase(uint32_t timestamp);
+   uint64_t getTsbPdTimeBase(uint32_t timestamp_us);
 
       /// Get packet local delivery time
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
@@ -473,10 +478,17 @@ public:
    void applyGroupDrift(uint64_t timebase, bool wrapcheck, int64_t udrift);
    uint64_t getPktTsbPdTime(uint32_t timestamp);
    int debugGetSize() const;
-
    uint64_t debugGetDeliveryTime(int offset);
 
    size_t dropData(int len);
+   
+   // Required by PacketFilter facility to use as a storage
+   // for provided packets
+   CUnitQueue* getUnitQueue()
+   {
+       return m_pUnitQueue;
+   }
+
 private:
 
    int extractData(char *data, int len, int p, int q, bool passack);
@@ -513,20 +525,20 @@ private:
    }
 
 private:
-   CUnit** m_pUnit;                  // Array of pointed units collected in the buffer
-   const int m_iSize;                // Size of the internal array of CUnit* items
-   CUnitQueue* m_pUnitQueue;         // the shared unit queue
+   CUnit** m_pUnit;                     // Array of pointed units collected in the buffer
+   const int m_iSize;                   // Size of the internal array of CUnit* items
+   CUnitQueue* m_pUnitQueue;            // the shared unit queue
 
-   int m_iStartPos;                  // HEAD: first packet available for reading
-   int m_iLastAckPos;                // the last ACKed position (exclusive), follows the last readable
-   int m_iMaxPos;                    // delta between acked-TAIL and reception-TAIL
+   int m_iStartPos;                     // HEAD: first packet available for reading
+   int m_iLastAckPos;                   // the last ACKed position (exclusive), follows the last readable
+   int m_iMaxPos;                       // delta between acked-TAIL and reception-TAIL
 
 
-   int m_iNotch;                     // the starting read point of the first unit
-                                     // (this is required for stream reading mode; it's
-                                     // the position in the first unit in the list
-                                     // up to which data are already retrieved;
-                                     // in message reading mode it's unused and always 0)
+   int m_iNotch;                        // the starting read point of the first unit
+                                        // (this is required for stream reading mode; it's
+                                        // the position in the first unit in the list
+                                        // up to which data are already retrieved;
+                                        // in message reading mode it's unused and always 0)
 
    pthread_mutex_t m_BytesCountLock;    // used to protect counters operations
    int m_iBytesCount;                   // Number of payload bytes in the buffer
