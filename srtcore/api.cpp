@@ -1219,7 +1219,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, const sockaddr_any& source_addr, SRT
 
         // Don't synchronize ISN in case of bonding groups. Every link
         // may send their own payloads independently.
-        if (g.type() == SRT_GTYPE_BONDING)
+        if (g.type() == SRT_GTYPE_BALANCING)
             isn = -1;
 
         // We got it. Bind the socket, if the source address was set

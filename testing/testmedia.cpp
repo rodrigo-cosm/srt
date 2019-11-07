@@ -717,12 +717,12 @@ void SrtCommon::OpenGroupClient()
     SRT_GROUP_TYPE type = SRT_GTYPE_UNDEFINED;
 
     // Resolve group type.
-    if (m_group_type == "redundancy")
-        type = SRT_GTYPE_REDUNDANT;
+    if (m_group_type == "broadcast")
+        type = SRT_GTYPE_BROADCAST;
     else if (m_group_type == "backup")
         type = SRT_GTYPE_BACKUP;
-    else if (m_group_type == "bonding")
-        type = SRT_GTYPE_BONDING;
+    else if (m_group_type == "balancing")
+        type = SRT_GTYPE_BALANCING;
     else
     {
         Error("With //group, type='" + m_group_type + "' undefined");

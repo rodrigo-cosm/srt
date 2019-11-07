@@ -3634,7 +3634,7 @@ void CUDT::synchronizeWithGroup(CUDTGroup* gp)
     // with updateAfterSrtHandshake().
     updateSrtSndSettings();
 
-    if (gp->type() == SRT_GTYPE_BONDING)
+    if (gp->type() == SRT_GTYPE_BALANCING)
     {
         HLOGC(mglog.Debug, log << "synchronizeWithGroup: @" << m_SocketID << ": NOT synchronizing sequence numbers.");
     }
@@ -11453,7 +11453,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
         m_bClosing(false),
         m_iLastSchedSeqNo(-1),
         m_iLastSchedMsgNo(-1),
-        m_iBondingRoll(0)
+        m_iBalancingRoll(0)
 {
     CGuard::createMutex(m_GroupLock);
     CGuard::createMutex(m_RcvDataLock);
@@ -11464,7 +11464,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
     // Configure according to type
     switch (gtype)
     {
-    case SRT_GTYPE_REDUNDANT:
+    case SRT_GTYPE_BROADCAST:
         //m_bSynchOnMsgNo = false;
         m_selfManaged = true;
         break;
@@ -11474,7 +11474,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
         m_selfManaged = true;
         break;
 
-    case SRT_GTYPE_BONDING:
+    case SRT_GTYPE_BALANCING:
         //m_bSynchOnMsgNo = true;
         m_selfManaged = true;
         break;
@@ -11977,14 +11977,14 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         LOGC(dlog.Error, log << "CUDTGroup::send: not implemented for type #" << m_type);
         throw CUDTException(MJ_SETUP, MN_INVAL, 0);
 
-    case SRT_GTYPE_REDUNDANT:
-        return sendRedundant(buf, len, r_mc);
+    case SRT_GTYPE_BROADCAST:
+        return sendBroadcast(buf, len, r_mc);
 
     case SRT_GTYPE_BACKUP:
         return sendBackup(buf, len, r_mc);
 
-    case SRT_GTYPE_BONDING:
-        return sendBonding(buf, len, r_mc);
+    case SRT_GTYPE_BALANCING:
+        return sendBalancing(buf, len, r_mc);
 
         /* to be implemented
     case SRT_GTYPE_MULTICAST:
@@ -11993,7 +11993,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     }
 }
 
-int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
+int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
     // Avoid stupid errors in the beginning.
     if (len <= 0)
@@ -12035,7 +12035,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Check socket sndstate before sending
         if (d->sndstate == GST_BROKEN)
         {
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
             wipeme.push_back(d);
 
             /*
@@ -12079,7 +12079,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 continue;
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in IDLE state: @" << d->id << " - will activate it");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in IDLE state: @" << d->id << " - will activate it");
             // This is idle, we'll take care of them next time
             // Might be that:
             // - this socket is idle, while some NEXT socket is running
@@ -12092,12 +12092,12 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         if (d->sndstate == GST_RUNNING)
         {
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in RUNNING state: @" << d->id << " - will send a payload");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in RUNNING state: @" << d->id << " - will send a payload");
             sendable.push_back(d);
             continue;
         }
 
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: socket @" << d->id << " not ready, state: "
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket @" << d->id << " not ready, state: "
                 << StateStr(d->sndstate) << "(" << int(d->sndstate) << ") - NOT sending, SET AS PENDING");
 
         pending.push_back(d);
@@ -12184,7 +12184,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         int lastseq = d->ps->core().schedSeqNo();
         if (curseq != -1 && curseq != lastseq)
         {
-            HLOGC(mglog.Debug, log << "grp/sendRedundant: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendBroadcast: socket @" << d->id
                 << ": override snd sequence %" << lastseq
                 << " with %" << curseq << " (diff by "
                 << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD: " << BufferStamp(buf, len));
@@ -12192,7 +12192,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
         else
         {
-            HLOGC(mglog.Debug, log << "grp/sendRedundant: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendBroadcast: socket @" << d->id
                 << ": sequence remains with original value: %" << lastseq
                 << "; SENDING PAYLOAD " << BufferStamp(buf, len));
         }
@@ -12231,13 +12231,13 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     if (curseq != -1)
     {
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: updating current scheduling sequence %" << curseq);
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: updating current scheduling sequence %" << curseq);
         m_iLastSchedSeqNo = curseq;
     }
 
     if (!pending.empty())
     {
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: found pending sockets, polling them.");
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: found pending sockets, polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
@@ -12246,7 +12246,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (m_SndEpolld->watch_empty())
         {
             // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "grp/sendRedundant: IPE: reported pending sockets, but EID is empty - wiping pending!");
+            LOGC(dlog.Error, log << "grp/sendBroadcast: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pending.begin(), pending.end(), back_inserter(wipeme));
         }
         else
@@ -12256,7 +12256,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: RDY: " << DisplayEpollResults(sready));
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: RDY: " << DisplayEpollResults(sready));
 
             // sockets in EX: should be moved to wipeme.
             for (vector<gli_t>::iterator i = pending.begin(); i != pending.end(); ++i)
@@ -12264,7 +12264,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 gli_t d = *i;
                 if (CEPoll::isready(sready, d->id, SRT_EPOLL_ERR))
                 {
-                    HLOGC(dlog.Debug, log << "grp/sendRedundant: Socket @" << d->id << " reported FAILURE - moved to wiped.");
+                    HLOGC(dlog.Debug, log << "grp/sendBroadcast: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(d);
                     m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
@@ -12293,7 +12293,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         CUDTSocket* ps = d->ps;
         if (!ps)
         {
-            LOGC(dlog.Error, log << "grp/sendRedundant: IPE: socket NULL at id=" << d->id << " - removing from group list");
+            LOGC(dlog.Error, log << "grp/sendBroadcast: IPE: socket NULL at id=" << d->id << " - removing from group list");
             // Closing such socket is useless, it simply won't be found in the map and
             // the internal facilities won't know what to do with it anyway.
             // Simply delete the entry.
@@ -12311,7 +12311,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
             CUDTSocket* ps = *x;
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
 
             // NOTE: This does inside: ps->removeFromGroup().
             // After this call, 'd' is no longer valid and *i is singular.
@@ -12319,7 +12319,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
     }
 
-    HLOGC(dlog.Debug, log << "grp/sendRedundant: - wiped " << wipeme.size() << " broken sockets");
+    HLOGC(dlog.Debug, log << "grp/sendBroadcast: - wiped " << wipeme.size() << " broken sockets");
 
     // We'll need you again.
     wipeme.clear();
@@ -12403,7 +12403,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
         }
 
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: all blocked, trying to common-block on epoll...");
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: all blocked, trying to common-block on epoll...");
 
         // XXX TO BE REMOVED. Sockets should be subscribed in m_SndEID at connecting time
         // (both srt_connect and srt_accept).
@@ -12426,7 +12426,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
             InvertedGuard ug(&m_GroupLock, "Group");
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: blocking on any of blocked sockets to allow sending");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
             blst = m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, m_iSndTimeOut);
@@ -13027,10 +13027,10 @@ void CUDTGroup::updateWriteState()
 // by getting the sequence number.
 int CUDTGroup::recv(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
-    // Bonding is a special case when packets are sorted out basing on the
+    // Balancing is a special case when packets are sorted out basing on the
     // message number.
-    if (m_type == SRT_GTYPE_BONDING)
-        return recvBonding(buf, len, r_mc);
+    if (m_type == SRT_GTYPE_BALANCING)
+        return recvBalancing(buf, len, r_mc);
 
     typedef map<SRTSOCKET, ReadPos>::iterator pit_t;
     // Later iteration over it might be less efficient than
@@ -13701,13 +13701,13 @@ CUDTGroup::ReadPos* CUDTGroup::checkPacketAheadMsgno()
         if (ndiff == 1)
         {
             // The very next packet. Return it.
-            HLOGC(dlog.Debug, log << "group/recvBonding/checkPacketAhead: Base: #" << m_RcvBaseMsgNo << " ahead delivery POSSIBLE #"
+            HLOGC(dlog.Debug, log << "group/recvBalancing/checkPacketAhead: Base: #" << m_RcvBaseMsgNo << " ahead delivery POSSIBLE #"
                     << a.mctrl.msgno << " from @" << i->first);
             out = &a;
         }
         else if (ndiff < 1 && !a.packet.empty())
         {
-            HLOGC(dlog.Debug, log << "group/recvBonding/checkPacketAhead: @" << i->first << " dropping collected ahead #"
+            HLOGC(dlog.Debug, log << "group/recvBalancing/checkPacketAhead: @" << i->first << " dropping collected ahead #"
                     << a.mctrl.msgno << " with base #" << m_RcvBaseMsgNo);
             a.packet.clear();
         }
@@ -14956,7 +14956,7 @@ bool CUDTGroup::msgDiscrepancy(SRT_MSGCTRL& mctrl)
 }
 
 
-int CUDTGroup::recvBonding(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
+int CUDTGroup::recvBalancing(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
     typedef map<SRTSOCKET, ReadPos>::iterator pit_t;
     // Later iteration over it might be less efficient than
@@ -14977,12 +14977,12 @@ RETRY_READING:
     {
         if (!m_bOpened || !m_bConnected)
         {
-            LOGC(dlog.Error, log << boolalpha << "grp/recvBonding: ERROR opened=" << m_bOpened << " connected=" << m_bConnected);
+            LOGC(dlog.Error, log << boolalpha << "grp/recvBalancing: ERROR opened=" << m_bOpened << " connected=" << m_bConnected);
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
         }
     }
 
-    HLOGC(dlog.Debug, log << "grp/recvBonding: START. Buffer size=" << len);
+    HLOGC(dlog.Debug, log << "grp/recvBalancing: START. Buffer size=" << len);
 
     // Check first the ahead packets if you have any to deliver.
     if (m_RcvBaseMsgNo != -1 && !m_Positions.empty())
@@ -14994,7 +14994,7 @@ RETRY_READING:
             if (size_t(len) < pos->packet.size())
                 throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
 
-            HLOGC(dlog.Debug, log << "grp/recvBonding: delivering AHEAD packet %" << pos->mctrl.pktseq << " #" << pos->mctrl.msgno
+            HLOGC(dlog.Debug, log << "grp/recvBalancing: delivering AHEAD packet %" << pos->mctrl.pktseq << " #" << pos->mctrl.msgno
                     << ": " << BufferStamp(&pos->packet[0], pos->packet.size()) << " - updating base");
             memcpy(buf, &pos->packet[0], pos->packet.size());
             fillGroupData(r_mc, pos->mctrl, out_grpdata, out_grpdata_size);
@@ -15077,7 +15077,7 @@ RETRY_READING:
     vector<SRTSOCKET> read_ready, connect_pending;
 
     {
-        HLOGC(dlog.Debug, log << "grp/recvBonding: Reviewing member sockets to epoll-add (locking)");
+        HLOGC(dlog.Debug, log << "grp/recvBalancing: Reviewing member sockets to epoll-add (locking)");
         CGuard glock(m_GroupLock, "Group");
         for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
         {
@@ -15163,12 +15163,12 @@ RETRY_READING:
         srt_epoll_add_usock(m_RcvEID, *i, &read_modes);
     }
 
-    HLOGC(dlog.Debug, log << "grp/recvBonding: " << ds.str() << " --> EPOLL/SWAIT");
+    HLOGC(dlog.Debug, log << "grp/recvBalancing: " << ds.str() << " --> EPOLL/SWAIT");
 #undef HCLOG
 
     if (!still_alive)
     {
-        LOGC(dlog.Error, log << "grp/recvBonding: all links broken");
+        LOGC(dlog.Error, log << "grp/recvBalancing: all links broken");
         throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
     }
 
@@ -15201,7 +15201,7 @@ RETRY_READING:
     int timeout = m_bSynRecving ? m_iRcvTimeOut : 0;
     int nready = m_pGlobal->m_EPoll.swait(*m_RcvEpolld, sready, timeout, false /*report by retval*/);
 
-    HLOGC(dlog.Debug, log << "grp/recvBonding: RDY: " << DisplayEpollResults(sready));
+    HLOGC(dlog.Debug, log << "grp/recvBalancing: RDY: " << DisplayEpollResults(sready));
 
     if (nready == 0)
     {
@@ -15244,7 +15244,7 @@ RETRY_READING:
     // will be surely empty. This will be checked then same way as when
     // reading from every socket resulted in error.
 
-    HLOGC(dlog.Debug, log << "grp/recvBonding: Reviewing read-ready sockets: " << DisplayEpollResults(sready));
+    HLOGC(dlog.Debug, log << "grp/recvBalancing: Reviewing read-ready sockets: " << DisplayEpollResults(sready));
 
     for (CEPoll::fmap_t::const_iterator i = sready.begin(); i != sready.end(); ++i)
     {
@@ -15272,7 +15272,7 @@ RETRY_READING:
             int ndiff = MsgNo(p->mctrl.msgno) - MsgNo(m_RcvBaseMsgNo);
             if (ndiff > 1)
             {
-                HLOGC(dlog.Debug, log << "grp/recvBonding: EPOLL: @" << id << " #" << p->mctrl.msgno
+                HLOGC(dlog.Debug, log << "grp/recvBalancing: EPOLL: @" << id << " #" << p->mctrl.msgno
 						<< " AHEAD #" << m_RcvBaseMsgNo << ", not reading.");
                 continue;
             }
@@ -15281,9 +15281,9 @@ RETRY_READING:
         {
             // The position is not known, so get the position on which
             // the socket is currently standing. Could be unknown, too.
-            pair<pit_t, bool> ee = m_Positions.insert(make_pair(id, ReadPos(ps->core().m_pRcvBuffer->getTopMsgno(), SRT_GTYPE_BONDING)));
+            pair<pit_t, bool> ee = m_Positions.insert(make_pair(id, ReadPos(ps->core().m_pRcvBuffer->getTopMsgno(), SRT_GTYPE_BALANCING)));
             p = &(ee.first->second);
-            HLOGC(dlog.Debug, log << "grp/recvBonding: EPOLL: @" << id << " #" << p->mctrl.msgno << " NEW SOCKET INSERTED");
+            HLOGC(dlog.Debug, log << "grp/recvBalancing: EPOLL: @" << id << " #" << p->mctrl.msgno << " NEW SOCKET INSERTED");
         }
 
         // Read from this socket stubbornly, until:
@@ -15305,20 +15305,20 @@ RETRY_READING:
             {
                 // We have already the data, so this must fall on the floor
                 stat = ps->core().receiveMessage(lostbuf, SRT_LIVE_MAX_PLSIZE, Ref(mctrl), CUDTUnited::ERH_RETURN);
-                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " IGNORED data with %" << mctrl.pktseq << " #" << mctrl.msgno
+                HLOGC(dlog.Debug, log << "grp/recvBalancing: @" << id << " IGNORED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                         << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(lostbuf, stat)));
                 used_output = lostbuf;
             }
             else
             {
                 stat = ps->core().receiveMessage(buf, len, Ref(mctrl), CUDTUnited::ERH_RETURN);
-                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " EXTRACTED data with %" << mctrl.pktseq << " #" << mctrl.msgno
+                HLOGC(dlog.Debug, log << "grp/recvBalancing: @" << id << " EXTRACTED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                         << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(buf, stat)));
                 used_output = buf;
             }
             if (stat == 0)
             {
-                HLOGC(dlog.Debug, log << "grp/recvBonding: SPURIOUS epoll, ignoring");
+                HLOGC(dlog.Debug, log << "grp/recvBalancing: SPURIOUS epoll, ignoring");
                 // This is returned in case of "again". In case of errors, we have SRT_ERROR.
                 // Do not treat this as spurious, just stop reading.
                 break;
@@ -15326,7 +15326,7 @@ RETRY_READING:
 
             if (stat == SRT_ERROR)
             {
-                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << ": " << srt_getlasterror_str());
+                HLOGC(dlog.Debug, log << "grp/recvBalancing: @" << id << ": " << srt_getlasterror_str());
                 broken.insert(ps);
                 break;
             }
@@ -15351,7 +15351,7 @@ RETRY_READING:
                 // This error should be returned if the link turns out
                 // to be the only one, or set to the group data.
                 // err = SRT_ESECFAIL;
-                LOGC(dlog.Error, log << "grp/recvBonding: @" << id << ": SEQUENCE DISCREPANCY: base=%"
+                LOGC(dlog.Error, log << "grp/recvBalancing: @" << id << ": SEQUENCE DISCREPANCY: base=%"
                         << m_RcvBaseSeqNo << " vs pkt=%" << mctrl.pktseq << ", setting ESECFAIL");
                 broken.insert(ps);
                 break;
@@ -15369,7 +15369,7 @@ RETRY_READING:
                 int ndiff = MsgNo(mctrl.msgno) - MsgNo(m_RcvBaseMsgNo);
                 if (ndiff <= 0)
                 {
-                    HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno
+                    HLOGC(dlog.Debug, log << "grp/recvBalancing: @" << id << " #" << mctrl.msgno
 							<< " BEHIND base=#" << m_RcvBaseMsgNo << " - discarding");
                     // The sequence is recorded, the packet has to be discarded.
                     // That's all.
@@ -15392,7 +15392,7 @@ RETRY_READING:
             }
             else
             {
-                HLOGC(dlog.Debug, log << "grp/recvBonding: base not yet set; predicted #" << mctrl.msgno);
+                HLOGC(dlog.Debug, log << "grp/recvBalancing: base not yet set; predicted #" << mctrl.msgno);
             }
 
             // We have seqdiff = 1, or we simply have the very first packet
@@ -15401,11 +15401,11 @@ RETRY_READING:
 
             if (output_size)
             {
-                HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno << " REDUNDANT");
+                HLOGC(dlog.Debug, log << "grp/recvBalancing: @" << id << " #" << mctrl.msgno << " REDUNDANT");
                 break;
             }
 
-            HLOGC(dlog.Debug, log << "grp/recvBonding: @" << id << " #" << mctrl.msgno
+            HLOGC(dlog.Debug, log << "grp/recvBalancing: @" << id << " #" << mctrl.msgno
                     << " DELIVERING; next msgno will be #" << mctrl.msgno);
             output_size = stat;
             fillGroupData(r_mc, mctrl, out_grpdata, out_grpdata_size);
@@ -15422,7 +15422,7 @@ RETRY_READING:
         std::ostringstream brks;
         for (set<CUDTSocket*>::iterator b = broken.begin(); b != broken.end(); ++b)
             brks << "@" << (*b)->m_SocketID << " ";
-        LOGC(dlog.Debug, log << "grp/recvBonding: REMOVING BROKEN: " << brks.str());
+        LOGC(dlog.Debug, log << "grp/recvBalancing: REMOVING BROKEN: " << brks.str());
     }
 #endif
 
@@ -15438,7 +15438,7 @@ RETRY_READING:
     if (broken.size() >= size) // This > is for sanity check
     {
         // All broken
-        HLOGC(dlog.Debug, log << "grp/recvBonding: All sockets broken");
+        HLOGC(dlog.Debug, log << "grp/recvBalancing: All sockets broken");
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
 
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -15465,7 +15465,7 @@ RETRY_READING:
         }
         else
         {
-            HLOGC(dlog.Debug, log << "grp/recvBonding: new base #" << next_msgno << " - replacing previous #" << m_RcvBaseMsgNo);
+            HLOGC(dlog.Debug, log << "grp/recvBalancing: new base #" << next_msgno << " - replacing previous #" << m_RcvBaseMsgNo);
             m_RcvBaseMsgNo = next_msgno;
         }
 
@@ -15477,11 +15477,11 @@ RETRY_READING:
             m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
         }
 
-        HLOGC(dlog.Debug, log << "grp/recvBonding: successfully extacted packet size=" << output_size << " - returning");
+        HLOGC(dlog.Debug, log << "grp/recvBalancing: successfully extacted packet size=" << output_size << " - returning");
         return output_size;
     }
 
-    HLOGC(dlog.Debug, log << "grp/recvBonding: NOT extracted anything - checking for a need to kick kangaroos");
+    HLOGC(dlog.Debug, log << "grp/recvBalancing: NOT extracted anything - checking for a need to kick kangaroos");
 
     // Check if we have any sockets left :D
 
@@ -15572,19 +15572,19 @@ RETRY_READING:
             return len;
         }
 
-        HLOGC(dlog.Debug, log << "grp/recvBonding: "
+        HLOGC(dlog.Debug, log << "grp/recvBalancing: "
                 << (elephants.empty() ? "NO LINKS REPORTED ANY FRESHER PACKET." : "ALL LINKS ELEPHANTS.")
                 << " Re-polling.");
     }
     else
     {
-        HLOGC(dlog.Debug, log << "grp/recvBonding: POSITIONS EMPTY - Re-polling.");
+        HLOGC(dlog.Debug, log << "grp/recvBalancing: POSITIONS EMPTY - Re-polling.");
     }
 
     goto RETRY_READING;
 }
 
-int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
+int CUDTGroup::sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
     // Avoid stupid errors in the beginning.
     if (len <= 0)
@@ -15619,12 +15619,12 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // the streams or not.
     if (m_iLastSchedMsgNo != -1)
     {
-        HLOGC(dlog.Debug, log << "grp/sendBonding: setting message number: " << m_iLastSchedMsgNo);
+        HLOGC(dlog.Debug, log << "grp/sendBalancing: setting message number: " << m_iLastSchedMsgNo);
         mc.msgno = m_iLastSchedMsgNo;
     }
     else
     {
-        HLOGP(dlog.Debug, "grp/sendBonding: NOT setting message number - waiting for the first successful sending");
+        HLOGP(dlog.Debug, "grp/sendBalancing: NOT setting message number - waiting for the first successful sending");
     }
 
     // XXX G make a distinction here for an exact group type of managed sending.
@@ -15640,7 +15640,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Check socket sndstate before sending
         if (d->sndstate == GST_BROKEN)
         {
-            HLOGC(dlog.Debug, log << "grp/sendBonding: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
             wipeme.push_back(d);
 
             /*
@@ -15684,7 +15684,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 continue;
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendBonding: socket in IDLE state: @" << d->id << " - ACTIVATING it");
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: socket in IDLE state: @" << d->id << " - ACTIVATING it");
             d->sndstate = GST_RUNNING;
             sendable.push_back(d);
             continue;
@@ -15692,12 +15692,12 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         if (d->sndstate == GST_RUNNING)
         {
-            HLOGC(dlog.Debug, log << "grp/sendBonding: socket in RUNNING state: @" << d->id << " - will send a payload");
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: socket in RUNNING state: @" << d->id << " - will send a payload");
             sendable.push_back(d);
             continue;
         }
 
-        HLOGC(dlog.Debug, log << "grp/sendBonding: socket @" << d->id << " not ready, state: "
+        HLOGC(dlog.Debug, log << "grp/sendBalancing: socket @" << d->id << " not ready, state: "
                 << StateStr(d->sndstate) << "(" << int(d->sndstate) << ") - NOT sending, SET AS PENDING");
 
         pending.push_back(d);
@@ -15718,10 +15718,10 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     }
 
 
-    if (m_iBondingRoll >= sendable.size())
-        m_iBondingRoll = 0;
+    if (m_iBalancingRoll >= sendable.size())
+        m_iBalancingRoll = 0;
 
-    gli_t d = sendable[m_iBondingRoll];
+    gli_t d = sendable[m_iBalancingRoll];
     int erc = 0;
 
     try
@@ -15736,7 +15736,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Lift the group lock for a while, to avoid possible deadlocks.
         InvertedGuard ug(&m_GroupLock, "Group");
 
-        HLOGC(dlog.Debug, log << "grp/sendBonding: SENDING #" << mc.msgno << " through link [" << m_iBondingRoll << "]");
+        HLOGC(dlog.Debug, log << "grp/sendBalancing: SENDING #" << mc.msgno << " through link [" << m_iBalancingRoll << "]");
 
         // NOTE: EXCEPTION PASSTHROUGH.
         stat = ps->core().sendmsg2(buf, len, r_mc);
@@ -15753,7 +15753,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (m_iLastSchedMsgNo == -1)
         {
             // Initialize this number
-            HLOGC(dlog.Debug, log << "grp/sendBonding: INITIALIZING message number: " << mc.msgno);
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: INITIALIZING message number: " << mc.msgno);
             m_iLastSchedMsgNo = mc.msgno;
         }
     }
@@ -15763,11 +15763,11 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     d->laststatus = d->ps->getStatus();
 
     // Successful, so update the roll
-    ++m_iBondingRoll;
+    ++m_iBalancingRoll;
 
     if (!pending.empty())
     {
-        HLOGC(dlog.Debug, log << "grp/sendBonding: found pending sockets, polling them.");
+        HLOGC(dlog.Debug, log << "grp/sendBalancing: found pending sockets, polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
@@ -15776,7 +15776,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (m_SndEpolld->watch_empty())
         {
             // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "grp/sendBonding: IPE: reported pending sockets, but EID is empty - wiping pending!");
+            LOGC(dlog.Error, log << "grp/sendBalancing: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pending.begin(), pending.end(), back_inserter(wipeme));
         }
         else
@@ -15786,7 +15786,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendBonding: RDY: " << DisplayEpollResults(sready));
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: RDY: " << DisplayEpollResults(sready));
 
             // sockets in EX: should be moved to wipeme.
             for (vector<gli_t>::iterator i = pending.begin(); i != pending.end(); ++i)
@@ -15794,7 +15794,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 gli_t d = *i;
                 if (CEPoll::isready(sready, d->id, SRT_EPOLL_ERR))
                 {
-                    HLOGC(dlog.Debug, log << "grp/sendBonding: Socket @" << d->id << " reported FAILURE - moved to wiped.");
+                    HLOGC(dlog.Debug, log << "grp/sendBalancing: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(d);
                     m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
@@ -15823,7 +15823,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         CUDTSocket* ps = d->ps;
         if (!ps)
         {
-            LOGC(dlog.Error, log << "grp/sendBonding: IPE: socket NULL at id=" << d->id << " - removing from group list");
+            LOGC(dlog.Error, log << "grp/sendBalancing: IPE: socket NULL at id=" << d->id << " - removing from group list");
             // Closing such socket is useless, it simply won't be found in the map and
             // the internal facilities won't know what to do with it anyway.
             // Simply delete the entry.
@@ -15841,7 +15841,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
             CUDTSocket* ps = *x;
-            HLOGC(dlog.Debug, log << "grp/sendBonding: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
 
             // NOTE: This does inside: ps->removeFromGroup().
             // After this call, 'd' is no longer valid and *i is singular.
@@ -15849,7 +15849,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
     }
 
-    HLOGC(dlog.Debug, log << "grp/sendBonding: - wiped " << wipeme.size() << " broken sockets");
+    HLOGC(dlog.Debug, log << "grp/sendBalancing: - wiped " << wipeme.size() << " broken sockets");
 
     // We'll need you again.
     wipeme.clear();
@@ -15933,7 +15933,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
         }
 
-        HLOGC(dlog.Debug, log << "grp/sendBonding: all blocked, trying to common-block on epoll...");
+        HLOGC(dlog.Debug, log << "grp/sendBalancing: all blocked, trying to common-block on epoll...");
 
         // XXX TO BE REMOVED. Sockets should be subscribed in m_SndEID at connecting time
         // (both srt_connect and srt_accept).
@@ -15956,7 +15956,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
             InvertedGuard ug(&m_GroupLock, "Group");
-            HLOGC(dlog.Debug, log << "grp/sendBonding: blocking on any of blocked sockets to allow sending");
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
             blst = m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, m_iSndTimeOut);
@@ -16013,7 +16013,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                     if (m_iLastSchedMsgNo == -1)
                     {
                         // Initialize this number
-                        HLOGC(dlog.Debug, log << "grp/sendBonding: INITIALIZING message number: " << mc.msgno);
+                        HLOGC(dlog.Debug, log << "grp/sendBalancing: INITIALIZING message number: " << mc.msgno);
                         m_iLastSchedMsgNo = mc.msgno;
                     }
                 }
@@ -16065,7 +16065,7 @@ int CUDTGroup::sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     if (m_iLastSchedMsgNo != -1)
     {
         m_iLastSchedMsgNo = ++MsgNo(m_iLastSchedMsgNo);
-        HLOGC(dlog.Debug, log << "grp/sendBonding: updated msgno: " << m_iLastSchedMsgNo);
+        HLOGC(dlog.Debug, log << "grp/sendBalancing: updated msgno: " << m_iLastSchedMsgNo);
     }
 
     // Pity that the blocking mode only determines as to whether this function should

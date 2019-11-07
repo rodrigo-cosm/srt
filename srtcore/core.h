@@ -187,10 +187,10 @@ public:
 
     // Note that the use of states may differ in particular group types:
     //
-    // Redundancy: links that are freshly connected become PENDING and then IDLE only
+    // Broadcast: links that are freshly connected become PENDING and then IDLE only
     // for a short moment to be activated immediately at the nearest sending operation.
     //
-    // Bonding: like with redundancy, just that the link activation gets its shared percentage
+    // Balancing: like with redundancy, just that the link activation gets its shared percentage
     // of traffic balancing
     //
     // Multicast: The link is never idle. The data are always sent over the UDP multicast link
@@ -346,16 +346,16 @@ public:
     static gli_t gli_NULL() { return s_NoGroup.end(); }
 
     int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
-    int sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
-    int sendBonding(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     // For Backup, sending all previous packet
     int sendBackupRexmit(CUDT& core, ref_t<SRT_MSGCTRL> r_mc);
 
 
     int recv(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
-    int recvBonding(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int recvBalancing(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     void close();
 
@@ -371,7 +371,7 @@ public:
     {
         // XXX add here also other group types, which
         // predict group receiving.
-        return m_type == SRT_GTYPE_REDUNDANT;
+        return m_type == SRT_GTYPE_BROADCAST;
     }
 
     pthread_mutex_t* exp_groupLock() { return &m_GroupLock; }
@@ -570,7 +570,7 @@ private:
         SRT_MSGCTRL mctrl;
         ReadPos(int32_t s, SRT_GROUP_TYPE gt): mctrl(srt_msgctrl_default)
         {
-            if (gt == SRT_GTYPE_BONDING)
+            if (gt == SRT_GTYPE_BALANCING)
                 mctrl.msgno = s;
             else
                 mctrl.pktseq = s;
@@ -604,7 +604,7 @@ private:
     pthread_mutex_t m_RcvDataLock;
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
     volatile int32_t m_iLastSchedMsgNo;
-    size_t m_iBondingRoll;
+    size_t m_iBalancingRoll;
 public:
 
     // Required after the call on newGroup on the listener side.
