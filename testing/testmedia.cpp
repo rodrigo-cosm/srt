@@ -55,7 +55,7 @@ std::shared_ptr<SrtStatsWriter> transmit_stats_writer;
 string DirectionName(SRT_EPOLL_T direction)
 {
     string dir_name;
-    if (direction)
+    if (direction & ~SRT_EPOLL_ERR)
     {
         if (direction & SRT_EPOLL_IN)
         {
@@ -133,7 +133,7 @@ public:
     {
         ofile.write(data.data(), data.size());
 #ifdef PLEASE_LOG
-        extern logging::Logger applog;
+        extern srt_logging::Logger applog;
         applog.Debug() << "FileTarget::Write: " << data.size() << " written to a file";
 #endif
     }
@@ -144,7 +144,7 @@ public:
     void Close() override
     {
 #ifdef PLEASE_LOG
-        extern logging::Logger applog;
+        extern srt_logging::Logger applog;
         applog.Debug() << "FileTarget::Close";
 #endif
         ofile.close();
@@ -467,12 +467,24 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
         Verb() << "Setting SND blocking mode: " << boolalpha << yes << " timeout=" << m_timeout;
         result = srt_setsockopt(sock, 0, SRTO_SNDSYN, &yes, sizeof yes);
         if ( result == -1 )
+        {
+#ifdef PLEASE_LOG
+            extern srt_logging::Logger applog;
+            applog.Error() << "ERROR SETTING OPTION: SRTO_SNDSYN";
+#endif
             return result;
+        }
 
         if ( m_timeout )
             result = srt_setsockopt(sock, 0, SRTO_SNDTIMEO, &m_timeout, sizeof m_timeout);
         if ( result == -1 )
+        {
+#ifdef PLEASE_LOG
+            extern srt_logging::Logger applog;
+            applog.Error() << "ERROR SETTING OPTION: SRTO_SNDTIMEO";
+#endif
             return result;
+        }
     }
 
     if ( m_direction & SRT_EPOLL_IN )
@@ -642,6 +654,10 @@ void SrtCommon::ConnectClient(string host, int port)
     if ( stat == SRT_ERROR )
     {
         SRT_REJECT_REASON reason = srt_getrejectreason(m_sock);
+#if PLEASE_LOG
+        extern srt_logging::Logger applog;
+        LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
+#endif
         srt_close(m_sock);
         Error(UDT::getlasterror(), "srt_connect", reason);
     }
@@ -677,15 +693,27 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src, SRT_REJECT_REASON re
 {
     int udtResult = udtError.getErrorCode();
     string message = udtError.getErrorMessage();
+    string rejectreason;
     if (udtResult == SRT_ECONNREJ)
     {
-        message += ": ";
-        message += srt_rejectreason_str(reason);
+        rejectreason = srt_rejectreason_str(reason);
+
+        if ( Verbose::on )
+            Verb() << "FAILURE\n" << src << ": [" << udtResult << "] "
+                << "Connection rejected: [" << int(reason) << "]: "
+                << srt_rejectreason_str(reason);
+        else
+            cerr << "\nERROR #" << udtResult
+                << ": Connection rejected: [" << int(reason) << "]: "
+                << srt_rejectreason_str(reason);
     }
-    if ( Verbose::on )
-        Verb() << "FAILURE\n" << src << ": [" << udtResult << "] " << message;
     else
-        cerr << "\nERROR #" << udtResult << ": " << message << endl;
+    {
+        if ( Verbose::on )
+            Verb() << "FAILURE\n" << src << ": [" << udtResult << "] " << message;
+        else
+            cerr << "\nERROR #" << udtResult << ": " << message << endl;
+    }
 
     udtError.clear();
     throw TransmissionError("error: " + src + ": " + message);
@@ -716,6 +744,10 @@ void SrtCommon::SetupRendezvous(string adapter, int port)
 
 void SrtCommon::Close()
 {
+#if PLEASE_LOG
+        extern srt_logging::Logger applog;
+        LOGP(applog.Error, "CLOSE requested - closing socket @", m_sock);
+#endif
     bool any = false;
     bool yes = true;
     if ( m_sock != SRT_INVALID_SOCK )
@@ -751,6 +783,20 @@ SrtSource::SrtSource(string host, int port, const map<string,string>& par)
     os << host << ":" << port;
     hostport_copy = os.str();
 }
+
+static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
+{
+    CBytePerfMon perf;
+    // clear only if stats report is to be read
+    srt_bstats(sock, &perf, clr);
+
+    if (bw)
+        cout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
+    if (stats)
+        cout << transmit_stats_writer->WriteStats(sock, perf);
+}
+
+
 
 bytevector SrtSource::Read(size_t chunk)
 {
@@ -790,6 +836,7 @@ bytevector SrtSource::Read(size_t chunk)
         {
             throw ReadEOF(hostport_copy);
         }
+
     }
     while (!ready);
 
@@ -800,16 +847,9 @@ bytevector SrtSource::Read(size_t chunk)
     const bool need_bw_report    = transmit_bw_report    && int(counter % transmit_bw_report) == transmit_bw_report - 1;
     const bool need_stats_report = transmit_stats_report && counter % transmit_stats_report == transmit_stats_report - 1;
 
-    CBytePerfMon perf;
     if (transmit_stats_report && (need_stats_report || need_bw_report))
     {
-        // clear only if stats report is to be read
-        srt_bstats(m_sock, &perf, need_stats_report /* clear */);
-
-        if (need_bw_report)
-            Verb() << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth) << VerbNoEOL;
-        if (need_stats_report)
-            Verb() << transmit_stats_writer->WriteStats(m_sock, perf) << VerbNoEOL;
+        PrintSrtStats(m_sock, need_stats_report, need_bw_report, need_stats_report);
     }
 
     ++counter;
@@ -864,16 +904,9 @@ void SrtTarget::Write(const bytevector& data)
     const bool need_bw_report    = transmit_bw_report    && int(counter % transmit_bw_report) == transmit_bw_report - 1;
     const bool need_stats_report = transmit_stats_report && counter % transmit_stats_report == transmit_stats_report - 1;
 
-    CBytePerfMon perf;
     if (transmit_stats_report && (need_stats_report || need_bw_report))
     {
-        // clear only if stats report is to be read
-        srt_bstats(m_sock, &perf, need_stats_report /* clear */);
-
-        if (need_bw_report)
-            Verb() << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth) << VerbNoEOL;
-        if (need_stats_report)
-            Verb() << transmit_stats_writer->WriteStats(m_sock, perf) << VerbNoEOL;
+        PrintSrtStats(m_sock, need_stats_report, need_bw_report, need_stats_report);
     }
 
     ++counter;
