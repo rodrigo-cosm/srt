@@ -60,17 +60,23 @@ modified by
 
 #include "common.h"
 #include "epoll.h"
+#include "logging.h"
 #include "udt.h"
 #include "logging.h"
 
 using namespace std;
 
+#if ENABLE_HEAVY_LOGGING
+static void PrintEpollEvent(ostream& os, int events);
+#endif
+// Use "inline namespace" in C++11
 namespace srt_logging
 {
-    extern Logger dlog;
+    extern Logger dlog, mglog;
 }
 
 using srt_logging::dlog;
+using srt_logging::mglog;
 
 CEPoll::CEPoll():
 m_iIDSeed(0)
@@ -564,7 +570,10 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
             return total;
 
         if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
+        {
+            HLOGC(mglog.Debug, log << "EID:" << eid << ": TIMEOUT.");
             throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
+        }
 
         CTimer::waitForEvent();
     }
@@ -650,3 +659,52 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
 
     return 0;
 }
+
+// Debug use only.
+#if ENABLE_HEAVY_LOGGING
+static void PrintEpollEvent(ostream& os, int events)
+{
+    static pair<int, string> namemap [] = {
+        make_pair(SRT_EPOLL_IN, "[R]"),
+        make_pair(SRT_EPOLL_OUT, "[W]"),
+        make_pair(SRT_EPOLL_ERR, "[E]")
+    };
+
+    int N = Size(namemap);
+
+    for (int i = 0; i < N; ++i)
+    {
+        if (events & namemap[i].first)
+            os << namemap[i].second;
+    }
+}
+
+string DisplayEpollResults(const std::map<SRTSOCKET, int>& sockset)
+{
+    typedef map<SRTSOCKET, int> fmap_t;
+    ostringstream os;
+    for (fmap_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
+    {
+        os << "@" << i->first << ":";
+        PrintEpollEvent(os, i->second);
+        os << " ";
+    }
+
+    return os.str();
+}
+
+string CEPollDesc::DisplayEpollWatch()
+{
+    ostringstream os;
+    for (ewatch_t::const_iterator i = m_USockWatchState.begin(); i != m_USockWatchState.end(); ++i)
+    {
+        os << "@" << i->first << ":";
+        PrintEpollEvent(os, i->second.watch);
+        os << " ";
+    }
+
+    return os.str();
+}
+
+#endif
+

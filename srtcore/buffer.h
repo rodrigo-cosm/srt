@@ -361,6 +361,12 @@ public:
       /// both cases).
 
    bool isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
+#ifdef SRT_DEBUG_TSBPD_OUTJITTER
+   void debugJitter(uint64_t);
+#else
+   void debugJitter(uint64_t) {}
+#endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
+
    bool isRcvDataReady();
    bool isRcvDataAvailable()
    {

@@ -1556,6 +1556,21 @@ int CRcvBuffer::readMsg(char* data, int len)
 }
 
 
+#ifdef SRT_DEBUG_TSBPD_OUTJITTER
+void CRcvBuffer::debugJitter(uint64_t rplaytime)
+{
+    uint64_t now = CTimer::getTime();
+    if ((now - rplaytime)/10 < 10)
+        m_ulPdHisto[0][(now - rplaytime)/10]++;
+    else if ((now - rplaytime)/100 < 10)
+        m_ulPdHisto[1][(now - rplaytime)/100]++;
+    else if ((now - rplaytime)/1000 < 10)
+        m_ulPdHisto[2][(now - rplaytime)/1000]++;
+    else
+        m_ulPdHisto[3][1]++;
+}
+#endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
+
 int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
 {
     SRT_MSGCTRL& msgctl = *r_msgctl;
@@ -1572,24 +1587,14 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
         if (getRcvReadyMsg(Ref(rplaytime), Ref(seq)))
         {
             empty = false;
-
             // In TSBPD mode you always read one message
             // at a time and a message always fits in one UDP packet,
             // so in one "unit".
             p = q = m_iStartPos;
 
-#ifdef SRT_DEBUG_TSBPD_OUTJITTER
-            uint64_t now = CTimer::getTime();
-            if ((now - rplaytime)/10 < 10)
-                m_ulPdHisto[0][(now - rplaytime)/10]++;
-            else if ((now - rplaytime)/100 < 10)
-                m_ulPdHisto[1][(now - rplaytime)/100]++;
-            else if ((now - rplaytime)/1000 < 10)
-                m_ulPdHisto[2][(now - rplaytime)/1000]++;
-            else
-                m_ulPdHisto[3][1]++;
-#endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
+            debugJitter(rplaytime);
         }
+
     }
     else
     {
@@ -1649,12 +1654,20 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
                 int64_t nowdiff = prev_now ? (nowtime - prev_now) : 0;
                 uint64_t srctimediff = prev_srctime ? (srctime - prev_srctime) : 0;
 
-                HLOGC(dlog.Debug, log << CONID() << "readMsg: DELIVERED seq=" << seq
-                        << " from POS=" << p << " T="
-                        << FormatTime(srctime) << " in " << (timediff/1000.0)
-                        << "ms - TIME-PREVIOUS: PKT: " << (srctimediff/1000.0)
-                        << " LOCAL: " << (nowdiff/1000.0)
-                        << " !" << BufferStamp(pkt.data(), pkt.size()));
+                int next_p = shift_forward(p);
+                CUnit* u = m_pUnit[next_p];
+                string next_playtime = "NONE";
+                if (u && u->m_iFlag == CUnit::GOOD)
+                {
+                    next_playtime = FormatTime(getPktTsbPdTime(u->m_Packet.getMsgTimeStamp()));
+                }
+
+                LOGC(dlog.Debug, log << CONID() << "readMsg: DELIVERED seq=" << seq
+                        << " T=" << FormatTime(srctime)
+                        << " in " << (timediff/1000.0) << "ms - TIME-PREVIOUS: PKT: "
+                        << (srctimediff/1000.0) << " LOCAL: " << (nowdiff/1000.0)
+                        << " !" << BufferStamp(pkt.data(), pkt.size())
+                        << " NEXT pkt T=" << next_playtime);
 
                 prev_now = nowtime;
                 prev_srctime = srctime;
@@ -1680,12 +1693,13 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
             m_pUnit[p]->m_iFlag = CUnit::PASSACK;
         }
 
-        if (++ p == m_iSize)
-            p = 0;
+        p = shift_forward(p);
     }
 
     if (!passack)
-        m_iStartPos = shift_forward(q);
+        m_iStartPos = past_q;
+
+    HLOGC(dlog.Debug, log << "rcvBuf/extractData: begin=" << m_iStartPos << " reporting extraction size=" << (len - rs));
 
     return len - rs;
 }
@@ -1706,6 +1720,8 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
     int rmpkts = 0;
     int rmbytes = 0;
     //skip all bad msgs at the beginning
+    // This loop rolls until the "buffer is empty" (head == tail),
+    // in particular, there's no units accessible for the reader.
     while (m_iStartPos != m_iLastAckPos)
     {
         // Roll up to the first valid unit

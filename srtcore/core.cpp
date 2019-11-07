@@ -7033,6 +7033,8 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
     (void)l_saveback; // kill compiler warning: unused variable `l_saveback` [-Wunused-variable]
 
     local_prevack = m_iDebugPrevLastAck;
+
+    string reason; // just for "a reason"
 #endif
 
     switch (pkttype)
@@ -7044,12 +7046,25 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
         // If there is no loss, the ACK is the current largest sequence number plus 1;
         // Otherwise it is the smallest sequence number in the receiver loss list.
         if (m_pRcvLossList->getLossLength() == 0)
+        {
             ack = CSeqNo::incseq(m_iRcvCurrSeqNo);
+#if ENABLE_HEAVY_LOGGING
+            reason = "expected next";
+#endif
+        }
         else
+        {
             ack = m_pRcvLossList->getFirstLostSeq();
+#if ENABLE_HEAVY_LOGGING
+            reason = "first lost";
+#endif
+        }
 
         if (m_iRcvLastAckAck == ack)
+        {
+            HLOGC(mglog.Debug, log << "sendCtrl(UMSG_ACK): last ACK %" << ack << " == last ACKACK (" << reason << ")");
             break;
+        }
 
         // send out a lite ACK
         // to save time on buffer processing and bandwidth/AS measurement, a lite ACK only feeds back an ACK number
@@ -7066,7 +7081,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
         /* tsbpd thread may also call ackData when skipping packet so protect code */
         CGuard::enterCS(m_RcvBufferLock, "RcvBuffer");
 
-        // IF ack > m_iRcvLastAck
+        // IF ack %> m_iRcvLastAck
         if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
         {
             ackDataUpTo(ack);
@@ -8050,6 +8065,11 @@ void CUDT::updateAfterSrtHandshake(int srt_cmd, int hsv)
     //
     // This function will be called only ONCE in this
     // instance, through either HSREQ or HSRSP.
+#if ENABLE_HEAVY_LOGGING
+    const char* hs_side[] = { "DRAW", "INITIATOR", "RESPONDER" };
+    HLOGC(mglog.Debug, log << "updateAfterSrtHandshake: version="
+            << m_ConnRes.m_iVersion << " side=" << hs_side[m_SrtHsSide]);
+#endif
 
     if (hsv > HS_VERSION_UDT4)
     {
@@ -9224,7 +9244,7 @@ void CUDT::dropFromLossLists(int32_t from, int32_t to)
     }
 
     m_FreshLoss.erase(m_FreshLoss.begin(),
-                      m_FreshLoss.begin() + delete_index); // with delete_index == 0 will do nothing
+            m_FreshLoss.begin() + delete_index); // with delete_index == 0 will do nothing
 }
 
 // This function, as the name states, should bake a new cookie.
@@ -9239,14 +9259,14 @@ int32_t CUDT::bake(const sockaddr_any& addr, int32_t current_cookie, int correct
         char clienthost[NI_MAXHOST];
         char clientport[NI_MAXSERV];
         getnameinfo(&addr,
-                    addr.size(),
-                    clienthost,
-                    sizeof(clienthost),
-                    clientport,
-                    sizeof(clientport),
-                    NI_NUMERICHOST | NI_NUMERICSERV);
+                addr.size(),
+                clienthost,
+                sizeof(clienthost),
+                clientport,
+                sizeof(clientport),
+                NI_NUMERICHOST | NI_NUMERICSERV);
         int64_t timestamp = ((CTimer::getTime() - m_stats.startTime) / 60000000) + distractor -
-                            correction; // secret changes every one minute
+            correction; // secret changes every one minute
         stringstream cookiestr;
         cookiestr << clienthost << ":" << clientport << ":" << timestamp;
         union {
@@ -9323,8 +9343,8 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
     {
         m_RejectReason = SRT_REJ_ROGUE;
         HLOGC(mglog.Debug,
-              log << "processConnectRequest: ... NOT. Wrong size: " << packet.getLength() << " (expected: " << exp_len
-                  << ")");
+                log << "processConnectRequest: ... NOT. Wrong size: " << packet.getLength() << " (expected: " << exp_len
+                << ")");
         return m_RejectReason;
     }
 
@@ -9396,12 +9416,16 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
         hs.m_iType = SrtHSRequest::wrapFlags(true /*put SRT_MAGIC_CODE in HSFLAGS*/, m_iSndCryptoKeyLen);
         bool whether SRT_ATR_UNUSED = m_iSndCryptoKeyLen != 0;
         HLOGC(mglog.Debug,
-              log << "processConnectRequest: " << (whether ? "" : "NOT ")
-                  << " Advertising PBKEYLEN - value = " << m_iSndCryptoKeyLen);
+                log << "processConnectRequest: " << (whether ? "" : "NOT ")
+                << " Advertising PBKEYLEN - value = " << m_iSndCryptoKeyLen);
 
         size_t size = packet.getLength();
         hs.store_to(packet.m_pcData, Ref(size));
-      setPacketTS(packet, CTimer::getTime());
+        setPacketTS(packet, CTimer::getTime());
+
+        // Display the HS before sending it to peer
+        HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (i): " << hs.show());
+
         m_pSndQueue->sendto(addr, packet, use_source_addr);
         return SRT_REJ_UNKNOWN; // EXCEPTION: this is a "no-error" code.
     }
@@ -9412,7 +9436,7 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
     // should also contain extra data.
 
     HLOGC(mglog.Debug,
-          log << "processConnectRequest: received type=" << RequestTypeStr(hs.m_iReqType) << " - checking cookie...");
+            log << "processConnectRequest: received type=" << RequestTypeStr(hs.m_iReqType) << " - checking cookie...");
     if (hs.m_iCookie != cookie_val)
     {
         cookie_val = bake(addr, cookie_val, -1); // SHOULD generate an earlier, distracted cookie
@@ -9473,14 +9497,15 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
     if (!accepted_hs)
     {
         HLOGC(mglog.Debug,
-              log << "processConnectRequest: version/type mismatch. Sending REJECT code:" << m_RejectReason
-                  << " MSG: " << srt_rejectreason_str(m_RejectReason));
+                log << "processConnectRequest: version/type mismatch. Sending REJECT code:" << m_RejectReason
+                << " MSG: " << srt_rejectreason_str(m_RejectReason));
         // mismatch, reject the request
         hs.m_iReqType = URQFailure(m_RejectReason);
         size_t size   = CHandShake::m_iContentSize;
         hs.store_to(packet.m_pcData, Ref(size));
         packet.m_iID        = id;
-       setPacketTS(packet, CTimer::getTime());
+        setPacketTS(packet, CTimer::getTime());
+        HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (e): " << hs.show());
         m_pSndQueue->sendto(addr, packet, use_source_addr);
     }
     else
@@ -9531,12 +9556,13 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
         if (result != 1)
         {
             HLOGC(mglog.Debug,
-                  log << CONID() << "processConnectRequest: sending ABNORMAL handshake info req="
-                      << RequestTypeStr(hs.m_iReqType));
+                    log << CONID() << "processConnectRequest: sending ABNORMAL handshake info req="
+                    << RequestTypeStr(hs.m_iReqType));
             size_t size = CHandShake::m_iContentSize;
             hs.store_to(packet.m_pcData, Ref(size));
             packet.m_iID        = id;
-           setPacketTS(packet, CTimer::getTime());
+            setPacketTS(packet, CTimer::getTime());
+            HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (a): " << hs.show());
             m_pSndQueue->sendto(addr, packet, use_source_addr);
         }
         else

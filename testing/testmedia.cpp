@@ -39,6 +39,7 @@
 
 using namespace std;
 
+using srt_logging::SockStatusStr;
 
 volatile bool transmit_throw_on_interrupt = false;
 int transmit_bw_report = 0;
