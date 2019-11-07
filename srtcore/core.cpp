@@ -7803,7 +7803,7 @@ static void DebugAck(string hdr, int prev, int ack)
 static inline void DebugAck(string, int, int) {}
 #endif
 
-void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, int size)
+void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam, int size)
 {
     CPacket  ctrlpkt;
     uint64_t currtime_tk;
@@ -11652,8 +11652,32 @@ void CUDTGroup::close()
     cc.signal_locked(rg);
 }
 
-
 int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
+{
+    switch (m_type)
+    {
+    default:
+        LOGC(dlog.Error, log << "CUDTGroup::send: not implemented for type #" << m_type);
+        throw CUDTException(MJ_SETUP, MN_INVAL, 0);
+
+    case SRT_GTYPE_BROADCAST:
+        return sendBroadcast(buf, len, r_mc);
+
+        /* to be implemented
+    case SRT_GTYPE_BACKUP:
+        return sendBackup(buf, len, r_mc);
+
+
+    case SRT_GTYPE_BALANCING:
+        return sendBalancing(buf, len, r_mc);
+
+    case SRT_GTYPE_MULTICAST:
+        return sendMulticast(buf, len, r_mc);
+        */
+    }
+}
+
+int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
     // Avoid stupid errors in the beginning.
     if (len <= 0)
@@ -11695,7 +11719,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Check socket sndstate before sending
         if (d->sndstate == GST_BROKEN)
         {
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
             wipeme.push_back(d);
 
             /*
@@ -11739,7 +11763,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 continue;
             }
 
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in IDLE state: @" << d->id << " - will activate it");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in IDLE state: @" << d->id << " - will activate it");
             // This is idle, we'll take care of them next time
             // Might be that:
             // - this socket is idle, while some NEXT socket is running
@@ -11752,12 +11776,12 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         if (d->sndstate == GST_RUNNING)
         {
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: socket in RUNNING state: @" << d->id << " - will send a payload");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in RUNNING state: @" << d->id << " - will send a payload");
             sendable.push_back(d);
             continue;
         }
 
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: socket @" << d->id << " not ready, state: "
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket @" << d->id << " not ready, state: "
                 << StateStr(d->sndstate) << "(" << int(d->sndstate) << ") - NOT sending, SET AS PENDING");
 
         pending.push_back(d);
@@ -11844,7 +11868,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         int lastseq = d->ps->core().schedSeqNo();
         if (curseq != -1 && curseq != lastseq)
         {
-            HLOGC(mglog.Debug, log << "CUDTGroup::send: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendBroadcast: socket @" << d->id
                 << ": override snd sequence %" << lastseq
                 << " with %" << curseq << " (diff by "
                 << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD: " << BufferStamp(buf, len));
@@ -11852,7 +11876,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
         else
         {
-            HLOGC(mglog.Debug, log << "CUDTGroup::send: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendBroadcast: socket @" << d->id
                 << ": sequence remains with original value: %" << lastseq
                 << "; SENDING PAYLOAD " << BufferStamp(buf, len));
         }
@@ -11891,22 +11915,22 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     if (curseq != -1)
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: updating current scheduling sequence %" << curseq);
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: updating current scheduling sequence %" << curseq);
         m_iLastSchedSeqNo = curseq;
     }
 
     if (!pending.empty())
     {
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: found pending sockets, polling them.");
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: found pending sockets, polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
-        map<SRTSOCKET, int> sready;
+        CEPoll::fmap_t sready;
 
-        if (m_SndEpolld->enotice_empty())
+        if (m_SndEpolld->watch_empty())
         {
             // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "CUDTGroup::send: IPE: reported pending sockets, but EID is empty - wiping pending!");
+            LOGC(dlog.Error, log << "grp/sendBroadcast: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pending.begin(), pending.end(), back_inserter(wipeme));
         }
         else
@@ -11916,16 +11940,15 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: RDY: " << DisplayEpollResults(sready));
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: RDY: " << DisplayEpollResults(sready));
 
             // sockets in EX: should be moved to wipeme.
             for (vector<gli_t>::iterator i = pending.begin(); i != pending.end(); ++i)
             {
                 gli_t d = *i;
-                if (map_get(sready, d->id, 0) & SRT_EPOLL_ERR)
-                //if (sready.ex().count(d->id))
+                if (CEPoll::isready(sready, d->id, SRT_EPOLL_ERR))
                 {
-                    HLOGC(dlog.Debug, log << "CUDTGroup::send: Socket @" << d->id << " reported FAILURE - moved to wiped.");
+                    HLOGC(dlog.Debug, log << "grp/sendBroadcast: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(d);
                     m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
@@ -11954,7 +11977,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         CUDTSocket* ps = d->ps;
         if (!ps)
         {
-            LOGC(dlog.Error, log << "CUDTGroup::send: IPE: socket NULL at id=" << d->id << " - removing from group list");
+            LOGC(dlog.Error, log << "grp/sendBroadcast: IPE: socket NULL at id=" << d->id << " - removing from group list");
             // Closing such socket is useless, it simply won't be found in the map and
             // the internal facilities won't know what to do with it anyway.
             // Simply delete the entry.
@@ -11972,7 +11995,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
             CUDTSocket* ps = *x;
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
 
             // NOTE: This does inside: ps->removeFromGroup().
             // After this call, 'd' is no longer valid and *i is singular.
@@ -11980,7 +12003,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
     }
 
-    HLOGC(dlog.Debug, log << "CUDTGroup::send: - wiped " << wipeme.size() << " broken sockets");
+    HLOGC(dlog.Debug, log << "grp/sendBroadcast: - wiped " << wipeme.size() << " broken sockets");
 
     // We'll need you again.
     wipeme.clear();
@@ -12064,7 +12087,11 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
         }
 
-        HLOGC(dlog.Debug, log << "CUDTGroup::send: all blocked, trying to common-block on epoll...");
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: all blocked, trying to common-block on epoll...");
+
+        // XXX TO BE REMOVED. Sockets should be subscribed in m_SndEID at connecting time
+        // (both srt_connect and srt_accept).
+
         // None was successful, but some were blocked. It means that we
         // haven't sent the payload over any link so far, so we still have
         // a chance to retry.
@@ -12078,12 +12105,12 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         int len = blocked.size();
 
         int blst = 0;
-        map<SRTSOCKET, int> sready;
+        CEPoll::fmap_t sready;
 
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
             InvertedGuard ug(&m_GroupLock, "Group");
-            HLOGC(dlog.Debug, log << "CUDTGroup::send: blocking on any of blocked sockets to allow sending");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
             blst = m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, m_iSndTimeOut);
@@ -12107,7 +12134,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             // Extract gli's from the whole group that have id found in the array.
             for (gli_t dd = m_Group.begin(); dd != m_Group.end(); ++dd)
             {
-                int rdev = map_get(sready, dd->id, 0);
+                int rdev = CEPoll::ready(sready, dd->id);
                 if (rdev & SRT_EPOLL_ERR)
                 {
                     dd->sndstate = GST_BROKEN;
@@ -12365,7 +12392,7 @@ void CUDTGroup::readerThread()
             {
                 // If less data were returned, remove the excess buffer from the size.
                 pl.data.resize(pl.result);
-                HLOGC(dlog.Debug, log << "GROUP:recv:%" << s->m_SocketID << " size=" << pl.result << " #" << pl.ctrl.pktseq
+                HLOGC(dlog.Debug, log << "GROUP:recv:@" << s->m_SocketID << " size=" << pl.result << " #" << pl.ctrl.pktseq
                     << " SRC.TS=" <<  FormatTime(pl.ctrl.srctime) << " STAMP:" << BufferStamp(&pl.data[0], pl.data.size()));
 
 
@@ -12508,7 +12535,7 @@ void CUDTGroup::readerThread()
                 }
                 else
                 {
-                    HLOGC(tslog.Debug, log << "CUDTGroup::readerThread: socket %" << m_ReadyRead->m_SocketID << " READY TO READ");
+                    HLOGC(tslog.Debug, log << "CUDTGroup::readerThread: socket @" << m_ReadyRead->m_SocketID << " READY TO READ");
                     break;
                 }
             }
@@ -12828,7 +12855,7 @@ RETRY_READING:
 
             if (gi->laststatus != SRTS_CONNECTED)
             {
-                HCLOG(ds << "@" << gi->id << "<idle:" << SockStatusStr(gi->laststatus) << "> ");
+                HCLOG(ds << "@" << gi->id << "<unstable:" << SockStatusStr(gi->laststatus) << "> ");
                 // Sockets in this state are ignored. We are waiting until it
                 // achieves CONNECTING state, then it's added to write.
                 // Or gets broken and closed in the next step.
@@ -12880,6 +12907,7 @@ RETRY_READING:
     flags will survive the operation.
 
     */
+
     for (vector<SRTSOCKET>::iterator i = read_ready.begin(); i != read_ready.end(); ++i)
     {
         srt_epoll_add_usock(m_RcvEID, *i, &read_modes);
@@ -12915,7 +12943,7 @@ RETRY_READING:
     // be done in background.
 
     // Poll on this descriptor until reading is available, indefinitely.
-    map<SRTSOCKET, int> sready;
+    CEPoll::fmap_t sready;
 
     // In blocking mode, use m_iRcvTimeOut, which's default value -1
     // means to block indefinitely, also in swait().
@@ -12932,8 +12960,6 @@ RETRY_READING:
         // non-blocking mode.
         throw CUDTException(MJ_AGAIN, MN_RDAVAIL, 0);
     }
-
-    typedef map<SRTSOCKET, int> fmap_t;
 
     // Handle sockets of pending connection and with errors.
 
@@ -12967,7 +12993,7 @@ RETRY_READING:
     // will be surely empty. This will be checked then same way as when
     // reading from every socket resulted in error.
 
-    for (fmap_t::const_iterator i = sready.begin(); i != sready.end(); ++i)
+    for (CEPoll::fmap_t::const_iterator i = sready.begin(); i != sready.end(); ++i)
     {
         if (i->second & SRT_EPOLL_ERR)
             continue; // broken already
@@ -13332,7 +13358,6 @@ CUDTGroup::ReadPos* CUDTGroup::checkPacketAhead()
 
     return out;
 }
-
 
 string CUDTGroup::StateStr(CUDTGroup::GroupState st)
 {

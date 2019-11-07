@@ -55,8 +55,8 @@ modified by
 
 #if ENABLE_THREAD_LOGGING
 #include <iostream>
-#endif
 // #undef ENABLE_THREAD_ASSERT 1
+#endif
 
 #include <string>
 #include <sstream>
@@ -556,7 +556,7 @@ bool CCondDelegate::wait_until(uint64_t timestamp)
     timespec locktime;
     locktime.tv_sec = timestamp / 1000000;
     locktime.tv_nsec = (timestamp % 1000000) * 1000;
-    LOGS(cerr, log << "Cond: WAIT:" << cvname << " UNLOCK:" << lockname << " - until TS=" << logging::FormatTime(timestamp));
+    LOGS(cerr, log << "Cond: WAIT:" << cvname << " UNLOCK:" << lockname << " - until TS=" << srt_logging::FormatTime(timestamp));
     THREAD_PAUSED();
     bool signaled = pthread_cond_timedwait(m_cond, m_mutex, &locktime) != ETIMEDOUT;
     THREAD_RESUMED();

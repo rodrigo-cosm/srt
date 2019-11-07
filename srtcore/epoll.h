@@ -370,7 +370,22 @@ public: // for CUDTUnited API
 
    int wait(const int eid, std::set<SRTSOCKET>* readfds, std::set<SRTSOCKET>* writefds, int64_t msTimeOut, std::set<SYSSOCKET>* lrfds, std::set<SYSSOCKET>* lwfds);
 
-   int swait(CEPollDesc& d, std::map<SRTSOCKET, int>& st, int64_t msTimeOut, bool report_by_exception = true);
+   typedef std::map<SRTSOCKET, int> fmap_t;
+
+   int swait(CEPollDesc& d, fmap_t& st, int64_t msTimeOut, bool report_by_exception = true);
+
+   static int ready(const fmap_t& mp, SRTSOCKET sock)
+   {
+       fmap_t::const_iterator y = mp.find(sock);
+       if (y == mp.end())
+           return 0;
+       return y->second;
+   }
+
+   static bool isready(const fmap_t& mp, SRTSOCKET sock, SRT_EPOLL_OPT event)
+   {
+       return (ready(mp, sock) & event) != 0;
+   }
 
    // Could be a template directly, but it's now hidden in the imp file.
    void clear_ready_usocks(CEPollDesc& d, int direction);

@@ -169,7 +169,8 @@ void CSndBuffer::addBuffer(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl
     int32_t inorder = r_mctrl.get().inorder ? MSGNO_PACKET_INORDER::mask : 0;
 
     HLOGC(dlog.Debug, log << CONID() << "addBuffer: adding "
-        << size << " packets (" << len << " bytes) to send, msgno=" << m_iNextMsgNo
+        << size << " packets (" << len << " bytes) to send, msgno="
+        << (msgno ? msgno : m_iNextMsgNo)
         << (inorder ? "" : " NOT") << " in order");
 
     // The sequence number passed to this function is the sequence number
@@ -593,10 +594,15 @@ int CSndBuffer::dropLateData(int &bytes, uint64_t latetime)
       dpkts++;
       dbytes += m_pFirstBlock->m_iLength;
 
-      if (m_pFirstBlock == m_pCurrBlock) move = true;
+      if (m_pFirstBlock == m_pCurrBlock)
+          move = true;
       m_pFirstBlock = m_pFirstBlock->m_pNext;
    }
-   if (move) m_pCurrBlock = m_pFirstBlock;
+
+   if (move)
+   {
+       m_pCurrBlock = m_pFirstBlock;
+   }
    m_iCount -= dpkts;
 
    m_iBytesCount -= dbytes;

@@ -548,13 +548,16 @@ enum SRT_EPOLL_OPT
    // some new names can be added to improve clarity.
    SRT_EPOLL_CONNECT = SRT_EPOLL_OUT,
    SRT_EPOLL_ACCEPT = SRT_EPOLL_IN,
+
+   // INTERNAL USE ONLY! DO NOT USE!
+   SRT_EPOLL_SPECIAL = 0x10,
    SRT_EPOLL_ET       = 1u << 31
 };
 // These are actually flags - use a bit container:
 typedef int32_t SRT_EPOLL_T;
 
 // Define which epoll flags determine events. All others are special flags.
-#define SRT_EPOLL_EVENTTYPES (SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR)
+#define SRT_EPOLL_EVENTTYPES (SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_SPECIAL | SRT_EPOLL_ERR)
 
 enum SRT_EPOLL_FLAGS
 {
@@ -598,7 +601,7 @@ static const int SRT_ERROR = -1;
 typedef enum SRT_GROUP_TYPE
 {
     SRT_GTYPE_UNDEFINED,
-    SRT_GTYPE_REDUNDANT,
+    SRT_GTYPE_BROADCAST,
     // ...
     SRT_GTYPE__END
 } SRT_GROUP_TYPE;

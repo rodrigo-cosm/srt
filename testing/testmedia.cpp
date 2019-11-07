@@ -146,7 +146,7 @@ public:
     void Close() override
     {
 #ifdef PLEASE_LOG
-        extern logging::Logger applog;
+        extern srt_logging::Logger applog;
         applog.Debug() << "FileTarget::Close";
 #endif
         ofile.close();
@@ -222,9 +222,9 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
                 Error("With //group, the group 'type' must be specified.");
             }
 
-            if (m_group_type != "redundancy")
+            if (m_group_type != "broadcast")
             {
-                Error("With //group, only type=redundancy is currently supported");
+                Error("With //group, only type=broadcast is currently supported");
             }
 
             vector<string> nodes;
@@ -577,12 +577,24 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
         Verb() << "Setting SND blocking mode: " << boolalpha << yes << " timeout=" << m_timeout;
         result = srt_setsockopt(sock, 0, SRTO_SNDSYN, &yes, sizeof yes);
         if ( result == -1 )
+        {
+#ifdef PLEASE_LOG
+            extern srt_logging::Logger applog;
+            applog.Error() << "ERROR SETTING OPTION: SRTO_SNDSYN";
+#endif
             return result;
+        }
 
         if ( m_timeout )
             result = srt_setsockopt(sock, 0, SRTO_SNDTIMEO, &m_timeout, sizeof m_timeout);
         if ( result == -1 )
+        {
+#ifdef PLEASE_LOG
+            extern srt_logging::Logger applog;
+            applog.Error() << "ERROR SETTING OPTION: SRTO_SNDTIMEO";
+#endif
             return result;
+        }
     }
 
     if ( m_direction & SRT_EPOLL_IN )
@@ -704,8 +716,8 @@ void SrtCommon::OpenGroupClient()
     SRT_GROUP_TYPE type = SRT_GTYPE_UNDEFINED;
 
     // Resolve group type.
-    if (m_group_type == "redundancy")
-        type = SRT_GTYPE_REDUNDANT;
+    if (m_group_type == "broadcast")
+        type = SRT_GTYPE_BROADCAST;
     // else if blah blah blah...
     else
     {
@@ -723,7 +735,6 @@ void SrtCommon::OpenGroupClient()
     {
         // Note: here the GROUP is added to the poller.
         srt_conn_epoll = AddPoller(m_sock, SRT_EPOLL_CONNECT);
-
     }
 
     // Don't check this. Should this fail, the above would already.
@@ -934,6 +945,10 @@ void SrtCommon::ConnectClient(string host, int port)
     if ( stat == SRT_ERROR )
     {
         SRT_REJECT_REASON reason = srt_getrejectreason(m_sock);
+#if PLEASE_LOG
+        extern srt_logging::Logger applog;
+        LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
+#endif
         srt_close(m_sock);
         Error(UDT::getlasterror(), "srt_connect", reason);
     }
@@ -969,15 +984,27 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src, SRT_REJECT_REASON re
 {
     int udtResult = udtError.getErrorCode();
     string message = udtError.getErrorMessage();
+    string rejectreason;
     if (udtResult == SRT_ECONNREJ)
     {
-        message += ": ";
-        message += srt_rejectreason_str(reason);
+        rejectreason = srt_rejectreason_str(reason);
+
+        if ( Verbose::on )
+            Verb() << "FAILURE\n" << src << ": [" << udtResult << "] "
+                << "Connection rejected: [" << int(reason) << "]: "
+                << srt_rejectreason_str(reason);
+        else
+            cerr << "\nERROR #" << udtResult
+                << ": Connection rejected: [" << int(reason) << "]: "
+                << srt_rejectreason_str(reason);
     }
-    if ( Verbose::on )
-        Verb() << "FAILURE\n" << src << ": [" << udtResult << "] " << message;
     else
-        cerr << "\nERROR #" << udtResult << ": " << message << endl;
+    {
+        if ( Verbose::on )
+            Verb() << "FAILURE\n" << src << ": [" << udtResult << "] " << message;
+        else
+            cerr << "\nERROR #" << udtResult << ": " << message << endl;
+    }
 
     udtError.clear();
     throw TransmissionError("error: " + src + ": " + message);
@@ -1008,6 +1035,10 @@ void SrtCommon::SetupRendezvous(string adapter, int port)
 
 void SrtCommon::Close()
 {
+#if PLEASE_LOG
+        extern srt_logging::Logger applog;
+        LOGP(applog.Error, "CLOSE requested - closing socket @", m_sock);
+#endif
     bool any = false;
     bool yes = true;
     if ( m_sock != SRT_INVALID_SOCK )
@@ -1041,7 +1072,7 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
     if (!grpdata)
     {
         // This happens when you passed too small array. Treat this as error and stop.
-        cerr << "ERROR: redundancy group update reports " << grpdata_size
+        cerr << "ERROR: broadcast group update reports " << grpdata_size
             << " existing sockets, but app registerred only " << m_group_nodes.size() << endl;
         Error("Too many unpredicted sockets in the group");
     }
@@ -1978,6 +2009,8 @@ void SrtTarget::Write(const bytevector& data)
             PrintSrtStats(m_sock, need_stats_report, need_bw_report, need_stats_report);
         }
     }
+
+    Verb() << "(#" << mctrl.msgno << " %" << mctrl.pktseq << "  " << BufferStamp(data.data(), data.size()) << ") " << VerbNoEOL;
 
     ++counter;
 }

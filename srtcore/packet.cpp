@@ -255,12 +255,12 @@ void CPacket::setLength(size_t len)
    m_PacketVector[PV_DATA].setLength(len);
 }
 
-void CPacket::pack(UDTMessageType pkttype, const void* lparam, void* rparam, int size)
+void CPacket::pack(UDTMessageType pkttype, const int32_t* lparam, void* rparam, int size)
 {
     // Set (bit-0 = 1) and (bit-1~15 = type)
    setControl(pkttype);
    HLOGC(mglog.Debug, log << "pack: type=" << MessageTypeStr(pkttype)
-           << " ARG=" << (lparam ? Sprint(*(int32_t*)lparam) : std::string("NULL"))
+           << " ARG=" << (lparam ? Sprint(*lparam) : std::string("NULL"))
            << " [ " << (rparam ? Sprint(*(int32_t*)rparam) : std::string()) << " ]");
 
    // Set additional information and control information field
@@ -269,7 +269,7 @@ void CPacket::pack(UDTMessageType pkttype, const void* lparam, void* rparam, int
    case UMSG_ACK: //0010 - Acknowledgement (ACK)
       // ACK packet seq. no.
       if (NULL != lparam)
-         m_nHeader[SRT_PH_MSGNO] = *(int32_t *)lparam;
+         m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // data ACK seq. no. 
       // optional: RTT (microsends), RTT variance (microseconds) advertised flow window size (packets), and estimated link capacity (packets per second)
@@ -279,7 +279,7 @@ void CPacket::pack(UDTMessageType pkttype, const void* lparam, void* rparam, int
 
    case UMSG_ACKACK: //0110 - Acknowledgement of Acknowledgement (ACK-2)
       // ACK packet seq. no.
-      m_nHeader[SRT_PH_MSGNO] = *(int32_t *)lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // control info field should be none
       // but "writev" does not allow this
@@ -301,6 +301,11 @@ void CPacket::pack(UDTMessageType pkttype, const void* lparam, void* rparam, int
       break;
 
    case UMSG_KEEPALIVE: //0001 - Keep-alive
+      if (lparam)
+      {
+          // XXX EXPERIMENTAL. Pass the 32-bit integer here.
+         m_nHeader[SRT_PH_MSGNO] = *lparam;
+      }
       // control info field should be none
       // but "writev" does not allow this
       m_PacketVector[PV_DATA].set((void *)&__pad, 4);
@@ -322,7 +327,7 @@ void CPacket::pack(UDTMessageType pkttype, const void* lparam, void* rparam, int
 
    case UMSG_DROPREQ: //0111 - Message Drop Request
       // msg id 
-      m_nHeader[SRT_PH_MSGNO] = *(int32_t *)lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       //first seq no, last seq no
       m_PacketVector[PV_DATA].set(rparam, size);
@@ -331,7 +336,7 @@ void CPacket::pack(UDTMessageType pkttype, const void* lparam, void* rparam, int
 
    case UMSG_PEERERROR: //1000 - Error Signal from the Peer Side
       // Error type
-      m_nHeader[SRT_PH_MSGNO] = *(int32_t *)lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // control info field should be none
       // but "writev" does not allow this
@@ -343,7 +348,7 @@ void CPacket::pack(UDTMessageType pkttype, const void* lparam, void* rparam, int
       // for extended control packet
       // "lparam" contains the extended type information for bit 16 - 31
       // "rparam" is the control information
-      m_nHeader[SRT_PH_SEQNO] |= *(int32_t *)lparam;
+      m_nHeader[SRT_PH_SEQNO] |= *lparam;
 
       if (NULL != rparam)
       {
@@ -558,7 +563,7 @@ std::string CPacket::Info()
         {
             // This is a value that some messages use for some purposes.
             // The "ack seq no" is one of the purposes, used by UMSG_ACK and UMSG_ACKACK.
-            // This is simply the PH_MSGNO field used as a message number in data packets.
+            // This is simply the SRT_PH_MSGNO field used as a message number in data packets.
             os << " ARG: 0x";
             os << std::hex << getAckSeqNo() << " ";
             os << std::dec << getAckSeqNo();

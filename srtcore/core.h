@@ -135,13 +135,10 @@ enum GroupDataItem
     GRPD_GROUPID,
     GRPD_GROUPTYPE,
 
-    /* That was an early concept, not to be used.
-    GRPD_MASTERID,
-    GRPD_MASTERTDIFF,
-    */
-    /// end
     GRPD__SIZE
 };
+
+const size_t GRPD_MIN_SIZE = 2; // ID and GROUPTYPE as backward compat
 
 const size_t GRPD_FIELD_SIZE = sizeof(int32_t);
 
@@ -164,6 +161,15 @@ void SRT_tsbpdLoop(
         SRTSOCKET sid,
         CGuard& lock);
 
+#if ENABLE_HEAVY_LOGGING
+    const char* const srt_log_grp_state [] = {
+        "PENDING",
+        "IDLE",
+        "RUNNING",
+        "BROKEN"
+    };
+#endif
+
 class CUDTGroup
 {
     friend class CUDTUnited;
@@ -172,10 +178,27 @@ public:
     enum GroupState
     {
         GST_PENDING,  // The socket is created correctly, but not yet ready for getting data.
-        GST_IDLE,     // The socket should be activated at the next operation immediately.
+        GST_IDLE,     // The socket is ready to be activated
         GST_RUNNING,  // The socket was already activated and is in use
         GST_BROKEN    // The last operation broke the socket, it should be closed.
     };
+
+    // Note that the use of states may differ in particular group types:
+    //
+    // Broadcast: links that are freshly connected become PENDING and then IDLE only
+    // for a short moment to be activated immediately at the nearest sending operation.
+    //
+    // Balancing: like with broadcast, just that the link activation gets its shared percentage
+    // of traffic balancing
+    //
+    // Multicast: The link is never idle. The data are always sent over the UDP multicast link
+    // and the receiver simply gets subscribed and reads packets once it's ready.
+    //
+    // Backup: The link stays idle until it's activated, and the activation can only happen
+    // at the moment when the currently active link is "suspected of being likely broken"
+    // (the current active link fails to receive ACK in a time when two ACKs should already
+    // be received). After a while when the current active link is confirmed broken, it turns
+    // into broken state.
 
     static std::string StateStr(GroupState);
 
@@ -205,6 +228,7 @@ public:
             if (sizeof(T) > value.size())
                 return false;
             refr = *(T*)&value[0];
+            return true;
         }
 
         ConfigItem(SRT_SOCKOPT o, const void* val, int size): so(o)
@@ -291,6 +315,9 @@ public:
             m_bConnected = false;
         }
 
+        // XXX BUGFIX
+        m_Positions.erase(id);
+
         return s;
     }
 
@@ -305,6 +332,7 @@ public:
     static gli_t gli_NULL() { return s_NoGroup.end(); }
 
     int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int recv(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     void close();
@@ -321,7 +349,7 @@ public:
     {
         // XXX add here also other group types, which
         // predict group receiving.
-        return m_type == SRT_GTYPE_REDUNDANT;
+        return m_type == SRT_GTYPE_BROADCAST;
     }
 
     pthread_mutex_t* exp_groupLock() { return &m_GroupLock; }
@@ -373,14 +401,7 @@ private:
     void getGroupCount(ref_t<size_t> r_size, ref_t<bool> r_still_alive);
     void getMemberStatus(ref_t< std::vector<SRT_SOCKGROUPDATA> > r_gd, SRTSOCKET wasread, int result, bool again);
 
-    // XXX UNUSED
-    void readInterceptorThread();
-    static void* readInterceptorThread_FWD(void* vself)
-    {
-        CUDTGroup* self = (CUDTGroup*)vself;
-        self->readInterceptorThread();
-        return 0;
-    }
+    void updateLatestRcv();
 
     class CUDTUnited* m_pGlobal;
     pthread_mutex_t m_GroupLock;
@@ -400,9 +421,9 @@ private:
     bool m_bTLPktDrop;
     int64_t m_iTsbPdDelay_us;
     int m_RcvEID;
-    class CEPollDesc* m_RcvEpolld;
+    struct CEPollDesc* m_RcvEpolld;
     int m_SndEID;
-    class CEPollDesc* m_SndEpolld;
+    struct CEPollDesc* m_SndEpolld;
 
     int m_iSndTimeOut;                           // sending timeout in milliseconds
     int m_iRcvTimeOut;                           // receiving timeout in milliseconds
@@ -1132,7 +1153,7 @@ private: // Sending related data
         m_iSndLastAck = isn;
         m_iSndLastDataAck = isn;
         m_iSndLastFullAck = isn;
-        m_iSndCurrSeqNo = isn - 1;
+        m_iSndCurrSeqNo = CSeqNo::decseq(isn);
         m_iSndNextSeqNo = isn;
         m_iSndLastAck2 = isn;
     }
@@ -1145,7 +1166,7 @@ private: // Sending related data
 #endif
         m_iRcvLastSkipAck = m_iRcvLastAck;
         m_iRcvLastAckAck = isn;
-        m_iRcvCurrSeqNo = isn - 1;
+        m_iRcvCurrSeqNo = CSeqNo::decseq(isn);
     }
 
     uint64_t m_ullSndLastAck2Time;               // The time when last ACK2 was sent back
@@ -1253,7 +1274,7 @@ private: // Common connection Congestion Control setup
     bool createCrypter(HandshakeSide side, bool bidi);
 
 private: // Generation and processing of packets
-    void sendCtrl(UDTMessageType pkttype, const void* lparam = NULL, void* rparam = NULL, int size = 0);
+    void sendCtrl(UDTMessageType pkttype, const int32_t* lparam = NULL, void* rparam = NULL, int size = 0);
 
     void processCtrl(CPacket& ctrlpkt);
     void sendLossReport(const std::vector< std::pair<int32_t, int32_t> >& losslist);

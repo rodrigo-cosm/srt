@@ -66,6 +66,9 @@ modified by
 
 using namespace std;
 
+#if ENABLE_HEAVY_LOGGING
+static void PrintEpollEvent(ostream& os, int events);
+#endif
 // Use "inline namespace" in C++11
 namespace srt_logging
 {
@@ -794,7 +797,8 @@ static void PrintEpollEvent(ostream& os, int events)
     static pair<int, string> namemap [] = {
         make_pair(SRT_EPOLL_IN, "[R]"),
         make_pair(SRT_EPOLL_OUT, "[W]"),
-        make_pair(SRT_EPOLL_ERR, "[E]")
+        make_pair(SRT_EPOLL_ERR, "[E]"),
+        make_pair(SRT_EPOLL_SPECIAL, "[S]")
     };
 
     int N = Size(namemap);
@@ -812,8 +816,9 @@ string DisplayEpollResults(const std::map<SRTSOCKET, int>& sockset)
     ostringstream os;
     for (fmap_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
     {
-        os << "@" << i->first << " ";
+        os << "@" << i->first << ":";
         PrintEpollEvent(os, i->second);
+        os << " ";
     }
 
     return os.str();
@@ -824,8 +829,9 @@ string CEPollDesc::DisplayEpollWatch()
     ostringstream os;
     for (ewatch_t::const_iterator i = m_USockWatchState.begin(); i != m_USockWatchState.end(); ++i)
     {
-        os << "@" << i->first << " ";
+        os << "@" << i->first << ":";
         PrintEpollEvent(os, i->second.watch);
+        os << " ";
     }
 
     return os.str();
