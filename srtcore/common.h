@@ -916,13 +916,13 @@ public:
     bool operator<(const this_t& right) const
     {
         int32_t ndiff = number - right.number;
-        if (ndiff < -HALF)
+        if (ndiff < -int32_t(HALF))
         {
             // it' like ndiff > 0
             return false;
         }
 
-        if (ndiff > HALF)
+        if (ndiff > int32_t(HALF))
         {
             // it's like ndiff < 0
             return true;

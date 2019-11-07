@@ -187,10 +187,10 @@ public:
 
     // Note that the use of states may differ in particular group types:
     //
-    // Redundancy: links that are freshly connected become PENDING and then IDLE only
+    // Broadcast: links that are freshly connected become PENDING and then IDLE only
     // for a short moment to be activated immediately at the nearest sending operation.
     //
-    // Bonding: like with redundancy, just that the link activation gets its shared percentage
+    // Balancing: like with redundancy, just that the link activation gets its shared percentage
     // of traffic balancing
     //
     // Multicast: The link is never idle. The data are always sent over the UDP multicast link
@@ -347,7 +347,7 @@ public:
     static gli_t gli_NULL() { return s_NoGroup.end(); }
 
     int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
-    int sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     // For Backup, sending all previous packet
@@ -370,7 +370,7 @@ public:
     {
         // XXX add here also other group types, which
         // predict group receiving.
-        return m_type == SRT_GTYPE_REDUNDANT;
+        return m_type == SRT_GTYPE_BROADCAST;
     }
 
     pthread_mutex_t* exp_groupLock() { return &m_GroupLock; }

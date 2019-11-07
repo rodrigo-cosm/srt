@@ -11455,7 +11455,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
     // Configure according to type
     switch (gtype)
     {
-    case SRT_GTYPE_REDUNDANT:
+    case SRT_GTYPE_BROADCAST:
         m_selfManaged = true;
         break;
 
@@ -11463,7 +11463,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
         m_selfManaged = true;
         break;
 
-    case SRT_GTYPE_BONDING:
+    case SRT_GTYPE_BALANCING:
         m_selfManaged = true;
         break;
 
@@ -11964,16 +11964,16 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         LOGC(dlog.Error, log << "CUDTGroup::send: not implemented for type #" << m_type);
         throw CUDTException(MJ_SETUP, MN_INVAL, 0);
 
-    case SRT_GTYPE_REDUNDANT:
-        return sendRedundant(buf, len, r_mc);
+    case SRT_GTYPE_BROADCAST:
+        return sendBroadcast(buf, len, r_mc);
 
     case SRT_GTYPE_BACKUP:
         return sendBackup(buf, len, r_mc);
 
         /* to be implemented
 
-    case SRT_GTYPE_BONDING:
-        return sendBonding(buf, len, r_mc);
+    case SRT_GTYPE_BALANCING:
+        return sendBalancing(buf, len, r_mc);
 
     case SRT_GTYPE_MULTICAST:
         return sendMulticast(buf, len, r_mc);
@@ -11981,7 +11981,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     }
 }
 
-int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
+int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
     // Avoid stupid errors in the beginning.
     if (len <= 0)
@@ -12023,7 +12023,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Check socket sndstate before sending
         if (d->sndstate == GST_BROKEN)
         {
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in BROKEN state: @" << d->id << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
             wipeme.push_back(d);
 
             /*
@@ -12067,7 +12067,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 continue;
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in IDLE state: @" << d->id << " - will activate it");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in IDLE state: @" << d->id << " - will activate it");
             // This is idle, we'll take care of them next time
             // Might be that:
             // - this socket is idle, while some NEXT socket is running
@@ -12080,12 +12080,12 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
         if (d->sndstate == GST_RUNNING)
         {
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: socket in RUNNING state: @" << d->id << " - will send a payload");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket in RUNNING state: @" << d->id << " - will send a payload");
             sendable.push_back(d);
             continue;
         }
 
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: socket @" << d->id << " not ready, state: "
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: socket @" << d->id << " not ready, state: "
                 << StateStr(d->sndstate) << "(" << int(d->sndstate) << ") - NOT sending, SET AS PENDING");
 
         pending.push_back(d);
@@ -12172,7 +12172,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         int lastseq = d->ps->core().schedSeqNo();
         if (curseq != -1 && curseq != lastseq)
         {
-            HLOGC(mglog.Debug, log << "grp/sendRedundant: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendBroadcast: socket @" << d->id
                 << ": override snd sequence %" << lastseq
                 << " with %" << curseq << " (diff by "
                 << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD: " << BufferStamp(buf, len));
@@ -12180,7 +12180,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
         else
         {
-            HLOGC(mglog.Debug, log << "grp/sendRedundant: socket @" << d->id
+            HLOGC(mglog.Debug, log << "grp/sendBroadcast: socket @" << d->id
                 << ": sequence remains with original value: %" << lastseq
                 << "; SENDING PAYLOAD " << BufferStamp(buf, len));
         }
@@ -12219,13 +12219,13 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     if (curseq != -1)
     {
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: updating current scheduling sequence %" << curseq);
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: updating current scheduling sequence %" << curseq);
         m_iLastSchedSeqNo = curseq;
     }
 
     if (!pending.empty())
     {
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: found pending sockets, polling them.");
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: found pending sockets, polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
@@ -12234,7 +12234,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (m_SndEpolld->watch_empty())
         {
             // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "grp/sendRedundant: IPE: reported pending sockets, but EID is empty - wiping pending!");
+            LOGC(dlog.Error, log << "grp/sendBroadcast: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pending.begin(), pending.end(), back_inserter(wipeme));
         }
         else
@@ -12244,7 +12244,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: RDY: " << DisplayEpollResults(sready));
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: RDY: " << DisplayEpollResults(sready));
 
             // sockets in EX: should be moved to wipeme.
             for (vector<gli_t>::iterator i = pending.begin(); i != pending.end(); ++i)
@@ -12252,7 +12252,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 gli_t d = *i;
                 if (CEPoll::isready(sready, d->id, SRT_EPOLL_ERR))
                 {
-                    HLOGC(dlog.Debug, log << "grp/sendRedundant: Socket @" << d->id << " reported FAILURE - moved to wiped.");
+                    HLOGC(dlog.Debug, log << "grp/sendBroadcast: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(d);
                     m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
@@ -12281,7 +12281,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         CUDTSocket* ps = d->ps;
         if (!ps)
         {
-            LOGC(dlog.Error, log << "grp/sendRedundant: IPE: socket NULL at id=" << d->id << " - removing from group list");
+            LOGC(dlog.Error, log << "grp/sendBroadcast: IPE: socket NULL at id=" << d->id << " - removing from group list");
             // Closing such socket is useless, it simply won't be found in the map and
             // the internal facilities won't know what to do with it anyway.
             // Simply delete the entry.
@@ -12299,7 +12299,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
             CUDTSocket* ps = *x;
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
 
             // NOTE: This does inside: ps->removeFromGroup().
             // After this call, 'd' is no longer valid and *i is singular.
@@ -12307,7 +12307,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         }
     }
 
-    HLOGC(dlog.Debug, log << "grp/sendRedundant: - wiped " << wipeme.size() << " broken sockets");
+    HLOGC(dlog.Debug, log << "grp/sendBroadcast: - wiped " << wipeme.size() << " broken sockets");
 
     // We'll need you again.
     wipeme.clear();
@@ -12391,7 +12391,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
         }
 
-        HLOGC(dlog.Debug, log << "grp/sendRedundant: all blocked, trying to common-block on epoll...");
+        HLOGC(dlog.Debug, log << "grp/sendBroadcast: all blocked, trying to common-block on epoll...");
 
         // XXX TO BE REMOVED. Sockets should be subscribed in m_SndEID at connecting time
         // (both srt_connect and srt_accept).
@@ -12414,7 +12414,7 @@ int CUDTGroup::sendRedundant(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
             InvertedGuard ug(&m_GroupLock, "Group");
-            HLOGC(dlog.Debug, log << "grp/sendRedundant: blocking on any of blocked sockets to allow sending");
+            HLOGC(dlog.Debug, log << "grp/sendBroadcast: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
             blst = m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, m_iSndTimeOut);
@@ -13647,14 +13647,14 @@ CUDTGroup::ReadPos* CUDTGroup::checkPacketAhead()
         {
             // The very next packet. Return it.
             m_RcvBaseSeqNo = a.mctrl.pktseq;
-            HLOGC(dlog.Debug, log << "group/recv: ahead delivery %"
+            HLOGC(dlog.Debug, log << "group/recv: Base %" << m_RcvBaseSeqNo << " ahead delivery POSSIBLE %"
                     << a.mctrl.pktseq << "#" << a.mctrl.msgno << " from @" << i->first << ")");
             out = &a;
         }
         else if (seqdiff < 1 && !a.packet.empty())
         {
             HLOGC(dlog.Debug, log << "group/recv: @" << i->first << " dropping collected ahead %"
-                    << a.mctrl.pktseq << "#" << a.mctrl.msgno << ")");
+                    << a.mctrl.pktseq << "#" << a.mctrl.msgno << " with base %" << m_RcvBaseSeqNo);
             a.packet.clear();
         }
         // In case when it's >1, keep it in ahead
@@ -13782,19 +13782,6 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     CTimer::rdtsc(now_tk);
 
     sendable.reserve(m_Group.size());
-
-    // Always set the same exactly message number for the payload
-    // sent over all links.Regardless whether it will be used to synchronize
-    // the streams or not.
-    if (m_iLastSchedMsgNo != 0)
-    {
-        HLOGC(dlog.Debug, log << "grp/sendBackup: setting message number: " << m_iLastSchedMsgNo);
-        mc.msgno = m_iLastSchedMsgNo;
-    }
-    else
-    {
-        HLOGP(dlog.Debug, "grp/sendBackup: NOT setting message number - waiting for the first successful sending");
-    }
 
     uint64_t oldest_unstable_tk = 0;
 
@@ -14080,13 +14067,6 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             none_succeeded = false;
             final_stat = stat;
             ++nsuccessful;
-
-            if (m_iLastSchedMsgNo == 0)
-            {
-                // Initialize this number
-                HLOGC(dlog.Debug, log << "grp/sendBackup: INITIALIZING message number: " << mc.msgno);
-                m_iLastSchedMsgNo = mc.msgno;
-            }
         }
         else if (erc == SRT_EASYNCSND)
         {
@@ -14299,13 +14279,6 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL #" << mc.msgno
                         << " LINK ACTIVATED.");
 
-                if (m_iLastSchedMsgNo == 0)
-                {
-                    // Initialize this number
-                    HLOGC(dlog.Debug, log << "grp/sendBackup: INITIALIZING message number: " << mc.msgno);
-                    m_iLastSchedMsgNo = mc.msgno;
-                }
-
                 if (!d->ps->core().m_ullUnstableSince_tk)
                 {
                     parallel.push_back(d);
@@ -14379,7 +14352,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             for (vector<gli_t>::iterator i = pending.begin(); i != pending.end(); ++i)
             {
                 gli_t d = *i;
-                if (map_get(sready, d->id, 0) & SRT_EPOLL_ERR)
+                if (CEPoll::isready(sready, d->id, SRT_EPOLL_ERR))
                 {
                     HLOGC(dlog.Debug, log << "grp/sendBackup: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
@@ -14654,15 +14627,6 @@ RetryWaitBlocked:
         // If any operation succeeded, this will not be executed anyway.
 
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
-    }
-
-    // Increase the message number only when at least one succeeded.
-
-    // If m_iLastSchedSeqNo wasn't initialized above, don't touch it.
-    if (m_iLastSchedMsgNo != 0)
-    {
-        m_iLastSchedMsgNo = ++MsgNo(m_iLastSchedMsgNo);
-        HLOGC(dlog.Debug, log << "grp/sendBackup: updated msgno: " << m_iLastSchedMsgNo);
     }
 
     // Now fill in the socket table. Check if the size is enough, if not,
