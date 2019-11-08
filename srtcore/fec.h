@@ -194,7 +194,7 @@ private:
     int32_t RcvGetLossSeqHoriz(Group& g);
     int32_t RcvGetLossSeqVert(Group& g);
 
-    static void TranslateLossRecords(const std::set<int32_t> loss, loss_seqs_t& irrecover);
+    static void TranslateLossRecords(const std::set<int32_t>& loss, loss_seqs_t& irrecover);
     void RcvCheckDismissColumn(int32_t seqno, int colgx, loss_seqs_t& irrecover);
     int RcvGetRowGroupIndex(int32_t seq);
     int RcvGetColumnGroupIndex(int32_t seq);
@@ -242,7 +242,7 @@ public:
     // So extra 4 bytes are needed, 2 for flags, 2 for length clip.
     static const size_t EXTRA_SIZE = 4;
 
-    virtual SRT_ARQLevel arqLevel() { return m_fallback_level; }
+    virtual SRT_ARQLevel arqLevel() ATR_OVERRIDE { return m_fallback_level; }
 };
 
 #endif

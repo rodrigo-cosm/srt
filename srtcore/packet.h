@@ -243,7 +243,7 @@ public:
       /// @param rparam [in] pointer to the second data structure, explained by the packet type.
       /// @param size [in] size of rparam, in number of bytes;
 
-   void pack(UDTMessageType pkttype, void* lparam = NULL, void* rparam = NULL, int size = 0);
+   void pack(UDTMessageType pkttype, const void* lparam = NULL, void* rparam = NULL, int size = 0);
 
       /// Read the packet vector.
       /// @return Pointer to the packet vector.
@@ -385,7 +385,7 @@ public:
    int32_t& m_iSeqNo;                   // alias: sequence number
    int32_t& m_iMsgNo;                   // alias: message number
    int32_t& m_iTimeStamp;               // alias: timestamp
-   int32_t& m_iID;			// alias: socket ID
+   int32_t& m_iID;                      // alias: socket ID
    char*& m_pcData;                     // alias: data/control information
 
    //static const int m_iPktHdrSize;	// packet header size

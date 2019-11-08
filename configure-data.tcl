@@ -35,7 +35,6 @@ set internal_options {
 set cmake_options {
     cygwin-use-posix "Should the POSIX API be used for cygwin. Ignored if the system isn't cygwin. (default: OFF)"
     enable-encryption "Should encryption features be enabled (default: ON)"
-    enable-unittests "Should the unit tests be enabled (default: OFF)"
     enable-c++11 "Should the c++11 parts (srt-live-transmit) be enabled (default: ON)"
     enable-apps "Should the Support Applications be Built? (default: ON)"
     enable-testing "Should developer testing applications be built (default: OFF)"
@@ -45,6 +44,7 @@ set cmake_options {
     enable-debug=<0,1,2> "Enable debug mode (0=disabled, 1=debug, 2=rel-with-debug)"
     enable-haicrypt-logging "Should logging in haicrypt be enabled (default: OFF)"
     enable-inet-pton "Set to OFF to prevent usage of inet_pton when building against modern SDKs (default: ON)"
+    enable-code-coverage "Enable code coverage reporting (default: OFF)"
     enable-monotonic-clock "Enforced clock_gettime with monotonic clock on GC CV /temporary fix for #729/ (default: OFF)"
     enable-profile "Should instrument the code for profiling. Ignored for non-GNU compiler. (default: OFF)"
     enable-relative-libpath "Should applications contain relative library paths, like ../lib (default: OFF)"

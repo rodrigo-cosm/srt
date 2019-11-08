@@ -167,8 +167,11 @@ void CChannel::open(const sockaddr* addr)
          throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
 
       // On Windows ai_addrlen has type size_t (unsigned), while bind takes int.
-      if (0 != ::bind(m_iSocket, res->ai_addr, (socklen_t) res->ai_addrlen))
-         throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+      if (0 != ::bind(m_iSocket, res->ai_addr, (socklen_t)res->ai_addrlen))
+      {
+          ::freeaddrinfo(res);
+          throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+      }
       memcpy(&m_BindAddr, res->ai_addr, res->ai_addrlen);
       m_BindAddr.len = (socklen_t) res->ai_addrlen;
 
@@ -377,7 +380,7 @@ void CChannel::setIpToS(int tos)
 
 #endif
 
-int CChannel::ioctlQuery(int type) const
+int CChannel::ioctlQuery(int SRT_ATR_UNUSED type) const
 {
 #ifdef unix
     int value = 0;
@@ -388,7 +391,7 @@ int CChannel::ioctlQuery(int type) const
     return -1;
 }
 
-int CChannel::sockoptQuery(int level, int option) const
+int CChannel::sockoptQuery(int SRT_ATR_UNUSED level, int SRT_ATR_UNUSED option) const
 {
 #ifdef unix
     int value = 0;
@@ -420,20 +423,23 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
 
     if (packet.isControl())
     {
-        spec << " CONTROL size=" << packet.getLength()
+        spec << " type=CONTROL"
              << " cmd=" << MessageTypeStr(packet.getType(), packet.getExtendedType())
              << " arg=" << packet.header(SRT_PH_MSGNO);
     }
     else
     {
-        spec << " DATA size=" << packet.getLength()
-             << " seq=" << packet.getSeqNo();
-        if (packet.getRexmitFlag())
-            spec << " [REXMIT]";
+        spec << " type=DATA"
+             << " %" << packet.getSeqNo()
+             << " msgno=" << MSGNO_SEQ::unwrap(packet.m_iMsgNo)
+             << packet.MessageFlagStr()
+             << " !" << BufferStamp(packet.m_pcData, packet.getLength());
     }
 
-    HLOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
-        << " target=%" << packet.m_iID
+    LOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
+        << " target=@" << packet.m_iID
+        << " size=" << packet.getLength()
+        << " pkt.ts=" << FormatTime(packet.m_iTimeStamp)
         << spec.str());
 #endif
 

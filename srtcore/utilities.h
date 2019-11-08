@@ -68,11 +68,12 @@ written by
 #define ATR_OVERRIDE
 #define ATR_FINAL
 
-#if defined(REQUIRE_CXX11) && REQUIRE_CXX11 == 1
+#endif
+
+#if !HAVE_CXX11 && defined(REQUIRE_CXX11) && REQUIRE_CXX11 == 1
 #error "The currently compiled application required C++11, but your compiler doesn't support it."
 #endif
 
-#endif
 
 // Windows warning disabler
 #define _CRT_SECURE_NO_WARNINGS 1
@@ -91,6 +92,11 @@ written by
 #include <memory>
 #include <sstream>
 #include <iomanip>
+
+#if HAVE_CXX11
+#include <type_traits>
+#endif
+
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
@@ -107,9 +113,35 @@ written by
 
 #endif
 
-#if defined(__linux__) || defined(__CYGWIN__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__GNU__)
 
 #	include <endian.h>
+
+// GLIBC-2.8 and earlier does not provide these macros.
+// See http://linux.die.net/man/3/endian
+// From https://gist.github.com/panzi/6856583
+#   if defined(__GLIBC__) \
+      && ( !defined(__GLIBC_MINOR__) \
+         || ((__GLIBC__ < 2) \
+         || ((__GLIBC__ == 2) && (__GLIBC_MINOR__ < 9))) )
+#       include <arpa/inet.h>
+#       if defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)
+
+#           define htole32(x) (x)
+#           define le32toh(x) (x)
+
+#       elif defined(__BYTE_ORDER) && (__BYTE_ORDER == __BIG_ENDIAN)
+
+#           define htole16(x) ((((((uint16_t)(x)) >> 8))|((((uint16_t)(x)) << 8)))
+#           define le16toh(x) ((((((uint16_t)(x)) >> 8))|((((uint16_t)(x)) << 8)))
+
+#           define htole32(x) (((uint32_t)htole16(((uint16_t)(((uint32_t)(x)) >> 16)))) | (((uint32_t)htole16(((uint16_t)(x)))) << 16))
+#           define le32toh(x) (((uint32_t)le16toh(((uint16_t)(((uint32_t)(x)) >> 16)))) | (((uint32_t)le16toh(((uint16_t)(x)))) << 16))
+
+#       else
+#           error Byte Order not supported or not defined.
+#       endif
+#   endif
 
 #elif defined(__APPLE__)
 
@@ -655,7 +687,17 @@ struct CallbackHolder
     {
         // Test if the pointer is a pointer to function. Don't let
         // other type of pointers here.
+#if HAVE_CXX11
+        static_assert(std::is_function<Signature>::value, "CallbackHolder is for functions only!");
+#else
+        // This is a poor-man's replacement, which should in most compilers
+        // generate a warning, if `Signature` resolves to a value type.
+        // This would make an illegal pointer cast from a value to a function type.
+        // Casting function-to-function, however, should not. Unfortunately
+        // newer compilers disallow that, too (when a signature differs), but
+        // then they should better use the C++11 way, much more reliable and safer.
         void* (*testfn)(void*) ATR_UNUSED = (void*(*)(void*))f;
+#endif
         opaque = o;
         fn = f;
     }
