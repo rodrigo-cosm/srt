@@ -54,7 +54,12 @@ written by
 // LOGC uses an iostream-like syntax, using the special 'log' symbol.
 // This symbol isn't visible outside the log macro parameters.
 // Usage: LOGC(mglog.Debug, log << param1 << param2 << param3);
-#define LOGC(logdes, args) if (logdes.CheckEnabled()) { srt_logging::LogDispatcher::Proxy log(logdes); log.setloc(__FILE__, __LINE__, __FUNCTION__); args; }
+#define LOGC(logdes, args) if (logdes.CheckEnabled()) \
+{ \
+    srt_logging::LogDispatcher::Proxy log(logdes); \
+    log.setloc(__FILE__, __LINE__, __FUNCTION__); \
+    const srt_logging::LogDispatcher::Proxy& log_prox SRT_ATR_UNUSED = args; \
+}
 
 // LOGF uses printf-like style formatting.
 // Usage: LOGF(mglog.Debug, "%s: %d", param1.c_str(), int(param2));
@@ -70,11 +75,15 @@ written by
 #define HLOGP LOGP
 #define HLOGF LOGF
 
+#define IF_HEAVY_LOGGING(instr) instr
+
 #else
 
 #define HLOGC(...)
 #define HLOGF(...)
 #define HLOGP(...)
+
+#define IF_HEAVY_LOGGING(instr) (void)0
 
 #endif
 
@@ -83,9 +92,9 @@ written by
 #else
 
 // Note: can't use CGuard here because CGuard uses LOGS in itself and will cause infinite recursion.
-#define LOGS(stream, args) if (::srt_logger_config.max_level == logging::LogLevel::debug) { \
+#define LOGS(stream, args) if (::srt_logger_config.max_level == srt_logging::LogLevel::debug) { \
     char tn[512]; g_gmtx.lock(); ThreadName::get(tn); std::ostringstream log; \
-    log << logging::FormatTime(CTimer::getTime()) << "/" << tn << "##: "; \
+    log << srt_logging::FormatTime(CTimer::getTime()) << "/" << tn << "##: "; \
     args; \
     log << std::endl; stream << log.str(); \
     g_gmtx.unlock(); \
@@ -104,6 +113,8 @@ written by
 #define HLOGP(...)
 // LOGS doesn't have the heavy version because it's always
 // considered "heavy" and it's turned on only per request.
+
+#define IF_HEAVY_LOGGING(instr) (void)0
 
 #endif
 

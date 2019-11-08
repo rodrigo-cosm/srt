@@ -1079,12 +1079,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<int32_t> curp
 {
     *r_tsbpdtime = 0;
 
-#if ENABLE_HEAVY_LOGGING
-    const char* reason = "NOT RECEIVED";
-#define IF_HEAVY_LOGGING(instr) instr
-#else 
-#define IF_HEAVY_LOGGING(instr) (void)0
-#endif 
+    IF_HEAVY_LOGGING(const char* reason = "NOT RECEIVED");
 
     for (int i = m_iStartPos, n = m_iLastAckPos; i != n; i = shift_forward(i))
     {
@@ -1202,6 +1197,65 @@ CPacket* CRcvBuffer::getRcvReadyPacket()
 
     return 0;
 }
+
+#if ENABLE_HEAVY_LOGGING
+// This function is for debug purposes only and it's called only
+// from within HLOG* macros.
+void CRcvBuffer::reportBufferStats()
+{
+    int nmissing = 0;
+    int32_t low_seq= -1, high_seq = -1;
+    int32_t low_ts = 0, high_ts = 0;
+
+    for (int i = m_iStartPos, n = m_iLastAckPos; i != n; i = (i + 1) % m_iSize)
+    {
+        if ( m_pUnit[i] && m_pUnit[i]->m_iFlag == CUnit::GOOD )
+        {
+            low_seq = m_pUnit[i]->m_Packet.m_iSeqNo;
+            low_ts = m_pUnit[i]->m_Packet.m_iTimeStamp;
+            break;
+        }
+        ++nmissing;
+    }
+
+    // Not sure if a packet MUST BE at the last ack pos position, so check, just in case.
+    int n = m_iLastAckPos;
+    if (m_pUnit[n] && m_pUnit[n]->m_iFlag == CUnit::GOOD)
+    {
+        high_ts = m_pUnit[n]->m_Packet.m_iTimeStamp;
+        high_seq = m_pUnit[n]->m_Packet.m_iSeqNo;
+    }
+    else
+    {
+        // Possibilities are:
+        // m_iStartPos == m_iLastAckPos, high_ts == low_ts, defined.
+        // No packet: low_ts == 0, so high_ts == 0, too.
+        high_ts = low_ts;
+    }
+    // The 32-bit timestamps are relative and roll over oftten; what
+    // we really need is the timestamp difference. The only place where
+    // we can ask for the time base is the upper time because when trying
+    // to receive the time base for the lower time we'd break the requirement
+    // for monotonic clock.
+
+    uint64_t upper_time = high_ts;
+    uint64_t lower_time = low_ts;
+
+    if (lower_time > upper_time)
+        upper_time += uint64_t(CPacket::MAX_TIMESTAMP)+1;
+
+    int32_t timespan = upper_time - lower_time;
+    int seqspan = 0;
+    if (low_seq != -1 && high_seq != -1)
+    {
+        seqspan = CSeqNo::seqoff(low_seq, high_seq);
+    }
+
+    LOGC(dlog.Debug, log << "RCV BUF STATS: seqspan=%(" << low_seq << "-" << high_seq << ":" << seqspan << ") missing=" << nmissing << "pkts");
+    LOGC(dlog.Debug, log << "RCV BUF STATS: timespan=" << timespan << "us (lo=" << FormatTime(lower_time) << " hi=" << FormatTime(upper_time) << ")");
+}
+
+#endif // ENABLE_HEAVY_LOGGING
 
 bool CRcvBuffer::isRcvDataReady()
 {
@@ -1564,7 +1618,18 @@ void CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mut
         printDriftOffset(m_DriftTracer.overdrift(), m_DriftTracer.drift());
 #endif /* SRT_DEBUG_TSBPD_DRIFT */
 
+#if ENABLE_HEAVY_LOGGING
+        uint64_t oldbase = m_ullTsbPdTimeBase;
+#endif
         m_ullTsbPdTimeBase += m_DriftTracer.overdrift();
+
+        HLOGC(dlog.Debug, log << "DRIFT=" << (iDrift/1000.0) << "ms AVG="
+                << (m_DriftTracer.drift()/1000.0) << "ms, TB: "
+                << FormatTime(oldbase) << " UPDATED TO: " << FormatTime(m_ullTsbPdTimeBase));
+    }
+    else
+    {
+        HLOGC(dlog.Debug, log << "DRIFT=" << (iDrift/1000.0) << "ms TB REMAINS: " << FormatTime(m_ullTsbPdTimeBase));
     }
 
     CGuard::leaveCS(mutex_to_lock, "ack");
@@ -1577,6 +1642,21 @@ int CRcvBuffer::readMsg(char* data, int len)
 }
 
 
+#ifdef SRT_DEBUG_TSBPD_OUTJITTER
+void CRcvBuffer::debugJitter(uint64_t rplaytime)
+{
+    uint64_t now = CTimer::getTime();
+    if ((now - rplaytime)/10 < 10)
+        m_ulPdHisto[0][(now - rplaytime)/10]++;
+    else if ((now - rplaytime)/100 < 10)
+        m_ulPdHisto[1][(now - rplaytime)/100]++;
+    else if ((now - rplaytime)/1000 < 10)
+        m_ulPdHisto[2][(now - rplaytime)/1000]++;
+    else
+        m_ulPdHisto[3][1]++;
+}
+#endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
+
 int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
 {
     SRT_MSGCTRL& msgctl = *r_msgctl;
@@ -1584,6 +1664,10 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
     bool passack;
     bool empty = true;
     uint64_t& rplaytime = msgctl.srctime;
+
+#ifdef ENABLE_HEAVY_LOGGING
+    reportBufferStats();
+#endif
 
     if (m_bTsbPdMode)
     {
@@ -1593,24 +1677,14 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
         if (getRcvReadyMsg(Ref(rplaytime), Ref(seq)))
         {
             empty = false;
-
             // In TSBPD mode you always read one message
             // at a time and a message always fits in one UDP packet,
             // so in one "unit".
             p = q = m_iStartPos;
 
-#ifdef SRT_DEBUG_TSBPD_OUTJITTER
-            uint64_t now = CTimer::getTime();
-            if ((now - rplaytime)/10 < 10)
-                m_ulPdHisto[0][(now - rplaytime)/10]++;
-            else if ((now - rplaytime)/100 < 10)
-                m_ulPdHisto[1][(now - rplaytime)/100]++;
-            else if ((now - rplaytime)/1000 < 10)
-                m_ulPdHisto[2][(now - rplaytime)/1000]++;
-            else
-                m_ulPdHisto[3][1]++;
-#endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
+            debugJitter(rplaytime);
         }
+
     }
     else
     {
@@ -1638,6 +1712,8 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
     while (p != past_q)
     {
         const int pktlen = (int)m_pUnit[p]->m_Packet.getLength();
+        // When unitsize is less than pktlen, only a fragment is copied to the output 'data',
+        // but still the whole packet is removed from the receiver buffer.
         if (pktlen > 0)
             countBytes(-1, -pktlen, true);
 
@@ -1650,9 +1726,6 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
             memcpy(data, m_pUnit[p]->m_Packet.m_pcData, unitsize);
             data += unitsize;
             rs -= unitsize;
-            /* we removed bytes form receive buffer */
-            countBytes(-1, -unitsize, true);
-
 
 #if ENABLE_HEAVY_LOGGING
             {
@@ -1670,12 +1743,20 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
                 int64_t nowdiff = prev_now ? (nowtime - prev_now) : 0;
                 uint64_t srctimediff = prev_srctime ? (srctime - prev_srctime) : 0;
 
-                HLOGC(dlog.Debug, log << CONID() << "readMsg: DELIVERED seq=" << seq
-                        << " from POS=" << p << " T="
-                        << FormatTime(srctime) << " in " << (timediff/1000.0)
-                        << "ms - TIME-PREVIOUS: PKT: " << (srctimediff/1000.0)
-                        << " LOCAL: " << (nowdiff/1000.0)
-                        << " !" << BufferStamp(pkt.data(), pkt.size()));
+                int next_p = shift_forward(p);
+                CUnit* u = m_pUnit[next_p];
+                string next_playtime = "NONE";
+                if (u && u->m_iFlag == CUnit::GOOD)
+                {
+                    next_playtime = FormatTime(getPktTsbPdTime(u->m_Packet.getMsgTimeStamp()));
+                }
+
+                LOGC(dlog.Debug, log << CONID() << "readMsg: DELIVERED seq=" << seq
+                        << " T=" << FormatTime(srctime)
+                        << " in " << (timediff/1000.0) << "ms - TIME-PREVIOUS: PKT: "
+                        << (srctimediff/1000.0) << " LOCAL: " << (nowdiff/1000.0)
+                        << " !" << BufferStamp(pkt.data(), pkt.size())
+                        << " NEXT pkt T=" << next_playtime);
 
                 prev_now = nowtime;
                 prev_srctime = srctime;
@@ -1701,12 +1782,13 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
             m_pUnit[p]->m_iFlag = CUnit::PASSACK;
         }
 
-        if (++ p == m_iSize)
-            p = 0;
+        p = shift_forward(p);
     }
 
     if (!passack)
-        m_iStartPos = shift_forward(q);
+        m_iStartPos = past_q;
+
+    HLOGC(dlog.Debug, log << "rcvBuf/extractData: begin=" << m_iStartPos << " reporting extraction size=" << (len - rs));
 
     return len - rs;
 }
