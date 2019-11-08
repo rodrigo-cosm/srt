@@ -1152,6 +1152,19 @@ SrtSource::SrtSource(string host, int port, std::string path, const map<string,s
     hostport_copy = os.str();
 }
 
+static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
+{
+    CBytePerfMon perf;
+    // clear only if stats report is to be read
+    srt_bstats(sock, &perf, clr);
+
+    if (bw)
+        cout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
+    if (stats)
+        cout << transmit_stats_writer->WriteStats(sock, perf);
+}
+
+
 #ifdef SRT_OLD_APP_READER
 
 // NOTE: 'output' is expected to be EMPTY here.
@@ -1813,20 +1826,6 @@ RETRY_READING:
 }
 
 #endif
-
-static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
-{
-    CBytePerfMon perf;
-    // clear only if stats report is to be read
-    srt_bstats(sock, &perf, clr);
-
-    if (bw)
-        cout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
-    if (stats)
-        cout << transmit_stats_writer->WriteStats(sock, perf);
-}
-
-
 
 bytevector SrtSource::Read(size_t chunk)
 {
