@@ -479,20 +479,23 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet, const sockaddr_a
 
     if (packet.isControl())
     {
-        spec << " CONTROL size=" << packet.getLength()
+        spec << " type=CONTROL"
              << " cmd=" << MessageTypeStr(packet.getType(), packet.getExtendedType())
              << " arg=" << packet.header(SRT_PH_MSGNO);
     }
     else
     {
-        spec << " DATA size=" << packet.getLength()
-             << " seq=" << packet.getSeqNo();
-        if (packet.getRexmitFlag())
-            spec << " [REXMIT]";
+        spec << " type=DATA"
+             << " %" << packet.getSeqNo()
+             << " msgno=" << MSGNO_SEQ::unwrap(packet.m_iMsgNo)
+             << packet.MessageFlagStr()
+             << " !" << BufferStamp(packet.m_pcData, packet.getLength());
     }
 
-    HLOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
+    LOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
         << " target=@" << packet.m_iID
+        << " size=" << packet.getLength()
+        << " pkt.ts=" << FormatTime(packet.m_iTimeStamp)
 #ifdef SRT_ENABLE_PKTINFO
         << " sourceIP="
         << (m_bBindMasked && !source_addr.isany() ? SockaddrToString(source_addr) : "default")
@@ -587,7 +590,7 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet, const sockaddr_a
 #ifdef SRT_ENABLE_PKTINFO
       if (m_bBindMasked && !source_addr.isany())
       {
-          if ( !setSourceAddress(mh, source_addr))
+          if (!setSourceAddress(mh, source_addr))
           {
               LOGC(mglog.Error, log << "CChannel::setSourceAddress: source address invalid family #" << source_addr.family() << ", NOT setting.");
           }

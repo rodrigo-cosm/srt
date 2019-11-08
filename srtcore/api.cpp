@@ -70,6 +70,10 @@ modified by
    #include <win/wintime.h>
 #endif
 
+#ifdef _MSC_VER
+   #pragma warning(error: 4530)
+#endif
+
 using namespace std;
 using namespace srt_logging;
 extern LogConfig srt_logger_config;
@@ -2702,28 +2706,6 @@ CUDTException& CUDT::getlasterror()
    return *s_UDTUnited.getError();
 }
 
-int CUDT::perfmon(SRTSOCKET u, CPerfMon* perf, bool clear)
-{
-   try
-   {
-      CUDT* udt = s_UDTUnited.lookup(u);
-      udt->sample(perf, clear);
-      return 0;
-   }
-   catch (const CUDTException& e)
-   {
-      s_UDTUnited.setError(new CUDTException(e));
-      return ERROR;
-   }
-   catch (const std::exception& ee)
-   {
-      LOGC(mglog.Fatal, log << "perfmon: UNEXPECTED EXCEPTION: "
-         << typeid(ee).name() << ": " << ee.what());
-      s_UDTUnited.setError(new CUDTException(MJ_UNKNOWN, MN_NONE, 0));
-      return ERROR;
-   }
-}
-
 int CUDT::bstats(SRTSOCKET u, CBytePerfMon* perf, bool clear, bool instantaneous)
 {
    try
@@ -3151,12 +3133,6 @@ const char* geterror_desc(int code, int err)
 {
    CUDTException e (CodeMajor(code/1000), CodeMinor(code%1000), err);
    return(e.getErrorMessage());
-}
-
-
-SRT_ATR_DEPRECATED int perfmon(SRTSOCKET u, TRACEINFO* perf, bool clear)
-{
-   return CUDT::perfmon(u, perf, clear);
 }
 
 int bstats(SRTSOCKET u, TRACEBSTATS* perf, bool clear)
