@@ -81,6 +81,7 @@
 
 using namespace std;
 
+srt_logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-live");
 
 map<string,string> g_options;
 

@@ -1197,8 +1197,8 @@ void* CRcvQueue::worker(void* param)
         uint64_t currtime_tk;
         CTimer::rdtsc(currtime_tk);
 
-        CRNode*  ul       = self->m_pRcvUList->m_pUList;
-        uint64_t ctime_tk = currtime_tk - 100000 * CTimer::getCPUFrequency();
+        CRNode*  ul             = self->m_pRcvUList->m_pUList;
+        const uint64_t ctime_tk = currtime_tk - CUDT::COMM_SYN_INTERVAL_US * CTimer::getCPUFrequency();
         while ((NULL != ul) && (ul->m_llTimeStamp_tk < ctime_tk))
         {
             CUDT* u = ul->m_pUDT;
@@ -1295,7 +1295,8 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_
     if (rst == RST_OK)
     {
         *r_id = r_unit->m_Packet.m_iID;
-        HLOGC(mglog.Debug, log << "INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddressAny())
+        HLOGC(mglog.Debug, log << "INCOMING PACKET: FROM=" << SockaddrToString(*r_addr)
+                << " BOUND=" << SockaddrToString(m_pChannel->bindAddressAny())
                 << " DEST=" << SockaddrToString(r_unit->m_Packet.m_DestAddr)
                 << " " << r_unit->m_Packet.Info());
     }

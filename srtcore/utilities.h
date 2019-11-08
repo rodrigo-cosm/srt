@@ -688,6 +688,19 @@ typename Map::mapped_type const* map_getp(const Map& m, const Key& key)
 
 #endif
 
+template<typename InputIterator, typename OutputIterator, typename TransFunction>
+void FilterIf(InputIterator bg, InputIterator nd,
+        OutputIterator out, TransFunction fn)
+{
+    for (InputIterator i = bg; i != nd; ++i)
+    {
+        std::pair<typename TransFunction::result_type, bool> result = fn(*i);
+        if (!result.second)
+            continue;
+        *out++ = result.first;
+    }
+}
+
 template <class Signature>
 struct CallbackHolder
 {

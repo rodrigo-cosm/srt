@@ -94,6 +94,8 @@
 #include <fcntl.h>
 
 #ifdef __cplusplus
+// Headers for errno, string and stdlib are
+// included indirectly correct C++ way.
 #else
 #include <errno.h>
 #include <string.h>

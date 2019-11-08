@@ -361,6 +361,12 @@ public:
       /// both cases).
 
    bool isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
+#ifdef SRT_DEBUG_TSBPD_OUTJITTER
+   void debugJitter(uint64_t);
+#else
+   void debugJitter(uint64_t) {}
+#endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
+
    bool isRcvDataReady();
    bool isRcvDataAvailable()
    {
@@ -404,6 +410,9 @@ public:
 
    void skipData(int len);
 
+#if ENABLE_HEAVY_LOGGING
+   void reportBufferStats(); // Heavy logging Debug only
+#endif
    bool empty()
    {
        // This will not always return the intended value,
@@ -440,10 +449,12 @@ private:
 
    bool getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
 
+public:
+
+      // (This is exposed as used publicly in logs)
       /// Get packet delivery local time base (adjusted for wrap around)
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
       /// @return local delivery time (usec)
-
    uint64_t getTsbPdTimeBase(uint32_t timestamp_us);
 
       /// Get packet local delivery time

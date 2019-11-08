@@ -458,15 +458,15 @@ public:
 
 public:
 
-      /// Sleep for "interval" CCs.
-      /// @param [in] interval CCs to sleep.
+      /// Sleep for "interval_tk" CCs.
+      /// @param [in] interval_tk CCs to sleep.
 
-   void sleep(uint64_t interval);
+   void sleep(uint64_t interval_tk);
 
-      /// Seelp until CC "nexttime".
-      /// @param [in] nexttime next time the caller is waken up.
+      /// Seelp until CC "nexttime_tk".
+      /// @param [in] nexttime_tk next time the caller is waken up.
 
-   void sleepto(uint64_t nexttime);
+   void sleepto(uint64_t nexttime_tk);
 
       /// Stop the sleep() or sleepto() methods.
 
@@ -523,7 +523,7 @@ private:
    uint64_t getTimeInMicroSec();
 
 private:
-   uint64_t m_ullSchedTime;             // next schedulled time
+   uint64_t m_ullSchedTime_tk;             // next schedulled time
 
    pthread_cond_t m_TickCond;
    pthread_mutex_t m_TickLock;
@@ -950,7 +950,10 @@ public:
 #endif
 };
 
+namespace srt_logging
+{
 std::string SockStatusStr(SRT_SOCKSTATUS s);
+}
 
 // Version parsing
 inline ATR_CONSTEXPR uint32_t SrtVersion(int major, int minor, int patch)
