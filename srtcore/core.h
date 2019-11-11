@@ -190,7 +190,7 @@ public:
     // Broadcast: links that are freshly connected become PENDING and then IDLE only
     // for a short moment to be activated immediately at the nearest sending operation.
     //
-    // Balancing: like with redundancy, just that the link activation gets its shared percentage
+    // Balancing: like with broadcast, just that the link activation gets its shared percentage
     // of traffic balancing
     //
     // Multicast: The link is never idle. The data are always sent over the UDP multicast link
@@ -780,7 +780,6 @@ public: //API
     static int32_t epoll_set(const int eid, int32_t flags);
     static int epoll_release(const int eid);
     static CUDTException& getlasterror();
-    static int perfmon(SRTSOCKET u, CPerfMon* perf, bool clear = true);
     static int bstats(SRTSOCKET u, CBytePerfMon* perf, bool clear = true, bool instantaneous = false);
     static SRT_SOCKSTATUS getsockstate(SRTSOCKET u);
     static bool setstreamid(SRTSOCKET u, const std::string& sid);
@@ -1090,12 +1089,6 @@ private:
     /// @param optlen [out] size of "optval".
 
     void getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> optlen);
-
-    /// read the performance data since last sample() call.
-    /// @param perf [in, out] pointer to a CPerfMon structure to record the performance data.
-    /// @param clear [in] flag to decide if the local performance trace should be cleared.
-
-    void sample(CPerfMon* perf, bool clear = true);
 
     /// read the performance data with bytes counters since bstats() 
     ///  

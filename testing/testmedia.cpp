@@ -1078,7 +1078,7 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
     if (!grpdata)
     {
         // This happens when you passed too small array. Treat this as error and stop.
-        cerr << "ERROR: redundancy group update reports " << grpdata_size
+        cerr << "ERROR: broadcast group update reports " << grpdata_size
             << " existing sockets, but app registerred only " << m_group_nodes.size() << endl;
         Error("Too many unpredicted sockets in the group");
     }
@@ -1157,6 +1157,19 @@ SrtSource::SrtSource(string host, int port, std::string path, const map<string,s
     os << host << ":" << port;
     hostport_copy = os.str();
 }
+
+static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
+{
+    CBytePerfMon perf;
+    // clear only if stats report is to be read
+    srt_bstats(sock, &perf, clr);
+
+    if (bw)
+        cout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
+    if (stats)
+        cout << transmit_stats_writer->WriteStats(sock, perf);
+}
+
 
 #ifdef SRT_OLD_APP_READER
 
@@ -1819,20 +1832,6 @@ RETRY_READING:
 }
 
 #endif
-
-static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
-{
-    CBytePerfMon perf;
-    // clear only if stats report is to be read
-    srt_bstats(sock, &perf, clr);
-
-    if (bw)
-        cout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
-    if (stats)
-        cout << transmit_stats_writer->WriteStats(sock, perf);
-}
-
-
 
 bytevector SrtSource::Read(size_t chunk)
 {

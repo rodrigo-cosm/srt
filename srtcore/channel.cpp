@@ -474,8 +474,10 @@ void CChannel::getPeerAddr(ref_t<sockaddr_any> addr) const
 
 int CChannel::sendto(const sockaddr_any& addr, CPacket& packet, const sockaddr_any& source_addr SRT_ATR_UNUSED) const
 {
-    HLOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
+    LOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
         << " target=@" << packet.m_iID
+        << " size=" << packet.getLength()
+        << " pkt.ts=" << FormatTime(packet.m_iTimeStamp)
 #ifdef SRT_ENABLE_PKTINFO
         << " sourceIP="
         << (m_bBindMasked && !source_addr.isany() ? SockaddrToString(source_addr) : "default")
@@ -569,7 +571,7 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet, const sockaddr_a
 #ifdef SRT_ENABLE_PKTINFO
       if (m_bBindMasked && !source_addr.isany())
       {
-          if ( !setSourceAddress(mh, source_addr))
+          if (!setSourceAddress(mh, source_addr))
           {
               LOGC(mglog.Error, log << "CChannel::setSourceAddress: source address invalid family #" << source_addr.family() << ", NOT setting.");
           }
