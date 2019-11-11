@@ -190,6 +190,10 @@ and keep the least possible load on every link.
 4. Multicast (NOT IMPLEMENTED - a concept)
 ------------------------------------------
 
+This group - unlike all others - is not predicted to send one signal
+between two network nodes over multiple links, but rather a method of
+receiving a data stream sent from a stream server by multiple receivers.
+
 Multicast sending is using the feature of UDP multicast, however the
 connection concept is still in force. The concept of multicast groups
 is predicted to facilitate the multicast abilities provided by the router
