@@ -75,11 +75,15 @@ written by
 #define HLOGP LOGP
 #define HLOGF LOGF
 
+#define IF_HEAVY_LOGGING(instr) instr
+
 #else
 
 #define HLOGC(...)
 #define HLOGF(...)
 #define HLOGP(...)
+
+#define IF_HEAVY_LOGGING(instr) (void)0
 
 #endif
 
@@ -109,6 +113,8 @@ written by
 #define HLOGP(...)
 // LOGS doesn't have the heavy version because it's always
 // considered "heavy" and it's turned on only per request.
+
+#define IF_HEAVY_LOGGING(instr) (void)0
 
 #endif
 

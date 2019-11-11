@@ -78,12 +78,6 @@ modified by
 
 using namespace std;
 
-#if ENABLE_HEAVY_LOGGING
-#define IF_HEAVY_LOGGING(instr) instr
-#else
-#define IF_HEAVY_LOGGING(instr) (void)0
-#endif
-
 namespace srt_logging
 {
 
@@ -336,6 +330,7 @@ CUDT::CUDT(CUDTSocket* parent, const CUDT& ancestor): m_parent(parent)
     m_bTLPktDrop            = ancestor.m_bTLPktDrop;
     m_bMessageAPI           = ancestor.m_bMessageAPI;
     m_iIpV6Only             = ancestor.m_iIpV6Only;
+    m_iReorderTolerance     = ancestor.m_iMaxReorderTolerance;  // Initialize with maximum value
     m_iMaxReorderTolerance  = ancestor.m_iMaxReorderTolerance;
     // Runtime
     m_bRcvNakReport             = ancestor.m_bRcvNakReport;
@@ -734,6 +729,8 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
 
     case SRTO_LOSSMAXTTL:
         m_iMaxReorderTolerance = *(int*)optval;
+        if (!m_bConnected)
+            m_iReorderTolerance = m_iMaxReorderTolerance;
         break;
 
     case SRTO_VERSION:
@@ -1137,6 +1134,7 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> r_optlen)
             *(int32_t*)optval = m_pSndQueue->getIpTTL();
         else
             *(int32_t*)optval = m_iIpTTL;
+        optlen = sizeof(int32_t);
         break;
 
     case SRTO_IPTOS:
@@ -1144,6 +1142,7 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> r_optlen)
             *(int32_t*)optval = m_pSndQueue->getIpToS();
         else
             *(int32_t*)optval = m_iIpToS;
+        optlen = sizeof(int32_t);
         break;
 #endif
 
@@ -1193,6 +1192,7 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> r_optlen)
             *(int32_t*)optval = m_pCryptoControl->m_SndKmState;
         else
             *(int32_t*)optval = m_pCryptoControl->m_RcvKmState;
+        optlen = sizeof(int32_t);
         break;
 
     case SRTO_SNDKMSTATE: // State imposed by Agent depending on PW and KMX
@@ -1208,6 +1208,11 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> r_optlen)
             *(int32_t*)optval = m_pCryptoControl->m_RcvKmState;
         else
             *(int32_t*)optval = SRT_KM_S_UNSECURED;
+        optlen = sizeof(int32_t);
+        break;
+
+    case SRTO_LOSSMAXTTL:
+        *(int32_t*)optval = m_iMaxReorderTolerance;
         optlen = sizeof(int32_t);
         break;
 
@@ -7329,98 +7334,6 @@ int64_t CUDT::recvfile(fstream& ofs, int64_t& offset, int64_t size, int block)
     return size - torecv;
 }
 
-void CUDT::sample(CPerfMon* perf, bool clear)
-{
-    if (!m_bConnected)
-        throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
-    if (m_bBroken || m_bClosing)
-        throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
-
-    CGuard   statsLock(m_StatsLock, "stats");
-    uint64_t currtime = CTimer::getTime();
-    perf->msTimeStamp = (currtime - m_stats.startTime) / 1000;
-
-    perf->pktSent              = m_stats.traceSent;
-    perf->pktRecv              = m_stats.traceRecv;
-    perf->pktSndLoss           = m_stats.traceSndLoss;
-    perf->pktRcvLoss           = m_stats.traceRcvLoss;
-    perf->pktRetrans           = m_stats.traceRetrans;
-    perf->pktRcvRetrans        = m_stats.traceRcvRetrans;
-    perf->pktSentACK           = m_stats.sentACK;
-    perf->pktRecvACK           = m_stats.recvACK;
-    perf->pktSentNAK           = m_stats.sentNAK;
-    perf->pktRecvNAK           = m_stats.recvNAK;
-    perf->usSndDuration        = m_stats.sndDuration;
-    perf->pktReorderDistance   = m_stats.traceReorderDistance;
-    perf->pktRcvAvgBelatedTime = m_stats.traceBelatedTime;
-    perf->pktRcvBelated        = m_stats.traceRcvBelated;
-
-    perf->pktSentTotal       = m_stats.sentTotal;
-    perf->pktRecvTotal       = m_stats.recvTotal;
-    perf->pktSndLossTotal    = m_stats.sndLossTotal;
-    perf->pktRcvLossTotal    = m_stats.rcvLossTotal;
-    perf->pktRetransTotal    = m_stats.retransTotal;
-    perf->pktSentACKTotal    = m_stats.sentACKTotal;
-    perf->pktRecvACKTotal    = m_stats.recvACKTotal;
-    perf->pktSentNAKTotal    = m_stats.sentNAKTotal;
-    perf->pktRecvNAKTotal    = m_stats.recvNAKTotal;
-    perf->usSndDurationTotal = m_stats.m_sndDurationTotal;
-
-    double interval = double(currtime - m_stats.lastSampleTime);
-
-    perf->mbpsSendRate = double(m_stats.traceSent) * m_iMaxSRTPayloadSize * 8.0 / interval;
-    perf->mbpsRecvRate = double(m_stats.traceRecv) * m_iMaxSRTPayloadSize * 8.0 / interval;
-
-    perf->usPktSndPeriod      = m_ullInterval_tk / double(m_ullCPUFrequency);
-    perf->pktFlowWindow       = m_iFlowWindowSize;
-    perf->pktCongestionWindow = (int)m_dCongestionWindow;
-    perf->pktFlightSize       = CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - 1;
-    perf->msRTT               = m_iRTT / 1000.0;
-    perf->mbpsBandwidth       = Bps2Mbps(m_iBandwidth * m_iMaxSRTPayloadSize);
-
-    if (CGuard::enterCS(m_ConnectionLock, "conn", false) == 0)
-    {
-        perf->byteAvailSndBuf = (m_pSndBuffer == NULL) ? 0 : sndBuffersLeft() * m_iMSS;
-        perf->byteAvailRcvBuf = (m_pRcvBuffer == NULL) ? 0 : m_pRcvBuffer->getAvailBufSize() * m_iMSS;
-
-        CGuard::leaveCS(m_ConnectionLock, "conn");
-    }
-    else
-    {
-        perf->byteAvailSndBuf = 0;
-        perf->byteAvailRcvBuf = 0;
-    }
-
-    if (clear)
-    {
-        m_stats.traceSndDrop           = 0;
-        m_stats.traceRcvDrop           = 0;
-        m_stats.traceSndBytesDrop      = 0;
-        m_stats.traceRcvBytesDrop      = 0;
-        m_stats.traceRcvUndecrypt      = 0;
-        m_stats.traceRcvBytesUndecrypt = 0;
-        // new>
-        m_stats.traceBytesSent = m_stats.traceBytesRecv = m_stats.traceBytesRetrans = 0;
-        //<
-        m_stats.traceSent = m_stats.traceRecv = m_stats.traceSndLoss = m_stats.traceRcvLoss = m_stats.traceRetrans =
-            m_stats.sentACK = m_stats.recvACK = m_stats.sentNAK = m_stats.recvNAK = 0;
-        m_stats.sndDuration                                                       = 0;
-        m_stats.traceRcvRetrans                                                   = 0;
-        m_stats.traceRcvBelated                                                   = 0;
-#ifdef SRT_ENABLE_LOSTBYTESCOUNT
-        m_stats.traceRcvBytesLoss = 0;
-#endif
-
-        m_stats.sndFilterExtra = 0;
-        m_stats.rcvFilterExtra = 0;
-
-        m_stats.rcvFilterSupply = 0;
-        m_stats.rcvFilterLoss   = 0;
-
-        m_stats.lastSampleTime = currtime;
-    }
-}
-
 void CUDT::bstats(CBytePerfMon* perf, bool clear, bool instantaneous)
 {
     if (!m_bConnected)
@@ -7445,6 +7358,7 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear, bool instantaneous)
     perf->pktRecvNAK           = m_stats.recvNAK;
     perf->usSndDuration        = m_stats.sndDuration;
     perf->pktReorderDistance   = m_stats.traceReorderDistance;
+    perf->pktReorderTolerance  = m_iReorderTolerance;
     perf->pktRcvAvgBelatedTime = m_stats.traceBelatedTime;
     perf->pktRcvBelated        = m_stats.traceRcvBelated;
 
@@ -7915,7 +7829,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
 
     local_prevack = m_iDebugPrevLastAck;
 
-   string reason; // just for "a reason"
+    string reason; // just for "a reason"
 #endif
 
     switch (pkttype)
@@ -7927,25 +7841,25 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
         // If there is no loss, the ACK is the current largest sequence number plus 1;
         // Otherwise it is the smallest sequence number in the receiver loss list.
         if (m_pRcvLossList->getLossLength() == 0)
-      {
+        {
             ack = CSeqNo::incseq(m_iRcvCurrSeqNo);
 #if ENABLE_HEAVY_LOGGING
-         reason = "expected next";
+            reason = "expected next";
 #endif
-      }
+        }
         else
-      {
+        {
             ack = m_pRcvLossList->getFirstLostSeq();
 #if ENABLE_HEAVY_LOGGING
-         reason = "first lost";
+            reason = "first lost";
 #endif
-      }
+        }
 
         if (m_iRcvLastAckAck == ack)
-      {
-          HLOGC(mglog.Debug, log << "sendCtrl(UMSG_ACK): last ACK %" << ack << "(" << reason << ") == last ACKACK");
+        {
+            HLOGC(mglog.Debug, log << "sendCtrl(UMSG_ACK): last ACK %" << ack << "(" << reason << ") == last ACKACK");
             break;
-      }
+        }
 
         // send out a lite ACK
         // to save time on buffer processing and bandwidth/AS measurement, a lite ACK only feeds back an ACK number
@@ -9643,13 +9557,27 @@ int CUDT::processData(CUnit* in_unit)
 
     const int pktsz = packet.getLength();
     // Update time information
+   // XXX Note that this adds the byte size of a packet
+   // of which we don't yet know as to whether this has
+   // carried out some useful data or some excessive data
+   // that will be later discarded.
+   // FIXME: before adding this on the rcv time window,
+   // make sure that this packet isn't going to be
+   // effectively discarded, as repeated retransmission,
+   // for example, burdens the link, but doesn't better the speed.
     m_RcvTimeWindow.onPktArrival(pktsz);
 
-    // Check if it is a probing packet pair
-    if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
-        m_RcvTimeWindow.probe1Arrival();
-    else if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 1)
-        m_RcvTimeWindow.probe2Arrival(pktsz);
+   // Probe the packet pair if needed.
+   // Conditions and any extra data required for the packet
+   // this function will extract and test as needed.
+
+    const bool unordered = CSeqNo::seqcmp(packet.m_iSeqNo, m_iRcvCurrSeqNo) <= 0;
+    const bool retransmitted = m_bPeerRexmitFlag && packet.getRexmitFlag();
+
+    // Retransmitted and unordered packets do not provide expected measurement.
+    // We expect the 16th and 17th packet to be sent regularly,
+    // otherwise measurement must be rejected.
+    m_RcvTimeWindow.probeArrival(packet, unordered || retransmitted);
 
     CGuard::enterCS(m_StatsLock, "Stats");
     m_stats.traceBytesRecv += pktsz;
@@ -9872,6 +9800,7 @@ int CUDT::processData(CUnit* in_unit)
 
       HLOGC(mglog.Debug, log << CONID() << "RECEIVED: seq=" << rpkt.m_iSeqNo
               << " offset=" << offset
+              << " BUFr=" << avail_bufsize
               << " avail=" << m_pRcvBuffer->getAvailBufSize()
               << " buffer=(" << m_iRcvLastSkipAck
               << ":" << m_iRcvCurrSeqNo                   // -1 = size to last index
@@ -10482,7 +10411,7 @@ void CUDT::dropFromLossLists(int32_t from, int32_t to)
     }
 
     m_FreshLoss.erase(m_FreshLoss.begin(),
-                      m_FreshLoss.begin() + delete_index); // with delete_index == 0 will do nothing
+            m_FreshLoss.begin() + delete_index); // with delete_index == 0 will do nothing
 }
 
 // This function, as the name states, should bake a new cookie.
@@ -10497,14 +10426,14 @@ int32_t CUDT::bake(const sockaddr_any& addr, int32_t current_cookie, int correct
         char clienthost[NI_MAXHOST];
         char clientport[NI_MAXSERV];
         getnameinfo(&addr,
-                    addr.size(),
-                    clienthost,
-                    sizeof(clienthost),
-                    clientport,
-                    sizeof(clientport),
-                    NI_NUMERICHOST | NI_NUMERICSERV);
+                addr.size(),
+                clienthost,
+                sizeof(clienthost),
+                clientport,
+                sizeof(clientport),
+                NI_NUMERICHOST | NI_NUMERICSERV);
         int64_t timestamp = ((CTimer::getTime() - m_stats.startTime) / 60000000) + distractor -
-                            correction; // secret changes every one minute
+            correction; // secret changes every one minute
         stringstream cookiestr;
         cookiestr << clienthost << ":" << clientport << ":" << timestamp;
         union {
@@ -10581,8 +10510,8 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
     {
         m_RejectReason = SRT_REJ_ROGUE;
         HLOGC(mglog.Debug,
-              log << "processConnectRequest: ... NOT. Wrong size: " << packet.getLength() << " (expected: " << exp_len
-                  << ")");
+                log << "processConnectRequest: ... NOT. Wrong size: " << packet.getLength() << " (expected: " << exp_len
+                << ")");
         return m_RejectReason;
     }
 
@@ -10654,15 +10583,15 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
         hs.m_iType = SrtHSRequest::wrapFlags(true /*put SRT_MAGIC_CODE in HSFLAGS*/, m_iSndCryptoKeyLen);
         bool whether SRT_ATR_UNUSED = m_iSndCryptoKeyLen != 0;
         HLOGC(mglog.Debug,
-              log << "processConnectRequest: " << (whether ? "" : "NOT ")
-                  << " Advertising PBKEYLEN - value = " << m_iSndCryptoKeyLen);
+                log << "processConnectRequest: " << (whether ? "" : "NOT ")
+                << " Advertising PBKEYLEN - value = " << m_iSndCryptoKeyLen);
 
         size_t size = packet.getLength();
         hs.store_to(packet.m_pcData, Ref(size));
-      setPacketTS(packet, CTimer::getTime());
+        setPacketTS(packet, CTimer::getTime());
 
-      // Display the HS before sending it to peer
-      HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (i): " << hs.show());
+        // Display the HS before sending it to peer
+        HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (i): " << hs.show());
 
         m_pSndQueue->sendto(addr, packet, use_source_addr);
         return SRT_REJ_UNKNOWN; // EXCEPTION: this is a "no-error" code.
@@ -10674,7 +10603,7 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
     // should also contain extra data.
 
     HLOGC(mglog.Debug,
-          log << "processConnectRequest: received type=" << RequestTypeStr(hs.m_iReqType) << " - checking cookie...");
+            log << "processConnectRequest: received type=" << RequestTypeStr(hs.m_iReqType) << " - checking cookie...");
     if (hs.m_iCookie != cookie_val)
     {
         cookie_val = bake(addr, cookie_val, -1); // SHOULD generate an earlier, distracted cookie
@@ -10735,15 +10664,15 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
     if (!accepted_hs)
     {
         HLOGC(mglog.Debug,
-              log << "processConnectRequest: version/type mismatch. Sending REJECT code:" << m_RejectReason
-                  << " MSG: " << srt_rejectreason_str(m_RejectReason));
+                log << "processConnectRequest: version/type mismatch. Sending REJECT code:" << m_RejectReason
+                << " MSG: " << srt_rejectreason_str(m_RejectReason));
         // mismatch, reject the request
         hs.m_iReqType = URQFailure(m_RejectReason);
         size_t size   = CHandShake::m_iContentSize;
         hs.store_to(packet.m_pcData, Ref(size));
         packet.m_iID        = id;
-       setPacketTS(packet, CTimer::getTime());
-       HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (e): " << hs.show());
+        setPacketTS(packet, CTimer::getTime());
+        HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (e): " << hs.show());
         m_pSndQueue->sendto(addr, packet, use_source_addr);
     }
     else
@@ -10794,13 +10723,13 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
         if (result != 1)
         {
             HLOGC(mglog.Debug,
-                  log << CONID() << "processConnectRequest: sending ABNORMAL handshake info req="
-                      << RequestTypeStr(hs.m_iReqType));
+                    log << CONID() << "processConnectRequest: sending ABNORMAL handshake info req="
+                    << RequestTypeStr(hs.m_iReqType));
             size_t size = CHandShake::m_iContentSize;
             hs.store_to(packet.m_pcData, Ref(size));
             packet.m_iID        = id;
-           setPacketTS(packet, CTimer::getTime());
-           HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (a): " << hs.show());
+            setPacketTS(packet, CTimer::getTime());
+            HLOGC(mglog.Debug, log << "processConnectRequest: SENDING HS (a): " << hs.show());
             m_pSndQueue->sendto(addr, packet, use_source_addr);
         }
         else
