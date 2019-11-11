@@ -6698,7 +6698,7 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     // - OUTPUT: value of the sequence number to be put on the first packet at the next sendmsg2 call.
     // We need to supply to the output the value that was STAMPED ON THE PACKET,
     // which is seqno. In the output we'll get the next sequence number.
-    m_pSndBuffer->addBuffer(data, size, Ref(mctrl));
+    m_pSndBuffer->addBuffer(data, size, r_mctrl);
     m_iSndNextSeqNo = mctrl.pktseq;
     mctrl.pktseq = seqno;
 
@@ -7666,10 +7666,13 @@ int32_t CUDT::ackDataUpTo(int32_t ack)
     if (acksize > 0)
     {
         int distance = m_pRcvBuffer->ackData(acksize);
-        /* XXX Procedure for implementation with common rcv buffer
+/*
+        XXX example code - inform the group up to which packet
+        data are received so that it can be also acknowledged
+        in all others and false lossreport prevened
         if (m_parent->m_IncludedGroup)
             m_parent->m_IncludedGroup->readyPackets(this, ack);
-            */
+*/
 
         // Signal threads waiting in CTimer::waitForEvent(),
         // which are select(), selectEx() and epoll_wait().
@@ -7768,7 +7771,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
 
         if (m_iRcvLastAckAck == ack)
         {
-            HLOGC(mglog.Debug, log << "sendCtrl(UMSG_ACK): last ACK %" << ack << " == last ACKACK (" << reason << ")");
+            HLOGC(mglog.Debug, log << "sendCtrl(UMSG_ACK): last ACK %" << ack << "(" << reason << ") == last ACKACK");
             break;
         }
 
@@ -7844,7 +7847,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
         else
         {
             // Not possible (m_iRcvCurrSeqNo+1 < m_iRcvLastAck ?)
-          LOGC(mglog.Error, log << "sendCtrl(UMSG_ACK): IPE: curr %" << m_iRcvLastAck
+          LOGC(mglog.Error, log << "sendCtrl(UMSG_ACK): IPE: curr %" << ack
                   << " <% last %" << m_iRcvLastAck);
             CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
 
@@ -11085,6 +11088,14 @@ CUDTGroup::gli_t CUDTGroup::add(SocketData data)
 {
     CGuard g(m_GroupLock, "group");
 
+    // Change the snd/rcv state of the group member to PENDING.
+    // Default for SocketData after creation is BROKEN, which just
+    // after releasing the m_GroupLock could be read and interpreted
+    // as broken connection and removed before the handshake process
+    // is done.
+    data.sndstate = GST_PENDING;
+    data.rcvstate = GST_PENDING;
+
     m_Group.push_back(data);
     gli_t end = m_Group.end();
     if (m_iMaxPayloadSize == -1)
@@ -11119,7 +11130,12 @@ CUDTGroup::SocketData CUDTGroup::prepareData(CUDTSocket* s)
     // - update the socket state (should be SRTS_CONNECTED)
     // - once the connection is established (may take time with connect), set GST_IDLE
     // - the next operation of send/recv will automatically turn it into GST_RUNNING
-    SocketData sd = {s->m_SocketID, s, SRTS_INIT, GST_BROKEN, GST_BROKEN, -1, -1, sockaddr_any(), sockaddr_any(), false, false, false };
+    SocketData sd = {s->m_SocketID, s,
+        SRTS_INIT, GST_BROKEN, GST_BROKEN,
+        -1, -1,
+        sockaddr_any(), sockaddr_any(),
+        false, false, false
+    };
     return sd;
 }
 
@@ -11184,6 +11200,15 @@ void CUDTGroup::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         m_iRcvTimeOut = *(int*)optval;
         break;
 
+
+        // XXX Currently no socket groups allow any other
+        // congestion control mode other than live.
+    case SRTO_CONGESTION:
+        {
+            LOGP(mglog.Error, "group option: SRTO_CONGESTION is only allowed as 'live' and cannot be changed");
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        }
+
     // Other options to be specifically interpreted by group may follow.
 
     default:
@@ -11199,7 +11224,10 @@ void CUDTGroup::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         // There's at least one socket in the group, so only
         // post-options are allowed.
         if (!std::binary_search(srt_post_opt_list, srt_post_opt_list + SRT_SOCKOPT_NPOST, optName))
+        {
+            LOGC(mglog.Error, log << "setsockopt(group): Group is connected, this option can't be altered");
             throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
+        }
 
         HLOGC(mglog.Debug, log << "... SPREADING to existing sockets.");
         // This means that there are sockets already, so apply
