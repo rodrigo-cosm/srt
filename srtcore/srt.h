@@ -537,29 +537,71 @@ enum SRT_KM_STATE
 enum SRT_EPOLL_OPT
 {
    SRT_EPOLL_OPT_NONE = 0x0, // fallback
-   // this values are defined same as linux epoll.h
+
+   // Values intended to be the same as in `<sys/epoll.h>`.
    // so that if system values are used by mistake, they should have the same effect
+   // This applies to: IN, OUT, ERR and ET.
+
+   /// Ready for 'recv' operation:
+   ///
+   /// - For stream mode it means that at least 1 byte is available.
+   /// In this mode the buffer may extract only a part of the packet,
+   /// leaving next data possible for extraction later.
+   ///
+   /// - For message mode it means that there is at least one packet
+   /// available (this may change in future, as it is desired that
+   /// one full message should only wake up, not single packet of a
+   /// not yet extractable message).
+   ///
+   /// - For live mode it means that there's at least one packet
+   /// ready to play.
+   ///
+   /// - For listener sockets, this means that there is a new connection
+   /// waiting for pickup through the `srt_accept()` call, that is,
+   /// the next call to `srt_accept()` will succeed without blocking.
    SRT_EPOLL_IN       = 0x1,
+
+   /// Ready for 'send' operation.
+   ///
+   /// - For stream mode it means that there's a free space in the
+   /// sender buffer for at least 1 byte of data. The next send
+   /// operation will only allow to send as much data as it is free
+   /// space in the buffer.
+   ///
+   /// - For message mode it means that there's a free space for at
+   /// least one UDP packet. The edge-triggered mode can be used to
+   /// pick up updates as the free space in the sender buffer grows.
+   ///
+   /// - For live mode it means that there's a free space for at least
+   /// one UDP packet, but no WRITE readiness usually means an
+   /// extraordinary congestion on the link meaning that you should
+   /// immediately slow down the sending rate or you may get a connection
+   /// break sonn.
+   ///
+   /// - For non-blocking sockets used with `srt_connect*` operation,
+   /// this flag simply means that the connection was established.
    SRT_EPOLL_OUT      = 0x4,
+
+   /// The socket has encountered an error in the last operation
+   /// and the next operation on that socket will end up with error.
+   /// You can retry the operation, but getting the error from it
+   /// is certain, so you may as well close the socket.
    SRT_EPOLL_ERR      = 0x8,
-   // Repeat these values to avoid confusion;
-   // This actually is a kinda "dumb reusing" of
-   // the signals that do not come in the same order,
-   // but this exists also in all system select/epoll,
-   // so there's actually no choice here. But at least
-   // some new names can be added to improve clarity.
+
+   // To avoid confusion in the internal code, the following
+   // duplicates are introduced to improve clarity.
    SRT_EPOLL_CONNECT = SRT_EPOLL_OUT,
    SRT_EPOLL_ACCEPT = SRT_EPOLL_IN,
 
-   // INTERNAL USE ONLY! DO NOT USE!
-   SRT_EPOLL_SPECIAL = 0x10,
+   SRT_EPOLL_UPDATE = 0x10,
    SRT_EPOLL_ET       = 1u << 31
 };
 // These are actually flags - use a bit container:
 typedef int32_t SRT_EPOLL_T;
 
 // Define which epoll flags determine events. All others are special flags.
-#define SRT_EPOLL_EVENTTYPES (SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_SPECIAL | SRT_EPOLL_ERR)
+#define SRT_EPOLL_EVENTTYPES (SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_UPDATE | SRT_EPOLL_ERR)
+#define SRT_EPOLL_ETONLY (SRT_EPOLL_UPDATE)
 
 enum SRT_EPOLL_FLAGS
 {
