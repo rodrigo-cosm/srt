@@ -890,7 +890,7 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
 #if ENABLE_HEAVY_LOGGING
 static void PrintEpollEvent(ostream& os, int events)
 {
-    static pair<int, string> namemap [] = {
+    static pair<int, const char*> const namemap [] = {
         make_pair(SRT_EPOLL_IN, "[R]"),
         make_pair(SRT_EPOLL_OUT, "[W]"),
         make_pair(SRT_EPOLL_ERR, "[E]"),
