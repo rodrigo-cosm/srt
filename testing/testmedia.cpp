@@ -31,6 +31,8 @@
 #include "srt_compat.h"
 #include "verbose.hpp"
 
+#include "udt.h"
+
 using namespace std;
 
 
@@ -329,6 +331,12 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
         }
     }
 
+    if (par.count("fakeloss"))
+    {
+        m_fakeloss = par["fakeloss"];
+        par.erase("fakeloss");
+    }
+
     // Assign the others here.
     m_options = par;
 }
@@ -560,6 +568,16 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
     // but it doesn't matter here. We don't use 'connmode' for anything else than
     // checking for failures.
     SocketOption::Mode conmode = SrtConfigurePre(sock, "",  m_options, &failures);
+
+    if (m_fakeloss != "")
+    {
+#if ENABLE_DEVEL_API
+        UDT::devel_setfakeloss(sock, m_fakeloss);
+#else
+        Verb() << "ERROR: fakeloss not enabled at compile time";
+        return -1;
+#endif
+    }
 
     if ( conmode == SocketOption::FAILURE )
     {
