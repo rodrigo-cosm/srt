@@ -430,7 +430,7 @@ CChannel::FakeLossConfig::FakeLossConfig(const std::string& f)
 void CChannel::setfakeloss(const std::string& conf)
 {
     if (conf == "")
-        m_fakeloss = NULL;
+        m_fakeloss.reset();
     else
         m_fakeloss.reset(new FakeLossConfig(conf));
 }
