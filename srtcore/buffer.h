@@ -338,7 +338,7 @@ public:
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
       /// @return actuall size of data read.
 
-   int readMsg(char* data, int len, ref_t<SRT_MSGCTRL> mctrl);
+   int readMsg(char* data, int len, SRT_MSGCTRL& w_mctrl);
 
       /// Query if data is ready to read (tsbpdtime <= now if TsbPD is active).
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
@@ -347,7 +347,7 @@ public:
       /// @return true if ready to play, false otherwise (tsbpdtime may be !0 in
       /// both cases).
 
-   bool isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
+   bool isRcvDataReady(uint64_t& w_tsbpdtime, int32_t& w_curpktseq);
    bool isRcvDataReady();
    bool isRcvDataAvailable()
    {
@@ -384,7 +384,7 @@ public:
       ///                   IF skipseqno == -1, no missing packet but 1st not ready to play.
 
 
-   bool getRcvFirstMsg(ref_t<uint64_t> tsbpdtime, ref_t<bool> passack, ref_t<int32_t> skipseqno, ref_t<int32_t> curpktseq);
+   bool getRcvFirstMsg(uint64_t& w_tsbpdtime, bool& w_passack, int32_t& w_skipseqno, int32_t& w_curpktseq);
 
       /// Update the ACK point of the buffer.
       /// @param [in] len size of data to be skip & acknowledged.
@@ -403,7 +403,7 @@ private:
       /// @retval false tsbpdtime = 0: no packet ready to play
 
 
-   bool getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
+   bool getRcvReadyMsg(uint64_t& w_tsbpdtime, int32_t& w_curpktseq);
 
 public:
 

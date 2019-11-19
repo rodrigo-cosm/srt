@@ -2370,12 +2370,12 @@ int CUDT::recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime)
    }
 }
 
-int CUDT::recvmsg2(SRTSOCKET u, char* buf, int len, ref_t<SRT_MSGCTRL> r_m)
+int CUDT::recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL& w_m)
 {
    try
    {
       CUDT* udt = s_UDTUnited.lookup(u);
-      return udt->recvmsg2(buf, len, r_m);
+      return udt->recvmsg2(buf, len, (w_m));
    }
    catch (const CUDTException& e)
    {

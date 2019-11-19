@@ -924,27 +924,25 @@ void CRcvBuffer::skipData(int len)
       m_iMaxPos = 0;
 }
 
-bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passack, ref_t<int32_t> r_skipseqno, ref_t<int32_t> r_curpktseq)
+bool CRcvBuffer::getRcvFirstMsg(uint64_t& w_tsbpdtime, bool& w_passack, int32_t& w_skipseqno, int32_t& w_curpktseq)
 {
-    int32_t& skipseqno = *r_skipseqno;
-    bool& passack = *r_passack;
-    skipseqno = -1;
-    passack = false;
+    w_skipseqno = -1;
+    w_passack = false;
     // tsbpdtime will be retrieved by the below call
     // Returned values:
     // - tsbpdtime: real time when the packet is ready to play (whether ready to play or not)
-    // - passack: false (the report concerns a packet with an exactly next sequence)
-    // - skipseqno == -1: no packets to skip towards the first RTP
+    // - w_passack: false (the report concerns a packet with an exactly next sequence)
+    // - w_skipseqno == -1: no packets to skip towards the first RTP
     // - ppkt: that exactly packet that is reported (for debugging purposes)
     // - @return: whether the reported packet is ready to play
 
     /* Check the acknowledged packets */
-    if (getRcvReadyMsg(r_tsbpdtime, r_curpktseq))
+    if (getRcvReadyMsg((w_tsbpdtime), (w_curpktseq)))
     {
-        HLOGC(dlog.Debug, log << "getRcvFirstMsg: ready CONTIG packet: %" << (*r_curpktseq));
+        HLOGC(dlog.Debug, log << "getRcvFirstMsg: ready CONTIG packet: %" << w_curpktseq);
         return true;
     }
-    else if (*r_tsbpdtime != 0)
+    else if (w_tsbpdtime != 0)
     {
         HLOGC(dlog.Debug, log << "getRcvFirstMsg: no packets found");
         return false;
@@ -954,17 +952,17 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
 
     // Below this line we have only two options:
     // - m_iMaxPos == 0, which means that no more packets are in the buffer
-    //    - returned: tsbpdtime=0, passack=true, skipseqno=-1, ppkt=0, @return false
+    //    - returned: tsbpdtime=0, w_passack=true, w_skipseqno=-1, ppkt=0, @return false
     // - m_iMaxPos > 0, which means that there are packets arrived after a lost packet:
-    //    - returned: tsbpdtime=PKT.TS, passack=true, skipseqno=PKT.SEQ, ppkt=PKT, @return LOCAL(PKT.TS) <= NOW
+    //    - returned: tsbpdtime=PKT.TS, w_passack=true, w_skipseqno=PKT.SEQ, ppkt=PKT, @return LOCAL(PKT.TS) <= NOW
 
     /* 
      * No acked packets ready but caller want to know next packet to wait for
      * Check the not yet acked packets that may be stuck by missing packet(s).
      */
     bool haslost = false;
-    *r_tsbpdtime = 0; // redundant, for clarity
-    passack = true;
+    w_tsbpdtime = 0; // redundant, for clarity
+    w_passack = true;
 
     // XXX SUSPECTED ISSUE with this algorithm:
     // The above call to getRcvReadyMsg() should report as to whether:
@@ -1005,8 +1003,8 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
         else
         {
             /* We got the 1st valid packet */
-            *r_tsbpdtime = getPktTsbPdTime(m_pUnit[i]->m_Packet.getMsgTimeStamp());
-            if (*r_tsbpdtime <= CTimer::getTime())
+            w_tsbpdtime = getPktTsbPdTime(m_pUnit[i]->m_Packet.getMsgTimeStamp());
+            if (w_tsbpdtime <= CTimer::getTime())
             {
                 /* Packet ready to play */
                 if (haslost)
@@ -1015,8 +1013,8 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
                      * Packet stuck on non-acked side because of missing packets.
                      * Tell 1st valid packet seqno so caller can skip (drop) the missing packets.
                      */
-                    skipseqno = m_pUnit[i]->m_Packet.m_iSeqNo;
-                    *r_curpktseq = skipseqno;
+                    w_skipseqno = m_pUnit[i]->m_Packet.m_iSeqNo;
+                    w_curpktseq = w_skipseqno;
                 }
 
                 HLOGC(dlog.Debug, log << "getRcvFirstMsg: found ready packet, nSKIPPED: "
@@ -1044,9 +1042,9 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
     return false;
 }
 
-bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq)
+bool CRcvBuffer::getRcvReadyMsg(uint64_t& w_tsbpdtime, int32_t& w_curpktseq)
 {
-    *tsbpdtime = 0;
+    w_tsbpdtime = 0;
 
     IF_HEAVY_LOGGING(const char* reason = "NOT RECEIVED");
 
@@ -1065,7 +1063,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
             continue;
         }
 
-        *curpktseq = m_pUnit[i]->m_Packet.getSeqNo();
+        w_curpktseq = m_pUnit[i]->m_Packet.getSeqNo();
 
         if (m_pUnit[i]->m_iFlag != CUnit::GOOD)
         {
@@ -1076,13 +1074,13 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
         }
         else
         {
-            *tsbpdtime = getPktTsbPdTime(m_pUnit[i]->m_Packet.getMsgTimeStamp());
-            int64_t towait = (*tsbpdtime - CTimer::getTime());
+            w_tsbpdtime = getPktTsbPdTime(m_pUnit[i]->m_Packet.getMsgTimeStamp());
+            int64_t towait = (w_tsbpdtime - CTimer::getTime());
             if (towait > 0)
             {
                 HLOGC(mglog.Debug, log << "getRcvReadyMsg: POS=" << i
                         << " +" << ((i - m_iStartPos + m_iSize) % m_iSize)
-                        << " pkt %" << curpktseq.get()
+                        << " pkt %" << w_curpktseq
                         << " NOT ready to play (only in " << (towait/1000.0) << "ms)");
                 return false;
             }
@@ -1096,7 +1094,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
             {
                 HLOGC(mglog.Debug, log << "getRcvReadyMsg: POS=" << i
                         << " +" << ((i - m_iStartPos + m_iSize) % m_iSize)
-                        << " pkt %" << curpktseq.get()
+                        << " pkt %" << w_curpktseq
                         << " ready to play (delayed " << (-towait/1000.0) << "ms)");
                 return true;
             }
@@ -1132,9 +1130,9 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
 * used in the code (core.cpp) is expensive in TsbPD mode, hence this simpler function
 * that only check if first packet in queue is ready.
 */
-bool CRcvBuffer::isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq)
+bool CRcvBuffer::isRcvDataReady(uint64_t& w_tsbpdtime, int32_t& w_curpktseq)
 {
-    *tsbpdtime = 0;
+    w_tsbpdtime = 0;
 
     if (m_bTsbPdMode)
     {
@@ -1147,10 +1145,10 @@ bool CRcvBuffer::isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
         * Only say ready if time to deliver.
         * Report the timestamp, ready or not.
         */
-        *curpktseq = pkt->getSeqNo();
-        *tsbpdtime = getPktTsbPdTime(pkt->getMsgTimeStamp());
+        w_curpktseq = pkt->getSeqNo();
+        w_tsbpdtime = getPktTsbPdTime(pkt->getMsgTimeStamp());
 
-        return (*tsbpdtime <= CTimer::getTime());
+        return (w_tsbpdtime <= CTimer::getTime());
     }
 
     return isRcvDataAvailable();
@@ -1624,13 +1622,12 @@ int CRcvBuffer::readMsg(char* data, int len)
 }
 
 
-int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
+int CRcvBuffer::readMsg(char* data, int len, SRT_MSGCTRL& w_msgctl)
 {
-    SRT_MSGCTRL& msgctl = *r_msgctl;
     int p, q;
     bool passack;
     bool empty = true;
-    uint64_t& rplaytime = msgctl.srctime;
+    uint64_t& w_playtime = w_msgctl.srctime;
 
 #ifdef ENABLE_HEAVY_LOGGING
     reportBufferStats();
@@ -1641,7 +1638,7 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
         passack = false;
         int seq = 0;
 
-        if (getRcvReadyMsg(Ref(rplaytime), Ref(seq)))
+        if (getRcvReadyMsg((w_playtime), (seq)))
         {
             empty = false;
 
@@ -1652,12 +1649,12 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
 
 #ifdef SRT_DEBUG_TSBPD_OUTJITTER
             uint64_t now = CTimer::getTime();
-            if ((now - rplaytime)/10 < 10)
-                m_ulPdHisto[0][(now - rplaytime)/10]++;
-            else if ((now - rplaytime)/100 < 10)
-                m_ulPdHisto[1][(now - rplaytime)/100]++;
-            else if ((now - rplaytime)/1000 < 10)
-                m_ulPdHisto[2][(now - rplaytime)/1000]++;
+            if ((now - w_playtime)/10 < 10)
+                m_ulPdHisto[0][(now - w_playtime)/10]++;
+            else if ((now - w_playtime)/100 < 10)
+                m_ulPdHisto[1][(now - w_playtime)/100]++;
+            else if ((now - w_playtime)/1000 < 10)
+                m_ulPdHisto[2][(now - w_playtime)/1000]++;
             else
                 m_ulPdHisto[3][1]++;
 #endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
@@ -1665,7 +1662,7 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
     }
     else
     {
-        rplaytime = 0;
+        w_playtime = 0;
         if (scanMsg(Ref(p), Ref(q), Ref(passack)))
             empty = false;
 
@@ -1680,8 +1677,8 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
 
     // This returns the sequence number and message number to
     // the API caller.
-    msgctl.pktseq = pkt1.getSeqNo();
-    msgctl.msgno = pkt1.getMsgSeq();
+    w_msgctl.pktseq = pkt1.getSeqNo();
+    w_msgctl.msgno = pkt1.getMsgSeq();
 
     SRT_ASSERT(len > 0);
     int rs = len > 0 ? len : 0;

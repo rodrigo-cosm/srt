@@ -187,7 +187,7 @@ public: //API
     static int sendmsg(SRTSOCKET u, const char* buf, int len, int ttl = -1, bool inorder = false, uint64_t srctime = 0);
     static int recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime);
     static int sendmsg2(SRTSOCKET u, const char* buf, int len, ref_t<SRT_MSGCTRL> mctrl);
-    static int recvmsg2(SRTSOCKET u, char* buf, int len, ref_t<SRT_MSGCTRL> mctrl);
+    static int recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL& w_mctrl);
     static int64_t sendfile(SRTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_SENDFILE_BLOCK);
     static int64_t recvfile(SRTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_RECVFILE_BLOCK);
     static int select(int nfds, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout);
@@ -406,9 +406,9 @@ private:
 
     SRT_ATR_NODISCARD int recvmsg(char* data, int len, uint64_t& srctime);
 
-    SRT_ATR_NODISCARD int recvmsg2(char* data, int len, ref_t<SRT_MSGCTRL> m);
+    SRT_ATR_NODISCARD int recvmsg2(char* data, int len, SRT_MSGCTRL& w_m);
 
-    SRT_ATR_NODISCARD int receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> m);
+    SRT_ATR_NODISCARD int receiveMessage(char* data, int len, SRT_MSGCTRL& w_m);
     SRT_ATR_NODISCARD int receiveBuffer(char* data, int len);
 
     /// Request UDT to send out a file described as "fd", starting from "offset", with size of "size".

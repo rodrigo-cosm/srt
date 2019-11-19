@@ -4764,7 +4764,7 @@ void *CUDT::tsbpd(void *param)
             bool passack = true; // Get next packet to wait for even if not acked
 
             rxready = self->m_pRcvBuffer->getRcvFirstMsg(
-                Ref(tsbpdtime), Ref(passack), Ref(skiptoseqno), Ref(current_pkt_seq));
+                    (tsbpdtime), (passack), (skiptoseqno), (current_pkt_seq));
 
             HLOGC(tslog.Debug,
                   log << boolalpha << "NEXT PKT CHECK: rdy=" << rxready << " passack=" << passack << " skipto=%"
@@ -6009,7 +6009,7 @@ int CUDT::recvmsg(char *data, int len, uint64_t &srctime)
     return receiveBuffer(data, len);
 }
 
-int CUDT::recvmsg2(char *data, int len, ref_t<SRT_MSGCTRL> mctrl)
+int CUDT::recvmsg2(char *data, int len, SRT_MSGCTRL& w_mctrl)
 {
     if (!m_bConnected || !m_CongCtl.ready())
         throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
@@ -6021,14 +6021,13 @@ int CUDT::recvmsg2(char *data, int len, ref_t<SRT_MSGCTRL> mctrl)
     }
 
     if (m_bMessageAPI)
-        return receiveMessage(data, len, mctrl);
+        return receiveMessage(data, len, (w_mctrl));
 
     return receiveBuffer(data, len);
 }
 
-int CUDT::receiveMessage(char *data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
+int CUDT::receiveMessage(char *data, int len, SRT_MSGCTRL& w_mctrl)
 {
-    SRT_MSGCTRL &mctrl = *r_mctrl;
     // Recvmsg isn't restricted to the congctl type, it's the most
     // basic method of passing the data. You can retrieve data as
     // they come in, however you need to match the size of the buffer.
@@ -6053,7 +6052,7 @@ int CUDT::receiveMessage(char *data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     if (m_bBroken || m_bClosing)
     {
         int res       = m_pRcvBuffer->readMsg(data, len);
-        mctrl.srctime = 0;
+        w_mctrl.srctime = 0;
 
         /* Kick TsbPd thread to schedule next wakeup (if running) */
         if (m_bTsbPd)
@@ -6078,7 +6077,7 @@ int CUDT::receiveMessage(char *data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     if (!m_bSynRecving)
     {
 
-        int res = m_pRcvBuffer->readMsg(data, len, r_mctrl);
+        int res = m_pRcvBuffer->readMsg(data, len, (w_mctrl));
         if (res == 0)
         {
             // read is not available any more
@@ -6149,7 +6148,7 @@ int CUDT::receiveMessage(char *data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
                 << " NMSG " << m_pRcvBuffer->getRcvMsgNum());
                 */
 
-        res = m_pRcvBuffer->readMsg(data, len, r_mctrl);
+        res = m_pRcvBuffer->readMsg(data, len, (w_mctrl));
 
         if (m_bBroken || m_bClosing)
         {
