@@ -468,6 +468,10 @@ bool CChannel::checkFakeLoss(int32_t seq SRT_ATR_UNUSED) const
         }
     }
 
+    int fcval = (m_fakeloss->config_length + m_fakeloss->config_interval);
+    HLOGC(mglog.Debug, log << "CChannel: NO FAKE LOSS yet. dc=" << m_fakeloss->dcounter << " (upto "
+            << fcval << " - " << (fcval + 16) << ") flw=" << m_fakeloss->flwcounter);
+
     return false;
 }
 #endif
