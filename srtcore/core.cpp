@@ -13899,6 +13899,9 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         pending.push_back(d);
     }
 
+    // Sort the idle sockets by priority so the highest priority idle links are checked first.
+    sort(idlers.begin(), idlers.end(), FByPriotity());
+
     vector<Sendstate> sendstates;
 
     // Ok, we've separated the unstable from sendable just to know if:
@@ -13924,13 +13927,18 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
             show_idle.push_back((*i)->id);
 
-        LOGC(dlog.Debug, log << "grp/sendBackup: RUNNING: " << Printable(show_running)
-                << " IDLE: " << Printable(show_idle));
+        LOGC(dlog.Debug, log << "grp/sendBackup: RUNNING: " << PrintableMod(show_running, "@")
+                << " IDLE: " << PrintableMod(show_idle, "@"));
     }
 #endif
 
     int32_t curseq = -1;
     size_t nsuccessful = 0;
+
+    // Collect priorities from sendable links, added only after sending is successful.
+    // This will be used to check if any of the idlers have higher priority
+    // and therefore need to be activated.
+    set<int> sendable_pri;
 
     // We believe that we need to send the payload over every sendable link anyway.
     for (vector<gli_t>::iterator snd = sendable.begin(); snd != sendable.end(); ++snd)
@@ -13996,6 +14004,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             none_succeeded = false;
             final_stat = stat;
             ++nsuccessful;
+            sendable_pri.insert(d->priority);
         }
         else if (erc == SRT_EASYNCSND)
         {
@@ -14133,12 +14142,38 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
     // CHECK: no sendable that exceeds unstable
     // This embraces the case when there are no sendable at all.
-    if (sendable.size() <= nunstable)
+    bool need_activate = sendable.size() <= nunstable;
+    if (need_activate)
+    {
+        HLOGC(dlog.Debug, log << "grp/sendBackup: all " << sendable.size() << " links unstable - will activate an idle link");
+    }
+    else
+    {
+        // Another reason to activate might be if the link with highest priority
+        // among the idlers has a higher priority than any link currently active
+        // (those are collected in 'sendable_pri'). Check if there are any (if
+        // no sendable, a new link needs to be activated anyway), and if the
+        // priority has a lower number.
+        if (sendable_pri.empty()
+                || (!idlers.empty() && idlers[0]->priority < *sendable_pri.begin() ))
+        {
+            HLOGC(dlog.Debug, log << "grp/sendBackup: found link pri " << idlers[0]->priority << " < "
+                    << (*sendable_pri.begin()) << " (highest from sendable) - will activate an idle link");
+            need_activate = true;
+        }
+        else
+        {
+            HLOGC(dlog.Debug, log << "grp/sendBackup: sendable_pri (" << sendable_pri.size() << "): "
+                    << Printable(sendable_pri)
+                    << " first idle pri: " << (idlers.size() > 0 ? idlers[0]->priority : -1)
+                    << " - will NOT activate an idle link");
+        }
+    }
+
+    if (need_activate)
     {
         // If we have no stable links, activate one of idle links.
 
-        // Sort the idle sockets by priority so the highest priority idle links are checked first.
-        sort(idlers.begin(), idlers.end(), FByPriotity());
         HLOGC(dlog.Debug, log << "grp/sendBackup: no stable links, trying to activate an idle link (" << idlers.size() << " available)");
 
         for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
@@ -14206,7 +14241,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 // Note: this will override the sequence number
                 // for all next iterations in this loop.
                 HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL #" << mc.msgno
-                        << " LINK ACTIVATED.");
+                        << " LINK ACTIVATED (pri: " << d->priority << ").");
 
                 if (!d->ps->core().m_ullUnstableSince_tk)
                 {
