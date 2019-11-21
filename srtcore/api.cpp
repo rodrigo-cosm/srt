@@ -410,7 +410,7 @@ SRTSOCKET CUDTUnited::generateSocketID(bool for_group)
     else
         sockval = m_SocketIDGenerator;
 
-    LOGC(mglog.Debug, log << "generateSocketID: " << (for_group ? "(group)" : "") << ": " << sockval);
+    LOGC(mglog.Debug, log << "generateSocketID: " << (for_group ? "(group)" : "") << ": @" << sockval);
 
     return sockval;
 }
@@ -445,7 +445,7 @@ SRTSOCKET CUDTUnited::newSocket(CUDTSocket** pps)
     try
     {
         HLOGC(mglog.Debug, log << CONID(ns->m_SocketID)
-                << "newSocket: mapping socket "
+                << "newSocket: mapping socket @"
                 << ns->m_SocketID);
         m_Sockets[ns->m_SocketID] = ns;
     }

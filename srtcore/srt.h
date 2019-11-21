@@ -558,7 +558,8 @@ enum SRT_EPOLL_OPT
    ///
    /// - For listener sockets, this means that there is a new connection
    /// waiting for pickup through the `srt_accept()` call, that is,
-   /// the next call to `srt_accept()` will succeed without blocking.
+   /// the next call to `srt_accept()` will succeed without blocking
+   /// (see an alias SRT_EPOLL_ACCEPT below).
    SRT_EPOLL_IN       = 0x1,
 
    /// Ready for 'send' operation.
@@ -573,10 +574,10 @@ enum SRT_EPOLL_OPT
    /// pick up updates as the free space in the sender buffer grows.
    ///
    /// - For live mode it means that there's a free space for at least
-   /// one UDP packet, but no WRITE readiness usually means an
-   /// extraordinary congestion on the link meaning that you should
-   /// immediately slow down the sending rate or you may get a connection
-   /// break sonn.
+   /// one UDP packet. On the other hand, no readiness for OUT usually
+   /// means an extraordinary congestion on the link, meaning also that
+   /// you should immediately slow down the sending rate or you may get
+   /// a connection break soon.
    ///
    /// - For non-blocking sockets used with `srt_connect*` operation,
    /// this flag simply means that the connection was established.

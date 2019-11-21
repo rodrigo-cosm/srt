@@ -769,7 +769,9 @@ void SrtCommon::OpenGroupClient()
     {
         sockaddr_in sa = CreateAddrInet(c.host, c.port);
         sockaddr* psa = (sockaddr*)&sa;
-        Verb() << "\t[" << i << "] " << c.host << ":" << c.port << " ... " << VerbNoEOL;
+        Verb() << "\t[" << i << "] " << c.host << ":" << c.port
+            << "?pri=" << c.priority
+            << " ... " << VerbNoEOL;
         ++i;
         SRT_SOCKGROUPDATA gd = srt_prepare_endpoint(psa, namelen);
         gd.priority = c.priority;
