@@ -260,8 +260,8 @@ CUDT::CUDT(CUDTSocket* parent): m_parent(parent)
     m_iOPT_SndDropDelay     = 0;
     m_bOPT_StrictEncryption = true;
     m_iOPT_PeerIdleTimeout  = COMM_RESPONSE_TIMEOUT_MS;
-   m_uOPT_StabilityTimeout = 4*CUDT::COMM_SYN_INTERVAL_US;
-   m_bOPT_GroupConnect = false;
+    m_uOPT_StabilityTimeout = 4*CUDT::COMM_SYN_INTERVAL_US;
+    m_bOPT_GroupConnect = false;
     m_bTLPktDrop            = true; // Too-late Packet Drop
     m_bMessageAPI           = true;
     m_zOPT_ExpPayloadSize   = SRT_LIVE_DEF_PLSIZE;
@@ -324,8 +324,8 @@ CUDT::CUDT(CUDTSocket* parent, const CUDT& ancestor): m_parent(parent)
     m_iOPT_SndDropDelay     = ancestor.m_iOPT_SndDropDelay;
     m_bOPT_StrictEncryption = ancestor.m_bOPT_StrictEncryption;
     m_iOPT_PeerIdleTimeout  = ancestor.m_iOPT_PeerIdleTimeout;
-   m_uOPT_StabilityTimeout = ancestor.m_uOPT_StabilityTimeout;
-   m_bOPT_GroupConnect = ancestor.m_bOPT_GroupConnect;
+    m_uOPT_StabilityTimeout = ancestor.m_uOPT_StabilityTimeout;
+    m_bOPT_GroupConnect = ancestor.m_bOPT_GroupConnect;
     m_zOPT_ExpPayloadSize   = ancestor.m_zOPT_ExpPayloadSize;
     m_bTLPktDrop            = ancestor.m_bTLPktDrop;
     m_bMessageAPI           = ancestor.m_bMessageAPI;
@@ -1459,8 +1459,8 @@ void CUDT::open()
     m_ullLastRspAckTime_tk = currtime_tk;
     m_ullLastSndTime_tk    = currtime_tk;
     m_iReXmitCount         = 1;
-   m_ullUnstableSince_tk = 0;
-   m_ullTmpActiveTime_tk = 0;
+    m_ullUnstableSince_tk = 0;
+    m_ullTmpActiveTime_tk = 0;
 
     m_iPktCount      = 0;
     m_iLightACKCount = 1;
@@ -3705,6 +3705,7 @@ bool CUDTGroup::applyGroupSequences(SRTSOCKET target, ref_t<int32_t> r_snd_isn, 
 {
     if (m_bConnected) // You are the first one, no need to change.
     {
+        IF_HEAVY_LOGGING(string update_reason = "what?");
         // Find a socket that is declared connected and is not
         // the socket that caused the call.
         for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
@@ -3719,14 +3720,31 @@ bool CUDTGroup::applyGroupSequences(SRTSOCKET target, ref_t<int32_t> r_snd_isn, 
             // Found it. Get the following sequences:
             // For sending, the sequence that is about to be sent next.
             // For receiving, the sequence of the latest received packet.
-            HLOGC(dlog.Debug, log << "applyGroupSequences: @" << target << " gets seq from @"
-                    << gi->id);
 
             // SndCurrSeqNo is initially set to ISN-1, this next one is
             // the sequence that is about to be stamped on the next sent packet
             // over that socket. Using this field is safer because it is volatile
             // and its affinity is to the same thread as the sending function.
-            *r_snd_isn = se.m_iSndNextSeqNo;
+
+            // NOTE: the groupwise scheduling sequence might have been set
+            // already. If so, it means that it was set by either:
+            // - the call of this function on the very first conencted socket (see below)
+            // - the call to `sendBroadcast` or `sendBackup`
+            // In both cases, we want THIS EXACTLY value to be reported
+            if (m_iLastSchedSeqNo != -1)
+            {
+                *r_snd_isn = m_iLastSchedSeqNo;
+                IF_HEAVY_LOGGING(update_reason = "GROUPWISE snd-seq");
+            }
+            else
+            {
+                *r_snd_isn = se.m_iSndNextSeqNo;
+
+                // Write it back to the groupwise scheduling sequence so that
+                // any next connected socket will take this value as well.
+                m_iLastSchedSeqNo = *r_snd_isn;
+                IF_HEAVY_LOGGING(update_reason = "existing socket not yet sending");
+            }
 
             // RcvCurrSeqNo is increased by one because it happens that at the
             // synchronization moment it's already past reading and delivery.
@@ -3736,13 +3754,26 @@ bool CUDTGroup::applyGroupSequences(SRTSOCKET target, ref_t<int32_t> r_snd_isn, 
             // "mistakenly seen as lost" packet.
             *r_rcv_isn = CSeqNo::incseq(se.m_iRcvCurrSeqNo);
 
+            HLOGC(dlog.Debug, log << "applyGroupSequences: @" << target << " gets seq from @"
+                    << gi->id << " rcv %" << (*r_rcv_isn) << " snd %" << (*r_rcv_isn)
+                    << " as " << update_reason);
             return false;
         }
 
     }
 
+    // If the GROUP (!) is not connected, or no running/pending socket has been found.
+    // // That is, given socket is the first one.
+    // The group data should be set up with its own data. They should already be passed here
+    // in the variables.
+    //
+    // Override the schedule sequence of the group in this case because whatever is set now,
+    // it's not valid.
+
     HLOGC(dlog.Debug, log << "applyGroupSequences: no socket found connected and transmitting, @"
-            << target << " not changing sequences");
+            << target << " not changing sequences, storing snd-seq %" << (*r_snd_isn));
+
+    currentSchedSequence(*r_snd_isn);
 
     return true;
 }
@@ -13823,9 +13854,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 // The last response predates the start of this function, look at the difference
                 uint64_t tdiff_us = (now_tk - u.m_ullLastRspTime_tk)/CTimer::getCPUFrequency();
 
-#if ENABLE_HEAVY_LOGGING
-                string source = "heard";
-#endif
+                IF_HEAVY_LOGGING(string source = "heard");
 
                 if (u.m_ullTmpActiveTime_tk && u.m_ullTmpActiveTime_tk < now_tk)
                 {
@@ -13838,9 +13867,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                     // Still, check it against the timeout.
                     if (tadiff_us < tdiff_us)
                     {
-#if ENABLE_HEAVY_LOGGING
-                        source = "activated";
-#endif
+                        IF_HEAVY_LOGGING(source = "activated");
                         tdiff_us = tadiff_us;
                     }
                     else
@@ -14095,10 +14122,9 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     // also over them.
 
 
-    // XXX The concept was to use it to reset idle links to this
-    // sequence, but it seems like it's not necessary, as they
-    // are updated when ACKing. Consider removing.
-    int32_t oldest_buffer_seq SRT_ATR_UNUSED = -1;
+    // This is required to rewrite into currentSchedSequence() property
+    // as this value will be used as ISN when a new link is connected.
+    int32_t oldest_buffer_seq = -1;
 
     if (curseq != -1)
     {
@@ -14140,12 +14166,17 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Otherwise there would be something in the buffer already.
     }
 
+    if (oldest_buffer_seq != -1)
+        m_iLastSchedSeqNo = oldest_buffer_seq;
+
     // CHECK: no sendable that exceeds unstable
     // This embraces the case when there are no sendable at all.
     bool need_activate = sendable.size() <= nunstable;
+    IF_HEAVY_LOGGING(string activate_reason = "BY NO REASON???");
     if (need_activate)
     {
         HLOGC(dlog.Debug, log << "grp/sendBackup: all " << sendable.size() << " links unstable - will activate an idle link");
+        IF_HEAVY_LOGGING(activate_reason = "no stable links");
     }
     else
     {
@@ -14160,6 +14191,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             HLOGC(dlog.Debug, log << "grp/sendBackup: found link pri " << idlers[0]->priority << " < "
                     << (*sendable_pri.begin()) << " (highest from sendable) - will activate an idle link");
             need_activate = true;
+            IF_HEAVY_LOGGING(activate_reason = "found higher pri link");
         }
         else
         {
@@ -14174,7 +14206,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     {
         // If we have no stable links, activate one of idle links.
 
-        HLOGC(dlog.Debug, log << "grp/sendBackup: no stable links, trying to activate an idle link (" << idlers.size() << " available)");
+        HLOGC(dlog.Debug, log << "grp/sendBackup: " << activate_reason << ", trying to activate an idle link (" << idlers.size() << " available)");
 
         for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
         {
@@ -14235,13 +14267,17 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                     uint64_t now_tk;
                     CTimer::rdtsc(now_tk);
                     d->ps->core().m_ullTmpActiveTime_tk = now_tk;
+                    HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL #" << mc.msgno
+                            << " LINK ACTIVATED (pri: " << d->priority << ").");
                 }
-                d->sndstate = GST_RUNNING;
-
+                else
+                {
+                    HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL #" << mc.msgno
+                            << " LINK ACTIVATED (pri: " << d->priority << ").");
+                }
                 // Note: this will override the sequence number
                 // for all next iterations in this loop.
-                HLOGC(dlog.Debug, log << "@" << d->id << ":... sending SUCCESSFUL #" << mc.msgno
-                        << " LINK ACTIVATED (pri: " << d->priority << ").");
+                d->sndstate = GST_RUNNING;
 
                 if (!d->ps->core().m_ullUnstableSince_tk)
                 {
@@ -14279,8 +14315,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 << (sendable.size() - nunstable) << " unstable=" << nunstable);
     }
 
-    // If we have at least one stable link, then check links that have highest
-    // priority and silence the rest.
+    // If we have at least one stable link, then select a link that have the
+    // highest priority and silence the rest.
 
     // Note: If we have one stable link, this is the situation we need.
     // If we have no stable links at all, there's nothing we can do anyway.
@@ -14564,6 +14600,8 @@ RetryWaitBlocked:
     if (parallel.size() > 1)
     {
         sort(parallel.begin(), parallel.end(), FByPriotity());
+        uint64_t now_tk;
+        CTimer::rdtsc(now_tk);
 
         vector<gli_t>::iterator b = parallel.begin();
         HLOGC(dlog.Debug, log << "grp/sendBackup: keeping parallel link @" << (*b)->id << " and silencing others:");
@@ -14576,8 +14614,19 @@ RetryWaitBlocked:
                 LOGC(dlog.Error, log << "grp/sendBackup: IPE: parallel link container contains non-running link @" << d->id);
                 continue;
             }
+            CUDT& ce = d->ps->core();
+            int64_t td;
+            if (ce.m_ullTmpActiveTime_tk && (td = now_tk - ce.m_ullTmpActiveTime_tk) < ce.m_uOPT_StabilityTimeout)
+            {
+                HLOGC(dlog.Debug, log << "... not silencing @" << d->id << ": too early: "
+                        << td << " < " << ce.m_uOPT_StabilityTimeout << "(stability timeout)");
+                continue;
+            }
+
+            // Clear activation time because the link is no longer active!
             d->sndstate = GST_IDLE;
-            HLOGC(dlog.Debug, log << " ... @" << d->id);
+            HLOGC(dlog.Debug, log << " ... @" << d->id << " ACTIVATED: " << FormatTime(ce.m_ullTmpActiveTime_tk);
+            ce.m_ullTmpActiveTime_tk = 0;
         }
     }
 

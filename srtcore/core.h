@@ -659,20 +659,20 @@ public:
     void updateLatestRcv(gli_t);
 
     // Property accessors
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, peerid, m_PeerGroupID);
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool, managed, m_selfManaged);
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type, m_type);
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t, currentSchedSequence, m_iLastSchedSeqNo);
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, std::set<int>&, epollset, m_sPollID);
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int64_t, latency, m_iTsbPdDelay_us);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET,      id,                   m_GroupID);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET,      peerid,               m_PeerGroupID);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool,           managed,              m_selfManaged);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type,                 m_type);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t,        currentSchedSequence, m_iLastSchedSeqNo);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, std::set<int>&, epollset,             m_sPollID);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int64_t,        latency,              m_iTsbPdDelay_us);
 
     // Required for SRT_tsbpdLoop
-    SRTU_PROPERTY_RO(bool, closing, m_bClosing);
-    SRTU_PROPERTY_RO(bool, isTLPktDrop, m_bTLPktDrop);
-    SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
-    SRTU_PROPERTY_RO(CUDTUnited*, uglobal, m_pGlobal);
-    SRTU_PROPERTY_RO(std::set<int>&, pollset, m_sPollID);
+    SRTU_PROPERTY_RO(bool,           closing,        m_bClosing);
+    SRTU_PROPERTY_RO(bool,           isTLPktDrop,    m_bTLPktDrop);
+    SRTU_PROPERTY_RO(bool,           isSynReceiving, m_bSynRecving);
+    SRTU_PROPERTY_RO(CUDTUnited*,    uglobal,        m_pGlobal);
+    SRTU_PROPERTY_RO(std::set<int>&, pollset,        m_sPollID);
 };
 
 inline void fwd_swap(CUDTGroup::BufferedMessage& a, CUDTGroup::BufferedMessage& b)
