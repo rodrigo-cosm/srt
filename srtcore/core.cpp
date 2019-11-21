@@ -5561,7 +5561,7 @@ void* CUDT::tsbpd(void* param)
                      * packet ready to play but preceeded by missing packets (hole).
                      */
 
-                self->updateForgotten(seqlen, self->m_iRcvLastSkipAck, skiptoseqno);
+                    self->updateForgotten(seqlen, self->m_iRcvLastSkipAck, skiptoseqno);
                     self->m_pRcvBuffer->skipData(seqlen);
 
                     self->m_iRcvLastSkipAck = skiptoseqno;
@@ -5584,7 +5584,7 @@ void* CUDT::tsbpd(void* param)
                               << seqlen << " packets) playable at " << FormatTime(tsbpdtime) << " delayed "
                               << (timediff / 1000) << "." << (timediff % 1000) << " ms");
 #endif
-                LOGC(dlog.Warn, log << "RCV-DROPPED packet delay=" << (timediff/1000) << "ms");
+                    LOGC(dlog.Warn, log << "RCV-DROPPED packet delay=" << (timediff/1000) << "ms");
 #endif
 
                     tsbpdtime = 0; // Next sent ack will unblock
@@ -14625,7 +14625,7 @@ RetryWaitBlocked:
 
             // Clear activation time because the link is no longer active!
             d->sndstate = GST_IDLE;
-            HLOGC(dlog.Debug, log << " ... @" << d->id << " ACTIVATED: " << FormatTime(ce.m_ullTmpActiveTime_tk);
+            HLOGC(dlog.Debug, log << " ... @" << d->id << " ACTIVATED: " << FormatTime(ce.m_ullTmpActiveTime_tk));
             ce.m_ullTmpActiveTime_tk = 0;
         }
     }
