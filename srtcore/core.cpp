@@ -260,7 +260,7 @@ CUDT::CUDT(CUDTSocket* parent): m_parent(parent)
     m_iOPT_SndDropDelay     = 0;
     m_bOPT_StrictEncryption = true;
     m_iOPT_PeerIdleTimeout  = COMM_RESPONSE_TIMEOUT_MS;
-   m_bOPT_GroupConnect = false;
+    m_bOPT_GroupConnect = false;
     m_bTLPktDrop            = true; // Too-late Packet Drop
     m_bMessageAPI           = true;
     m_zOPT_ExpPayloadSize   = SRT_LIVE_DEF_PLSIZE;
@@ -323,7 +323,7 @@ CUDT::CUDT(CUDTSocket* parent, const CUDT& ancestor): m_parent(parent)
     m_iOPT_SndDropDelay     = ancestor.m_iOPT_SndDropDelay;
     m_bOPT_StrictEncryption = ancestor.m_bOPT_StrictEncryption;
     m_iOPT_PeerIdleTimeout  = ancestor.m_iOPT_PeerIdleTimeout;
-   m_bOPT_GroupConnect = ancestor.m_bOPT_GroupConnect;
+    m_bOPT_GroupConnect = ancestor.m_bOPT_GroupConnect;
     m_zOPT_ExpPayloadSize   = ancestor.m_zOPT_ExpPayloadSize;
     m_bTLPktDrop            = ancestor.m_bTLPktDrop;
     m_bMessageAPI           = ancestor.m_bMessageAPI;
@@ -958,7 +958,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
                          << efc_max_payload_size << " bytes");
                 m_zOPT_ExpPayloadSize = efc_max_payload_size;
             }
-
+            
             m_OPT_PktFilterConfigString = arg;
         }
         break;
@@ -3555,7 +3555,7 @@ void CUDT::synchronizeWithGroup(CUDTGroup* gp)
     else
     {
         // This was the first connected socket and it defined start time.
-        HLOGC(mglog.Debug, log << "synchronizeGroupTime: @" << m_SocketID
+        HLOGC(mglog.Debug, log << "synchronizeWithGroup: @" << m_SocketID
                 << " DEFINED: ST="
                 << FormatTime(m_stats.startTime)
                 << " PST=" << FormatTime(m_ullRcvPeerStartTime));
@@ -3627,6 +3627,13 @@ bool CUDTGroup::getBufferTimeBase(CUDT* forthesakeof, ref_t<uint64_t> tb, ref_t<
     for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
     {
         CUDT* u = &gi->ps->core();
+        if (gi->laststatus != SRTS_CONNECTED)
+        {
+            HLOGC(mglog.Debug, log << "getBufferTimeBase: skipping @" << u->m_SocketID
+                    << ": not connected, state=" << SockStatusStr(gi->laststatus));
+            continue;
+        }
+
         if (u == forthesakeof)
             continue; // skip the member if it's the target itself
 
@@ -3659,6 +3666,7 @@ bool CUDTGroup::applyGroupSequences(SRTSOCKET target, ref_t<int32_t> r_snd_isn, 
 {
     if (m_bConnected) // You are the first one, no need to change.
     {
+        IF_HEAVY_LOGGING(string update_reason = "what?");
         // Find a socket that is declared connected and is not
         // the socket that caused the call.
         for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
@@ -3673,14 +3681,31 @@ bool CUDTGroup::applyGroupSequences(SRTSOCKET target, ref_t<int32_t> r_snd_isn, 
             // Found it. Get the following sequences:
             // For sending, the sequence that is about to be sent next.
             // For receiving, the sequence of the latest received packet.
-            HLOGC(dlog.Debug, log << "applyGroupSequences: @" << target << " gets seq from @"
-                    << gi->id);
 
             // SndCurrSeqNo is initially set to ISN-1, this next one is
             // the sequence that is about to be stamped on the next sent packet
             // over that socket. Using this field is safer because it is volatile
             // and its affinity is to the same thread as the sending function.
-            *r_snd_isn = se.m_iSndNextSeqNo;
+
+            // NOTE: the groupwise scheduling sequence might have been set
+            // already. If so, it means that it was set by either:
+            // - the call of this function on the very first conencted socket (see below)
+            // - the call to `sendBroadcast` or `sendBackup`
+            // In both cases, we want THIS EXACTLY value to be reported
+            if (m_iLastSchedSeqNo != -1)
+            {
+                *r_snd_isn = m_iLastSchedSeqNo;
+                IF_HEAVY_LOGGING(update_reason = "GROUPWISE snd-seq");
+            }
+            else
+            {
+                *r_snd_isn = se.m_iSndNextSeqNo;
+
+                // Write it back to the groupwise scheduling sequence so that
+                // any next connected socket will take this value as well.
+                m_iLastSchedSeqNo = *r_snd_isn;
+                IF_HEAVY_LOGGING(update_reason = "existing socket not yet sending");
+            }
 
             // RcvCurrSeqNo is increased by one because it happens that at the
             // synchronization moment it's already past reading and delivery.
@@ -3690,13 +3715,26 @@ bool CUDTGroup::applyGroupSequences(SRTSOCKET target, ref_t<int32_t> r_snd_isn, 
             // "mistakenly seen as lost" packet.
             *r_rcv_isn = CSeqNo::incseq(se.m_iRcvCurrSeqNo);
 
+            HLOGC(dlog.Debug, log << "applyGroupSequences: @" << target << " gets seq from @"
+                    << gi->id << " rcv %" << (*r_rcv_isn) << " snd %" << (*r_rcv_isn)
+                    << " as " << update_reason);
             return false;
         }
 
     }
 
+    // If the GROUP (!) is not connected, or no running/pending socket has been found.
+    // // That is, given socket is the first one.
+    // The group data should be set up with its own data. They should already be passed here
+    // in the variables.
+    //
+    // Override the schedule sequence of the group in this case because whatever is set now,
+    // it's not valid.
+
     HLOGC(dlog.Debug, log << "applyGroupSequences: no socket found connected and transmitting, @"
-            << target << " not changing sequences");
+            << target << " not changing sequences, storing snd-seq %" << (*r_snd_isn));
+
+    currentSchedSequence(*r_snd_isn);
 
     return true;
 }
@@ -3747,7 +3785,7 @@ bool CUDTGroup::getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> r_mpeer, ref_t<u
         return true;
     }
 
-    HLOGC(mglog.Debug, log << "getMasterData: no link found suitable as master for $" << slave);
+    HLOGC(mglog.Debug, log << "getMasterData: no link found suitable as master for @" << slave);
     return false;
 }
 
@@ -5484,7 +5522,7 @@ void* CUDT::tsbpd(void* param)
                      * packet ready to play but preceeded by missing packets (hole).
                      */
 
-                self->updateForgotten(seqlen, self->m_iRcvLastSkipAck, skiptoseqno);
+                    self->updateForgotten(seqlen, self->m_iRcvLastSkipAck, skiptoseqno);
                     self->m_pRcvBuffer->skipData(seqlen);
 
                     self->m_iRcvLastSkipAck = skiptoseqno;
@@ -5499,7 +5537,7 @@ void* CUDT::tsbpd(void* param)
                               << seqlen << " packets) playable at " << FormatTime(tsbpdtime) << " delayed "
                               << (timediff / 1000) << "." << (timediff % 1000) << " ms");
 #endif
-                LOGC(dlog.Warn, log << "RCV-DROPPED packet delay=" << (timediff/1000) << "ms");
+                    LOGC(dlog.Warn, log << "RCV-DROPPED packet delay=" << (timediff/1000) << "ms");
 #endif
 
                     tsbpdtime = 0; // Next sent ack will unblock
@@ -6682,6 +6720,19 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     int32_t orig_seqno = seqno;
 #endif
 
+    // Check if seqno has been set, in case when this is a group sender.
+    // If the sequence is from the past towards the "next sequence",
+    // simply return the size, pretending that it has been sent.
+    if (mctrl.pktseq != -1 && m_iSndNextSeqNo != -1)
+    {
+        if (CSeqNo::seqcmp(mctrl.pktseq, seqno) < 0)
+        {
+            HLOGC(dlog.Debug, log << CONID() << "sock:SENDING (NOT): group-req %" << mctrl.pktseq
+                    << " OLDER THAN next expected %" << seqno << " - FAKE-SENDING.");
+            return size;
+        }
+    }
+
     // Set this predicted next sequence to the control information.
     // It's the sequence of the FIRST (!) packet from all packets used to send
     // this buffer. Values from this field will be monotonic only if you always
@@ -6719,8 +6770,13 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
 
 #ifdef SRT_ENABLE_ECN
     if (bCongestion)
+    {
+        LOGC(dlog.Error, log << "sendmsg2: CONGESTION; reporting error");
         throw CUDTException(MJ_AGAIN, MN_CONGESTION, 0);
+    }
 #endif /* SRT_ENABLE_ECN */
+
+    HLOGC(dlog.Debug, log << CONID() << "sock:SENDING (END): success, size=" << size);
     return size;
 }
 
@@ -7001,10 +7057,9 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl, int by
 
     if ((res <= 0) && (m_iRcvTimeOut >= 0))
     {
-
-            // Forced to return -1 instead of throwing exception.
-            if (!by_exception)
-                return setError(MJ_AGAIN, MN_XMTIMEOUT, 0);
+        // Forced to return -1 instead of throwing exception.
+        if (!by_exception)
+            return setError(MJ_AGAIN, MN_XMTIMEOUT, 0);
         throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
     }
 
@@ -8793,18 +8848,6 @@ void CUDT::updateAfterSrtHandshake(int hsv)
     // done and the application reader sorts out packets by sequence numbers,
     // but only when they are signed off by TsbPd.
 
-    // Update settings from options. This is to prevent TSBPD thread from
-    // starting too early when HSv4 is in use. Must be done here though
-    // before the buffers are created and get settings from here.
-    /* XXX for internal imp
-    if (m_bTsbPd && m_parent->m_IncludedGroup && m_parent->m_IncludedGroup->isGroupReceiver())
-    {
-        HLOGP(mglog.Debug, "prepareBuffers: GROUP RECEIVER DETECTED with set TSBPD - switching to group receiver");
-        m_bTsbPd = false;
-        m_bGroupTsbPd = true;
-    }
-    */
-
     // The only possibility here is one of these two:
     // - Agent is RESPONDER and it receives HSREQ.
     // - Agent is INITIATOR and it receives HSRSP.
@@ -9972,6 +10015,20 @@ vector<int32_t> CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
     CUDT* self = (CUDT*)vself;
     vector<int32_t> output;
 
+    // XXX When an alternative packet arrival callback is installed
+    // in case of groups, move this part to the groupwise version.
+
+    if (self->m_parent->m_IncludedGroup)
+    {
+        CUDTGroup::gli_t gi = self->m_parent->m_IncludedIter;
+        if (gi->rcvstate < CUDTGroup::GST_RUNNING) // PENDING or IDLE, tho PENDING is unlikely
+        {
+            HLOGC(mglog.Debug, log << "defaultPacketArrival: IN-GROUP rcv state transition to RUNNING. NOT checking for loss");
+            gi->rcvstate = CUDTGroup::GST_RUNNING;
+            return output;
+        }
+    }
+
     int initial_loss_ttl = 0;
     if ( self->m_bPeerRexmitFlag )
         initial_loss_ttl = self->m_iReorderTolerance;
@@ -10547,6 +10604,8 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
         else
         {
             // a new connection has been created, enable epoll for write
+           HLOGC(mglog.Debug, log << "processConnectRequest: @" << m_SocketID
+                   << " connected, setting epoll to connect:");
            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_CONNECT, true);
         }
     }
@@ -11481,19 +11540,33 @@ void CUDTGroup::getOpt(SRT_SOCKOPT optname, void* optval, ref_t<int> r_optlen)
     default: ;// pass on
     }
 
-    // In sockets. All sockets should have all options
-    // set the same and should represent the group state
-    // well enough. If there are no sockets, just use default.
-    CGuard lg(m_GroupLock, "Group");
-    if (m_Group.empty())
-    {
-        if (!getOptDefault(optname, optval, r_optlen))
-            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+    CUDTSocket* ps = 0;
 
-        return;
+    {
+        // In sockets. All sockets should have all options
+        // set the same and should represent the group state
+        // well enough. If there are no sockets, just use default.
+
+        // Group lock to protect the container itself.
+        // Once a socket is extracted, we state it cannot be
+        // closed without the group send/recv function or closing
+        // being involved.
+        CGuard lg(m_GroupLock, "Group");
+        if (m_Group.empty())
+        {
+            if (!getOptDefault(optname, optval, r_optlen))
+                throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+
+            return;
+        }
+
+        ps = m_Group.begin()->ps;
+
+        // Release the lock on the group, as it's not necessary,
+        // as well as it might cause a deadlock when combined
+        // with the others.
     }
 
-    CUDTSocket* ps = m_Group.begin()->ps;
     if (!ps)
         throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 

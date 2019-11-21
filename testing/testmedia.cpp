@@ -251,7 +251,8 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
                     Error("With //group, every node in 'nodes' must have port >1024");
                 }
 
-                m_group_nodes.push_back(Connection(check.host(), check.portno()));
+                Connection cc(check.host(), check.portno());
+                m_group_nodes.push_back(cc);
             }
 
             par.erase("type");
@@ -718,7 +719,7 @@ void SrtCommon::OpenGroupClient()
     // Resolve group type.
     if (m_group_type == "broadcast")
         type = SRT_GTYPE_BROADCAST;
-    // else if blah blah blah...
+    // else if other types...
     else
     {
         Error("With //group, type='" + m_group_type + "' undefined");
@@ -767,7 +768,8 @@ void SrtCommon::OpenGroupClient()
         sockaddr* psa = (sockaddr*)&sa;
         Verb() << "\t[" << i << "] " << c.host << ":" << c.port << " ... " << VerbNoEOL;
         ++i;
-        targets.push_back(srt_prepare_endpoint(psa, namelen));
+        SRT_SOCKGROUPDATA gd = srt_prepare_endpoint(psa, namelen);
+        targets.push_back(gd);
     }
 
     int fisock = srt_connect_group(m_sock, 0, namelen, targets.data(), targets.size());

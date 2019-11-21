@@ -120,7 +120,6 @@ public:
 
    int readData(ref_t<CPacket> r_packet, ref_t<uint64_t> origintime, int kflgs);
 
-
       /// Find data position to pack a DATA packet for a retransmission.
       /// @param [out] data the pointer to the data position.
       /// @param [in] offset offset from the last ACK point (backward sequence number difference)

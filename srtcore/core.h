@@ -401,8 +401,6 @@ private:
     void getGroupCount(ref_t<size_t> r_size, ref_t<bool> r_still_alive);
     void getMemberStatus(ref_t< std::vector<SRT_SOCKGROUPDATA> > r_gd, SRTSOCKET wasread, int result, bool again);
 
-    void updateLatestRcv();
-
     class CUDTUnited* m_pGlobal;
     pthread_mutex_t m_GroupLock;
 

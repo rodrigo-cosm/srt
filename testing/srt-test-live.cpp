@@ -237,6 +237,19 @@ bool CheckMediaSpec(const string& prefix, const vector<string>& spec, ref_t<stri
             return false;
         }
 
+        if (allow_raw_spec && !uri.parameters().empty())
+        {
+            bool cont = false;
+            // Extract attributes if any and pass them there.
+            for (UriParser::query_it i = uri.parameters().begin();
+                    i != uri.parameters().end(); ++i)
+            {
+                aspec += cont ? "&" : "?";
+                cont = false;
+                aspec += i->first + "=" + i->second;
+            }
+        }
+
         adrs.push_back(aspec);
         if (first)
         {

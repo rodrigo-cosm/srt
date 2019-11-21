@@ -535,8 +535,6 @@ inline std::string Sprint(Args&&... args)
 template <class T>
 using UniquePtr = std::unique_ptr<T>;
 
-// Some utilities borrowed from tumux, as this is using options
-// similar way.
 template <class Container, class Value = typename Container::value_type, typename... Args> inline
 std::string Printable(const Container& in, Value /*pseudoargument*/, Args&&... args)
 {
@@ -603,7 +601,6 @@ std::string Printable(const Container& in)
     os << "]";
     return os.str();
 }
-
 
 template <class Type>
 ref_t<Type> Ref(Type& arg)
@@ -687,6 +684,24 @@ typename Map::mapped_type const* map_getp(const Map& m, const Key& key)
 }
 
 #endif
+
+// Printable with prefix added for every element.
+// Useful when printing a container of sockets or sequence numbers.
+template <class Container> inline
+std::string PrintableMod(const Container& in, const std::string& prefix)
+{
+    using namespace srt_pair_op;
+    typedef typename Container::value_type Value;
+    std::ostringstream os;
+    os << "[ ";
+    for (typename Container::const_iterator y = in.begin(); y != in.end(); ++y)
+        os << prefix << Value(*y) << " ";
+    os << "]";
+    return os.str();
+}
+
+
+
 
 template<typename InputIterator, typename OutputIterator, typename TransFunction>
 void FilterIf(InputIterator bg, InputIterator nd,

@@ -179,7 +179,18 @@ void CSndBuffer::addBuffer(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl
     // and then return the accordingly modified sequence number in the reference.
 
     Block* s = m_pLastBlock;
-    msgno = m_iNextMsgNo;
+
+    if (msgno == 0) // DEFAULT-UNCHANGED msgno supplied
+    {
+        HLOGC(dlog.Debug, log << "addBuffer: using internally managed msgno=" << m_iNextMsgNo);
+        msgno = m_iNextMsgNo;
+    }
+    else
+    {
+        HLOGC(dlog.Debug, log << "addBuffer: OVERWRITTEN by msgno supplied by caller: msgno=" << msgno);
+        m_iNextMsgNo = msgno;
+    }
+
     for (int i = 0; i < size; ++ i)
     {
         int pktlen = len - i * m_iMSS;

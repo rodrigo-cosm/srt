@@ -278,9 +278,27 @@ int CEPoll::update_usock(const int eid, const SRTSOCKET& u, const int* events)
 
     int32_t evts = events ? *events : uint32_t(SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR);
     bool edgeTriggered = evts & SRT_EPOLL_ET;
+
     evts &= ~SRT_EPOLL_ET;
     if (evts)
     {
+        if (!edgeTriggered)
+        {
+            int et_events = evts & SRT_EPOLL_ETONLY;
+            int noet_events = evts & ~SRT_EPOLL_ETONLY;
+            // Check if both ET and other events are passed
+            if (noet_events && et_events)
+            {
+                LOGC(dlog.Error, log << "srt_epoll_update_usock: Mixing ET and non-ET events in one call. Use separate calls.");
+                throw CUDTException(MJ_NOTSUP, MN_INVAL);
+            }
+
+            if (evts & SRT_EPOLL_ETONLY)
+            {
+                edgeTriggered = true;
+            }
+        }
+
         pair<CEPollDesc::ewatch_t::iterator, bool> iter_new = d.addWatch(u, evts, edgeTriggered);
         CEPollDesc::Wait& wait = iter_new.first->second;
         if (!iter_new.second)
@@ -316,7 +334,7 @@ int CEPoll::update_usock(const int eid, const SRTSOCKET& u, const int* events)
     }
     else if (edgeTriggered)
     {
-        // Specified only SRT_EPOLL_ET flag, but no event flag. Error.
+        LOGC(dlog.Error, log << "srt_epoll_update_usock: Specified only SRT_EPOLL_ET flag, but no event flag. Error.");
         throw CUDTException(MJ_NOTSUP, MN_INVAL);
     }
     else
@@ -796,6 +814,10 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
 
     vector<int> lost;
 
+    IF_HEAVY_LOGGING(ostringstream debug);
+    IF_HEAVY_LOGGING(debug << "epoll/update: @" << uid << " " << (enable ? "+" : "-"));
+    IF_HEAVY_LOGGING(PrintEpollEvent(debug, events));
+
     CGuard pg(m_EPollLock, "EPoll");
     for (set<int>::iterator i = eids.begin(); i != eids.end(); ++ i)
     {
@@ -816,9 +838,12 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
         if (!pwait)
         {
             // As this is mapped in the socket's data, it should be impossible.
+            LOGC(dlog.Error, log << "epoll/update: IPE: update struck EID "
+                    << (*i) << " which is NOT SUBSCRIBED to @" << uid);
             continue;
         }
 
+        IF_HEAVY_LOGGING(string tracking = "TRACKING: " + ed.DisplayEpollWatch());
         // compute new states
 
         // New state to be set into the permanent state
@@ -828,13 +853,21 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
         // compute states changes!
         int changes = pwait->state ^ newstate; // oldState XOR newState
         if (!changes)
+        {
+            HLOGC(dlog.Debug, log << debug.str() << ": EID " << (*i)
+                    << tracking << " NOT updated: no changes");
             continue; // no changes!
+        }
         // assign new state
         pwait->state = newstate;
         // filter change relating what is watching
         changes &= pwait->watch;
         if (!changes)
+        {
+            HLOGC(dlog.Debug, log << debug.str() << ": EID " << (*i)
+                    << tracking << " NOT updated: not subscribed");
             continue; // no change watching
+        }
         // set events changes!
 
         // This function will update the notice object associated with
@@ -842,6 +875,9 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
         // - if enable, it will set event flags, possibly in a new notice object
         // - if !enable, it will clear event flags, possibly remove notice if resulted in 0
         ed.updateEventNotice(*pwait, uid, events, enable);
+
+        HLOGC(dlog.Debug, log << debug.str() << ": EID " << (*i)
+                << " TRACKING: " << ed.DisplayEpollWatch());
     }
 
     for (vector<int>::iterator i = lost.begin(); i != lost.end(); ++ i)
@@ -854,11 +890,11 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
 #if ENABLE_HEAVY_LOGGING
 static void PrintEpollEvent(ostream& os, int events)
 {
-    static pair<int, string> namemap [] = {
+    static pair<int, const char*> namemap [] = {
         make_pair(SRT_EPOLL_IN, "[R]"),
         make_pair(SRT_EPOLL_OUT, "[W]"),
         make_pair(SRT_EPOLL_ERR, "[E]"),
-        make_pair(SRT_EPOLL_SPECIAL, "[S]")
+        make_pair(SRT_EPOLL_UPDATE, "[U]")
     };
 
     int N = Size(namemap);
