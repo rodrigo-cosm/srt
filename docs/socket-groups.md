@@ -243,6 +243,68 @@ if more than 2 links report a loss of the exactly same packet, the
 retransmission may use the multicast link instead of the individual
 link - whichever would spare more bandwidth would be used.
 
+Predicted implementation:
+
+Instead of `groupconnect` option set to true, you have to set the
+`multicast` option to a nonempty string of any contents (just limited
+to 512 characters). This string value will be a key under which the
+group ID is recorded. The first connecting client will be identified
+as joining this group and this way a new group will be created and
+its ID recorded under this key. This is in order to allow library
+users to use the feature of listener callback so that a group name
+may be decided upon per user or stream resource specified.
+
+Once the group is known, and the connection is to be accepted, the
+newly accepted socket is joined to the group. The accept conditions
+are just like before in the groups: the group is reported from
+`srt_accept` when the first client has connected.
+
+Once the group connection is made, the sender side can use the
+group ID to send the data. Note that the group on the listener side
+collects multiple sockets representing particular clients, so
+sending will be for the sake of each of them. However the sending
+function will not send to every individual socket, as it is with
+broadcast group, but rather an extra socket will be created
+inside the group, and this one will be used to send packets to
+the multicast group, as configured during the handshake.
+
+It should be decided on the listener side, which IGMP group will
+be used for transmission. Clients do not know it, and:
+
+ - for simple single-signal cases, you have just one IGMP
+group configured for the listener and it's used for every
+client
+ - listener callback may decide particular IGNMP group to
+be used for particular signal
+
+The listener side will inform the client in the handshake,
+which IGMP group will be used for transmission so that the
+client can set up listening on it (join IGMP group in particular).
+
+The client side should have then two things:
+
+1. The group with its own socket (and queues).
+2. The group will contain always one member, this time.
+3. When reading packets from the queue of the socket bound
+to the IGMP group, the packet will be translated and dispatched
+to the socket.
+
+What is important here is that the packet sent by the listener
+side will look exactly the same no matter to which client it is
+predicted - which means that the SRT header will contain the same
+data. This is where groups come in: the "target ID" in the header
+will have the value of the group.
+
+In total, the listener sends the following data to the client:
+
+1. IGMP group's IP address and port
+2. group ID that will be the same on both sides (if the group ID
+already exists on the client's application, the connection will be
+rejected).
+
+The listener side will then send payload packets to the IGMP group,
+however all control packets will be still sent the same way as before,
+that is, over a direct connection.
 
 
 Socket groups in SRT

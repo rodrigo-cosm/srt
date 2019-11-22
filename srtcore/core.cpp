@@ -12309,6 +12309,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     {
         if (is->stat == len)
         {
+            HLOGC(dlog.Debug, log << "SEND STATE link [" << (is - sendstates.begin()) << "]: SUCCESSFULLY sent " << len << " bytes");
             // Successful.
             successful.push_back(is->d);
             rstat = is->stat;
@@ -12324,7 +12325,8 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
 #if ENABLE_HEAVY_LOGGING
         string errmsg = cx.getErrorString();
-        HLOGC(dlog.Debug, log << "... sending FAILED (" << errmsg << "). Setting this socket broken status.");
+        LOGC(dlog.Debug, log << "SEND STATE link [" << (is - sendstates.begin()) << "]: FAILURE (result:" << is->stat << "): "
+                << errmsg << ". Setting this socket broken status.");
 #endif
         // Turn this link broken
         is->d->sndstate = GST_BROKEN;
@@ -15907,7 +15909,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 
 #if ENABLE_HEAVY_LOGGING
         string errmsg = cx.getErrorString();
-        HLOGC(dlog.Debug, log << "... sending FAILED (" << errmsg << "). Setting this socket broken status.");
+        HLOGC(dlog.Debug, log << "... sending FAILED " << is->stat << " (" << errmsg << "). Setting this socket broken status.");
 #endif
         // Turn this link broken
         is->d->sndstate = GST_BROKEN;
