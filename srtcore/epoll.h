@@ -115,6 +115,22 @@ struct CEPollDesc
        }
 
        int edgeOnly() { return edge & watch; }
+
+       bool clear(int direction)
+       {
+           if (watch & direction)
+           {
+               watch &= ~direction;
+               edge &= ~direction;
+               state &= ~direction;
+
+               if (watch == 0)
+                   return true;
+               return false;
+           }
+
+           return false;
+       }
    };
 
    typedef std::map<SRTSOCKET, Wait> ewatch_t;
@@ -295,13 +311,24 @@ public:
        return false;
    }
 
-   void clearEvent(enotice_t::iterator i, int event)
+   SRTSOCKET clearEventSub(enotice_t::iterator i, int event)
    {
+       // We need to remove the notice and subscription
+       // for this event. The 'i' iterator is safe to
+       // delete, even indirectly.
+
        // This works merely like checkEdge, just it's predicted
        // to get the notice cleared of reporting given event.
-       i->events &= ~event;
-       if (!i->events)
-           removeExistingNotices(*i->parent);
+       if (i->events & event)
+       {
+           // The notice has a readiness notice on this event.
+           // This means that there exists also a subscription.
+           Wait* w = i->parent;
+           if (w->clear(event))
+               return i->fd;
+       }
+
+       return SRT_INVALID_SOCK;
    }
 };
 
