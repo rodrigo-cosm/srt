@@ -343,12 +343,13 @@ public:
 
     void setFreshConnected(CUDTSocket* sock);
 
-    static gli_t gli_NULL() { return s_NoGroup.end(); }
+    static gli_t gli_NULL() { return GroupContainer::null(); }
 
     int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
     int sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int old_sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
 
     // For Backup, sending all previous packet
     int sendBackupRexmit(CUDT& core, ref_t<SRT_MSGCTRL> r_mc);
@@ -433,8 +434,78 @@ private:
 
     SRTSOCKET m_GroupID;
     SRTSOCKET m_PeerGroupID;
-    std::list<SocketData> m_Group;
-    static std::list<SocketData> s_NoGroup; // This is to have a predictable "null iterator".
+    struct GroupContainer
+    {
+        std::list<SocketData> m_List;
+        static std::list<SocketData> s_NoList; // This is to have a predictable "null iterator".
+
+        /// This field is used only by some types of groups that need
+        /// to keep track as to which link was lately used. Note that
+        /// by removal of a node from the m_List container, this link
+        /// must be appropriately reset.
+        gli_t m_LastActiveLink;
+
+        GroupContainer(): m_LastActiveLink(s_NoList.begin()) {}
+
+        //Property<gli_t> active = { m_LastActiveLink; }
+        SRTU_PROPERTY_RW(gli_t, active, m_LastActiveLink);
+
+        gli_t begin() { return m_List.begin(); }
+        gli_t end() { return m_List.end(); }
+        static gli_t null() { return s_NoList.begin(); }
+        bool empty() { return m_List.empty(); }
+        void push_back(const SocketData& data)
+        {
+            m_List.push_back(data);
+        }
+        void clear()
+        {
+            m_LastActiveLink = null();
+            m_List.clear();
+        }
+        size_t size()
+        {
+            return m_List.size();
+        }
+
+        void erase(gli_t it)
+        {
+            if (it == m_LastActiveLink)
+            {
+                if (m_List.empty())
+                {
+                    LOGC(mglog.Error, log << "IPE: GroupContainer is empty and 'erase' is called on it.");
+                    return; // this avoids any misunderstandings in iterator checks
+                }
+
+                gli_t bb = m_List.begin();
+                ++bb;
+                if (bb == m_List.end()) // means: m_List.size() == 1
+                {
+                    // One element, this one being deleted, nothing to point to.
+                    m_LastActiveLink = null();
+                }
+                else
+                {
+                    // Set the link to the previous element IN THE RING.
+                    // We have the position pointer.
+                    // Reverse iterator is automatically decremented.
+                    std::reverse_iterator<gli_t> rt (m_LastActiveLink);
+                    if (rt == m_List.rend())
+                        rt = m_List.rbegin();
+
+                    m_LastActiveLink = rt.base();
+
+                    // This operation is safe because we know that:
+                    // - the size of the container is at least 2 (0 and 1 cases are handled above)
+                    // - if m_LastActiveLink == m_List.begin(), `rt` is shifted to the opposite end.
+                    --m_LastActiveLink;
+                }
+            }
+            m_List.erase(it);
+        }
+    };
+    GroupContainer m_Group;
     bool m_selfManaged;
     SRT_GROUP_TYPE m_type;
     CUDTSocket* m_listener; // A "group" can only have one listener.
@@ -603,6 +674,22 @@ private:
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
     volatile int32_t m_iLastSchedMsgNo;
     size_t m_iBalancingRoll;
+
+    struct BalancingLinkState
+    {
+        gli_t ilink; // previously used link
+        int status;  // 0 = normal first entry; -1 = repeated selection
+        int errorcode;
+    };
+    Callback<gli_t, const BalancingLinkState> m_cbSelectLink;
+
+    gli_t defaultSelectLink(const BalancingLinkState&);
+    static gli_t defaultSelectLink_fw(void* opaq, const BalancingLinkState& st)
+    {
+        CUDTGroup* g = (CUDTGroup*)opaq;
+        return g->defaultSelectLink(st);
+    }
+
 public:
 
     // Required after the call on newGroup on the listener side.

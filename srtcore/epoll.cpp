@@ -160,11 +160,31 @@ void CEPoll::clear_ready_usocks(CEPollDesc& d, int direction)
     }
     CGuard pg(m_EPollLock, "EPoll");
 
+    vector<SRTSOCKET> cleared;
+
     CEPollDesc::enotice_t::iterator i = d.enotice_begin();
     while (i != d.enotice_end())
     {
-        d.clearEvent(i++, direction);
+        IF_HEAVY_LOGGING(SRTSOCKET subsock = i->fd);
+        SRTSOCKET rs = d.clearEventSub(i++, direction);
+        // This function returns:
+        // - a valid socket - if there are no other subscription after 'direction' was cleared
+        // - SRT_INVALID_SOCK otherwise
+        // Valid sockets should be collected as sockets that no longer
+        // have a subscribed event should be deleted from subscriptions.
+        if (rs != SRT_INVALID_SOCK)
+        {
+            HLOGC(dlog.Debug, log << "CEPoll::clear_ready_usocks: @" << rs << " got all subscription cleared");
+            cleared.push_back(rs);
+        }
+        else
+        {
+            HLOGC(dlog.Debug, log << "CEPoll::clear_ready_usocks: @" << subsock << " is still subscribed");
+        }
     }
+
+    for (size_t i = 0; i < cleared.size(); ++i)
+        d.removeSubscription(cleared[i]);
 }
 
 int CEPoll::add_ssock(const int eid, const SYSSOCKET& s, const int* events)
