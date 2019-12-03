@@ -81,7 +81,7 @@ public:
       /// @param [in] ttl time to live in milliseconds
       /// @param [in] order if the block should be delivered in order, for DGRAM only
 
-   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_msgno);
+   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, int32_t& r_msgno);
 
       /// Read a block of data from file and insert it into the sending list.
       /// @param [in] ifs input file stream.
@@ -124,9 +124,9 @@ public:
 
 #ifdef SRT_ENABLE_SNDBUFSZ_MAVG
    void updAvgBufSize(uint64_t time);
-   int getAvgBufSize(ref_t<int> bytes, ref_t<int> timespan);
+   int getAvgBufSize(int& bytes, int& timespan);
 #endif /* SRT_ENABLE_SNDBUFSZ_MAVG */
-   int getCurrBufSize(ref_t<int> bytes, ref_t<int> timespan);
+   int getCurrBufSize(int& bytes, int& timespan);
 
    uint64_t getInRatePeriod() const { return m_InRatePeriod; }
 
@@ -439,7 +439,7 @@ private:
    void countBytes(int pkts, int bytes, bool acked = false);
 
 private:
-   bool scanMsg(ref_t<int> start, ref_t<int> end, ref_t<bool> passack);
+   bool scanMsg(int& w_start, int& w_end, bool& w_passack);
 
 private:
    CUnit** m_pUnit;                     // pointer to the protocol buffer (array of CUnit* items)

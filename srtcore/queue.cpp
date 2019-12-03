@@ -866,17 +866,16 @@ void CRendezvousQueue::remove(const SRTSOCKET &id, bool should_lock)
     }
 }
 
-CUDT *CRendezvousQueue::retrieve(const sockaddr *addr, ref_t<SRTSOCKET> r_id)
+CUDT *CRendezvousQueue::retrieve(const sockaddr *addr, SRTSOCKET& w_id)
 {
     CGuard     vg(m_RIDVectorLock);
-    SRTSOCKET &id = *r_id;
 
     // TODO: optimize search
     for (list<CRL>::iterator i = m_lRendezvousID.begin(); i != m_lRendezvousID.end(); ++i)
     {
-        if (CIPAddress::ipcmp(addr, i->m_pPeerAddr, i->m_iIPversion) && ((id == 0) || (id == i->m_iID)))
+        if (CIPAddress::ipcmp(addr, i->m_pPeerAddr, i->m_iIPversion) && ((w_id == 0) || (w_id == i->m_iID)))
         {
-            id = i->m_iID;
+            w_id = i->m_iID;
             return i->m_pUDT;
         }
     }
@@ -1115,7 +1114,7 @@ void *CRcvQueue::worker(void *param)
     while (!self->m_bClosing)
     {
         bool        have_received = false;
-        EReadStatus rst           = self->worker_RetrieveUnit(Ref(id), Ref(unit), &sa);
+        EReadStatus rst           = self->worker_RetrieveUnit((id), (unit), (&sa));
         if (rst == RST_OK)
         {
             if (id < 0)
@@ -1254,7 +1253,7 @@ static string PacketInfo(const CPacket &pkt)
 }
 #endif
 
-EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit *> r_unit, sockaddr *addr)
+EReadStatus CRcvQueue::worker_RetrieveUnit(int32_t& w_id, CUnit*& w_unit, sockaddr *pw_addr)
 {
 #if !USE_BUSY_WAITING
     // This might be not really necessary, and probably
@@ -1276,15 +1275,15 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit *> r
         }
     }
     // find next available slot for incoming packet
-    *r_unit = m_UnitQueue.getNextAvailUnit();
-    if (!*r_unit)
+    w_unit = m_UnitQueue.getNextAvailUnit();
+    if (!w_unit)
     {
         // no space, skip this packet
         CPacket temp;
         temp.m_pcData = new char[m_iPayloadSize];
         temp.setLength(m_iPayloadSize);
         THREAD_PAUSED();
-        EReadStatus rst = m_pChannel->recvfrom(addr, temp);
+        EReadStatus rst = m_pChannel->recvfrom((pw_addr), temp);
         THREAD_RESUMED();
 #if ENABLE_LOGGING
         LOGC(mglog.Error, log << CONID() << "LOCAL STORAGE DEPLETED. Dropping 1 packet: " << PacketInfo(temp));
@@ -1296,19 +1295,19 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit *> r
         return rst == RST_ERROR ? RST_ERROR : RST_AGAIN;
     }
 
-    r_unit->m_Packet.setLength(m_iPayloadSize);
+    w_unit->m_Packet.setLength(m_iPayloadSize);
 
     // reading next incoming packet, recvfrom returns -1 is nothing has been received
     THREAD_PAUSED();
-    EReadStatus rst = m_pChannel->recvfrom(addr, r_unit->m_Packet);
+    EReadStatus rst = m_pChannel->recvfrom((pw_addr), w_unit->m_Packet);
     THREAD_RESUMED();
 
     if (rst == RST_OK)
     {
-        *r_id = r_unit->m_Packet.m_iID;
+        w_id = w_unit->m_Packet.m_iID;
         HLOGC(mglog.Debug,
               log << "INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddress()) << " "
-                  << PacketInfo(r_unit->m_Packet));
+                  << PacketInfo(w_unit->m_Packet));
     }
     return rst;
 }
@@ -1416,7 +1415,7 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit *unit, c
     // stored in the rendezvous queue (see CRcvQueue::registerConnector)
     // or simply 0, but then at least the address must match one of these.
     // If the id was 0, it will be set to the actual socket ID of the returned CUDT.
-    CUDT *u = m_pRendezvousQueue->retrieve(addr, Ref(id));
+    CUDT *u = m_pRendezvousQueue->retrieve(addr, (id));
     if (!u)
     {
         // this socket is then completely unknown to the system.
@@ -1540,10 +1539,9 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit *unit, c
     return CONN_CONTINUE;
 }
 
-int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
+int CRcvQueue::recvfrom(int32_t id, CPacket& w_packet)
 {
     CGuard   bufferlock(m_PassLock);
-    CPacket &packet = *r_packet;
 
     map<int32_t, std::queue<CPacket *> >::iterator i = m_mBuffer.find(id);
 
@@ -1554,7 +1552,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
         i = m_mBuffer.find(id);
         if (i == m_mBuffer.end())
         {
-            packet.setLength(-1);
+            w_packet.setLength(-1);
             return -1;
         }
     }
@@ -1562,13 +1560,13 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
     // retrieve the earliest packet
     CPacket *newpkt = i->second.front();
 
-    if (packet.getLength() < newpkt->getLength())
+    if (w_packet.getLength() < newpkt->getLength())
     {
-        packet.setLength(-1);
+        w_packet.setLength(-1);
         return -1;
     }
 
-    // copy packet content
+    // copy w_packet content
     // XXX Check if this wouldn't be better done by providing
     // copy constructor for DynamicStruct.
     // XXX Another thing: this looks wasteful. This expects an already
@@ -1576,9 +1574,9 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
     // copies it into the passed packet and then the source packet
     // gets deleted. Why not simply return the originally stored packet,
     // without copying, allocation and deallocation?
-    memcpy(packet.m_nHeader, newpkt->m_nHeader, CPacket::HDR_SIZE);
-    memcpy(packet.m_pcData, newpkt->m_pcData, newpkt->getLength());
-    packet.setLength(newpkt->getLength());
+    memcpy(w_packet.m_nHeader, newpkt->m_nHeader, CPacket::HDR_SIZE);
+    memcpy(w_packet.m_pcData, newpkt->m_pcData, newpkt->getLength());
+    w_packet.setLength(newpkt->getLength());
 
     delete[] newpkt->m_pcData;
     delete newpkt;
@@ -1589,7 +1587,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
     if (i->second.empty())
         m_mBuffer.erase(i);
 
-    return (int)packet.getLength();
+    return (int)w_packet.getLength();
 }
 
 int CRcvQueue::setListener(CUDT *u)

@@ -380,7 +380,7 @@ void CChannel::setIpToS(int tos)
 
 #endif
 
-int CChannel::ioctlQuery(int SRT_ATR_UNUSED type) const
+int CChannel::ioctlQuery(int type SRT_ATR_UNUSED) const
 {
 #ifdef unix
     int value = 0;
@@ -391,7 +391,7 @@ int CChannel::ioctlQuery(int SRT_ATR_UNUSED type) const
     return -1;
 }
 
-int CChannel::sockoptQuery(int SRT_ATR_UNUSED level, int SRT_ATR_UNUSED option) const
+int CChannel::sockoptQuery(int level SRT_ATR_UNUSED, int option SRT_ATR_UNUSED) const
 {
 #ifdef unix
     int value = 0;
@@ -556,7 +556,7 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet) const
    return res;
 }
 
-EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
+EReadStatus CChannel::recvfrom(sockaddr* pw_addr, CPacket& packet) const
 {
     EReadStatus status = RST_OK;
     int msg_flags = 0;
@@ -584,15 +584,15 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
     if (select_ret > 0)
     {
         msghdr mh;
-        mh.msg_name = addr;
+        mh.msg_name = (pw_addr);
         mh.msg_namelen = m_iSockAddrSize;
-        mh.msg_iov = packet.m_PacketVector;
+        mh.msg_iov = (packet.m_PacketVector);
         mh.msg_iovlen = 2;
         mh.msg_control = NULL;
         mh.msg_controllen = 0;
         mh.msg_flags = 0;
 
-        recv_size = ::recvmsg(m_iSocket, &mh, 0);
+        recv_size = ::recvmsg(m_iSocket, (&mh), 0);
         msg_flags = mh.msg_flags;
     }
 
@@ -659,7 +659,8 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
         DWORD size = (DWORD) (CPacket::HDR_SIZE + packet.getLength());
         int addrsize = m_iSockAddrSize;
 
-        recv_ret = ::WSARecvFrom(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, &flag, addr, &addrsize, NULL, NULL);
+        recv_ret = ::WSARecvFrom(m_iSocket, ((LPWSABUF)packet.m_PacketVector), 2,
+                (&size), (&flag), (pw_addr), (&addrsize), NULL, NULL);
         if (recv_ret == 0)
             recv_size = size;
     }
