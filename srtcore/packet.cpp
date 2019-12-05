@@ -159,6 +159,7 @@ modified by
 //      For any single loss or consectutive loss less than 2 packets, use
 //      the original sequence numbers in the field.
 
+#include "platform_sys.h"
 
 #include <cstring>
 #include "packet.h"
@@ -469,6 +470,8 @@ CPacket* CPacket::clone() const
    pkt->m_pcData = new char[m_PacketVector[PV_DATA].size()];
    memcpy(pkt->m_pcData, m_pcData, m_PacketVector[PV_DATA].size());
    pkt->m_PacketVector[PV_DATA].setLength(m_PacketVector[PV_DATA].size());
+
+   pkt->m_DestAddr = m_DestAddr;
 
    return pkt;
 }

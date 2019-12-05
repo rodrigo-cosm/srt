@@ -334,7 +334,7 @@ private:
             CPacket& reqpkt);
     SRT_ATR_NODISCARD bool prepareConnectionObjects(const CHandShake &hs, HandshakeSide hsd, CUDTException *eout);
     SRT_ATR_NODISCARD EConnectStatus postConnect(const CPacket& response, bool rendezvous, CUDTException* eout, bool synchro);
-    void applyResponseSettings();
+    void applyResponseSettings(const CPacket& hspkt);
     SRT_ATR_NODISCARD EConnectStatus processAsyncConnectResponse(const CPacket& pkt) ATR_NOEXCEPT;
     SRT_ATR_NODISCARD bool processAsyncConnectRequest(EReadStatus rst, EConnectStatus cst, const CPacket& response, const sockaddr* serv_addr);
 
@@ -741,7 +741,7 @@ private: // Generation and processing of packets
     /// @return payload size on success, <=0 on failure
     int packLostData(CPacket& packet, uint64_t& origintime);
 
-    int packData(CPacket& packet, uint64_t& ts);
+    int packData(CPacket& packet, uint64_t& ts, sockaddr_any& src_adr);
     int processData(CUnit* unit);
     void processClose();
     SRT_REJECT_REASON processConnectRequest(const sockaddr* addr, CPacket& packet);
@@ -856,6 +856,7 @@ private: // for UDP multiplexer
     CSndQueue* m_pSndQueue;         // packet sending queue
     CRcvQueue* m_pRcvQueue;         // packet receiving queue
     sockaddr* m_pPeerAddr;          // peer address
+    sockaddr_any m_SourceAddr;      // override UDP source address with this one when sending
     uint32_t m_piSelfIP[4];         // local UDP IP address
     CSNode* m_pSNode;               // node information for UDT list used in snd queue
     CRNode* m_pRNode;               // node information for UDT list used in rcv queue

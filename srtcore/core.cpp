@@ -50,17 +50,8 @@ modified by
    Haivision Systems Inc.
 *****************************************************************************/
 
-#ifndef _WIN32
-#include <unistd.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <cerrno>
-#include <cstring>
-#include <cstdlib>
-#else
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#endif
+#include "platform_sys.h"
+
 #include <cmath>
 #include <sstream>
 #include "srt.h"
@@ -3275,7 +3266,11 @@ void CUDT::startConnect(const sockaddr *serv_addr, int32_t forced_isn)
      */
     m_llLastReqTime = now;
     m_bConnecting   = true;
-    m_pSndQueue->sendto(serv_addr, reqpkt);
+
+    // At this point m_SourceAddr is probably default-any, but this function
+    // now requires that the address be specified here because there will be
+    // no possibility to do it at any next stage of sending.
+    m_pSndQueue->sendto(serv_addr, reqpkt, m_SourceAddr);
 
     //
     ///
@@ -3304,6 +3299,9 @@ void CUDT::startConnect(const sockaddr *serv_addr, int32_t forced_isn)
 
     CUDTException  e;
     EConnectStatus cst = CONN_CONTINUE;
+    // This is a temporary place to store the DESTINATION IP from the incoming packet.
+    // We can't record this address yet until the cookie-confirmation is done, for safety reasons.
+    sockaddr_any use_source_adr(m_iIPversion); // use BindAddress.family() after refactoring
 
     while (!m_bClosing)
     {
@@ -3338,7 +3336,7 @@ void CUDT::startConnect(const sockaddr *serv_addr, int32_t forced_isn)
 
             m_llLastReqTime     = now;
             reqpkt.m_iTimeStamp = int32_t(now - m_stats.startTime);
-            m_pSndQueue->sendto(serv_addr, reqpkt);
+            m_pSndQueue->sendto(serv_addr, reqpkt, use_source_adr);
         }
         else
         {
@@ -3349,6 +3347,8 @@ void CUDT::startConnect(const sockaddr *serv_addr, int32_t forced_isn)
         response.setLength(m_iMaxSRTPayloadSize);
         if (m_pRcvQueue->recvfrom(m_SocketID, (response)) > 0)
         {
+            use_source_adr = response.udpDestAddr();
+
             HLOGC(mglog.Debug, log << CONID() << "startConnect: got response for connect request");
             cst = processConnectResponse(response, &e, true /*synchro*/);
 
@@ -3494,7 +3494,7 @@ void CUDT::startConnect(const sockaddr *serv_addr, int32_t forced_isn)
         throw e;
     }
 
-    HLOGC(mglog.Debug, log << CONID() << "startConnect: handshake exchange succeeded");
+    HLOGC(mglog.Debug, log << CONID() << "startConnect: handshake exchange succeeded. sourceIP=" << SockaddrToString(&m_SourceAddr));
 
     // Parameters at the end.
     HLOGC(mglog.Debug,
@@ -3607,7 +3607,7 @@ bool CUDT::processAsyncConnectRequest(EReadStatus     rst,
 
     HLOGC(mglog.Debug, log << "processAsyncConnectRequest: sending request packet, setting REQ-TIME HIGH.");
     m_llLastReqTime = CTimer::getTime();
-    m_pSndQueue->sendto(serv_addr, request);
+    m_pSndQueue->sendto(serv_addr, request, m_SourceAddr);
     return status;
 }
 
@@ -3710,7 +3710,7 @@ EConnectStatus CUDT::processRendezvous(const CPacket &response, const sockaddr *
     m_ConnReq.m_extension = needs_extension;
 
     // This must be done before prepareConnectionObjects().
-    applyResponseSettings();
+    applyResponseSettings(response);
 
     // This must be done before interpreting and creating HSv5 extensions.
     if (!prepareConnectionObjects(m_ConnRes, m_SrtHsSide, 0))
@@ -3960,8 +3960,8 @@ EConnectStatus CUDT::processRendezvous(const CPacket &response, const sockaddr *
         HLOGC(mglog.Debug,
               log << "processRendezvous: rsp=AGREEMENT, reporting ACCEPT and sending just this one, REQ-TIME HIGH ("
                   << now << ").");
-
-        m_pSndQueue->sendto(serv_addr, w_reqpkt);
+                  
+        m_pSndQueue->sendto(serv_addr, w_reqpkt, m_SourceAddr);
 
         return CONN_ACCEPT;
     }
@@ -4060,6 +4060,11 @@ EConnectStatus CUDT::processConnectResponse(const CPacket &response, CUDTExcepti
         }
         return CONN_CONFUSED;
     }
+
+   if (m_bRendezvous)
+   {
+       m_SourceAddr = response.udpDestAddr();
+   }
 
     if (m_ConnRes.load_from(response.m_pcData, response.getLength()) == -1)
     {
@@ -4211,7 +4216,7 @@ EConnectStatus CUDT::processConnectResponse(const CPacket &response, CUDTExcepti
     return postConnect(response, false, eout, synchro);
 }
 
-void CUDT::applyResponseSettings()
+void CUDT::applyResponseSettings(const CPacket& hspkt)
 {
     // Re-configure according to the negotiated values.
     m_iMSS               = m_ConnRes.m_iMSS;
@@ -4229,11 +4234,13 @@ void CUDT::applyResponseSettings()
     m_iRcvCurrPhySeqNo = m_ConnRes.m_iISN - 1;
     m_PeerID           = m_ConnRes.m_iID;
     memcpy(m_piSelfIP, m_ConnRes.m_piPeerIP, 16);
+    m_SourceAddr = hspkt.udpDestAddr();
 
     HLOGC(mglog.Debug,
           log << CONID() << "applyResponseSettings: HANSHAKE CONCLUDED. SETTING: payload-size=" << m_iMaxSRTPayloadSize
               << " mss=" << m_ConnRes.m_iMSS << " flw=" << m_ConnRes.m_iFlightFlagSize << " isn=" << m_ConnRes.m_iISN
-              << " peerID=" << m_ConnRes.m_iID);
+              << " peerID=" << m_ConnRes.m_iID
+              << " sourceIP=" << SockaddrToString(&m_SourceAddr));
 }
 
 EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTException *eout, bool synchro)
@@ -4256,7 +4263,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
         //
         // Currently just this function must be called always BEFORE prepareConnectionObjects
         // everywhere except acceptAndRespond().
-        applyResponseSettings();
+        applyResponseSettings(response);
 
         // This will actually be done also in rendezvous HSv4,
         // however in this case the HSREQ extension will not be attached,
@@ -5128,6 +5135,9 @@ void CUDT::acceptAndRespond(const sockaddr *peer, const CPacket &hspkt, CHandSha
     // Set target socket ID to the value from received handshake's source ID.
     response.m_iID = m_PeerID;
 
+   // We can safely assign it here stating that this has passed the cookie test.
+   m_SourceAddr = hspkt.udpDestAddr();
+
 #if ENABLE_HEAVY_LOGGING
     {
         // To make sure what REALLY is being sent, parse back the handshake
@@ -5137,16 +5147,16 @@ void CUDT::acceptAndRespond(const sockaddr *peer, const CPacket &hspkt, CHandSha
         HLOGC(mglog.Debug,
               log << CONID() << "acceptAndRespond: sending HS to peer, reqtype=" << RequestTypeStr(debughs.m_iReqType)
                   << " version=" << debughs.m_iVersion << " (connreq:" << RequestTypeStr(m_ConnReq.m_iReqType)
-                  << "), target_socket=" << response.m_iID << ", my_socket=" << debughs.m_iID);
+                  << "), target_socket=" << response.m_iID << ", my_socket=" << debughs.m_iID
+                  << " sourceIP=" << SockaddrToString(&m_SourceAddr));
     }
 #endif
-
     // NOTE: BLOCK THIS instruction in order to cause the final
     // handshake to be missed and cause the problem solved in PR #417.
     // When missed this message, the caller should not accept packets
     // coming as connected, but continue repeated handshake until finally
     // received the listener's handshake.
-    m_pSndQueue->sendto(peer, response);
+    m_pSndQueue->sendto(peer, response, m_SourceAddr);
 }
 
 // This function is required to be called when a caller receives an INDUCTION
@@ -5334,7 +5344,7 @@ void CUDT::addressAndSend(CPacket &pkt)
     pkt.m_iID        = m_PeerID;
     pkt.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
 
-    m_pSndQueue->sendto(m_pPeerAddr, pkt);
+    m_pSndQueue->sendto(m_pPeerAddr, pkt, m_SourceAddr);
 }
 
 bool CUDT::close()
@@ -6924,7 +6934,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void *lparam, void *rparam, in
         {
             ctrlpkt.pack(pkttype, NULL, &ack, size);
             ctrlpkt.m_iID = m_PeerID;
-            nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+            nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
             DebugAck("sendCtrl(lite):" + CONID(), local_prevack, ack);
             break;
         }
@@ -7055,7 +7065,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void *lparam, void *rparam, in
 
             ctrlpkt.m_iID        = m_PeerID;
             ctrlpkt.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
-            nbsent               = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+            nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
             DebugAck("sendCtrl: " + CONID(), local_prevack, ack);
 
             m_ACKWindow.store(m_iAckSeqNo, m_iRcvLastAck);
@@ -7072,7 +7082,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void *lparam, void *rparam, in
     case UMSG_ACKACK: // 110 - Acknowledgement of Acknowledgement
         ctrlpkt.pack(pkttype, lparam);
         ctrlpkt.m_iID = m_PeerID;
-        nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+        nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
         break;
 
@@ -7087,7 +7097,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void *lparam, void *rparam, in
             ctrlpkt.pack(pkttype, NULL, lossdata, bytes);
 
             ctrlpkt.m_iID = m_PeerID;
-            nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+            nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
             CGuard::enterCS(m_StatsLock);
             ++m_stats.sentNAK;
@@ -7108,7 +7118,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void *lparam, void *rparam, in
             {
                 ctrlpkt.pack(pkttype, NULL, data, losslen * 4);
                 ctrlpkt.m_iID = m_PeerID;
-                nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+                nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
                 CGuard::enterCS(m_StatsLock);
                 ++m_stats.sentNAK;
@@ -7137,7 +7147,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void *lparam, void *rparam, in
     case UMSG_CGWARNING: // 100 - Congestion Warning
         ctrlpkt.pack(pkttype);
         ctrlpkt.m_iID = m_PeerID;
-        nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+        nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
         CTimer::rdtsc(m_ullLastWarningTime);
 
@@ -7146,35 +7156,35 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void *lparam, void *rparam, in
     case UMSG_KEEPALIVE: // 001 - Keep-alive
         ctrlpkt.pack(pkttype);
         ctrlpkt.m_iID = m_PeerID;
-        nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+        nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
         break;
 
     case UMSG_HANDSHAKE: // 000 - Handshake
         ctrlpkt.pack(pkttype, NULL, rparam, sizeof(CHandShake));
         ctrlpkt.m_iID = m_PeerID;
-        nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+        nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
         break;
 
     case UMSG_SHUTDOWN: // 101 - Shutdown
         ctrlpkt.pack(pkttype);
         ctrlpkt.m_iID = m_PeerID;
-        nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+        nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
         break;
 
     case UMSG_DROPREQ: // 111 - Msg drop request
         ctrlpkt.pack(pkttype, lparam, rparam, 8);
         ctrlpkt.m_iID = m_PeerID;
-        nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+        nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
         break;
 
     case UMSG_PEERERROR: // 1000 - acknowledge the peer side a special error
         ctrlpkt.pack(pkttype, lparam);
         ctrlpkt.m_iID = m_PeerID;
-        nbsent        = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+        nbsent = m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt, m_SourceAddr);
 
         break;
 
@@ -7699,7 +7709,7 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
             {
                 response.m_iID        = m_PeerID;
                 response.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
-                int nbsent            = m_pSndQueue->sendto(m_pPeerAddr, response);
+                int nbsent = m_pSndQueue->sendto(m_pPeerAddr, response, m_SourceAddr);
                 if (nbsent)
                 {
                     uint64_t currtime_tk;
@@ -7888,7 +7898,7 @@ int CUDT::packLostData(CPacket &packet, uint64_t &origintime)
 
         int msglen;
 
-        const int payload = m_pSndBuffer->readData(&(packet.m_pcData), offset, packet.m_iMsgNo, origintime, msglen);
+        const int payload = m_pSndBuffer->readData(&(packet.m_pcData), offset, (packet.m_iMsgNo), (origintime), (msglen));
         SRT_ASSERT(payload != 0);
         if (payload == -1)
         {
@@ -7942,7 +7952,7 @@ int CUDT::packLostData(CPacket &packet, uint64_t &origintime)
     return 0;
 }
 
-int CUDT::packData(CPacket &packet, uint64_t &ts_tk)
+int CUDT::packData(CPacket& w_packet, uint64_t& w_ts_tk, sockaddr_any& w_src_adr)
 {
     int      payload           = 0;
     bool     probe             = false;
@@ -7956,44 +7966,44 @@ int CUDT::packData(CPacket &packet, uint64_t &ts_tk)
     CTimer::rdtsc(entertime_tk);
 
 #if 0 // debug: TimeDiff histogram
-   static int lldiffhisto[23] = {0};
-   static int llnodiff = 0;
-   if (m_ullTargetTime_tk != 0)
-   {
-      int ofs = 11 + ((entertime_tk - m_ullTargetTime_tk)/(int64_t)m_ullCPUFrequency)/1000;
-      if (ofs < 0) ofs = 0;
-      else if (ofs > 22) ofs = 22;
-      lldiffhisto[ofs]++;
-   }
-   else if(m_ullTargetTime_tk == 0)
-   {
-      llnodiff++;
-   }
-   static int callcnt = 0;
-   if (!(callcnt++ % 5000)) {
-      fprintf(stderr, "%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d\n",
-        lldiffhisto[0],lldiffhisto[1],lldiffhisto[2],lldiffhisto[3],lldiffhisto[4],lldiffhisto[5],
-        lldiffhisto[6],lldiffhisto[7],lldiffhisto[8],lldiffhisto[9],lldiffhisto[10],lldiffhisto[11]);
-      fprintf(stderr, "%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d\n",
-        lldiffhisto[12],lldiffhisto[13],lldiffhisto[14],lldiffhisto[15],lldiffhisto[16],lldiffhisto[17],
-        lldiffhisto[18],lldiffhisto[19],lldiffhisto[20],lldiffhisto[21],lldiffhisto[21],llnodiff);
-   }
+    static int lldiffhisto[23] = {0};
+    static int llnodiff = 0;
+    if (m_ullTargetTime_tk != 0)
+    {
+        int ofs = 11 + ((entertime_tk - m_ullTargetTime_tk)/(int64_t)m_ullCPUFrequency)/1000;
+        if (ofs < 0) ofs = 0;
+        else if (ofs > 22) ofs = 22;
+        lldiffhisto[ofs]++;
+    }
+    else if(m_ullTargetTime_tk == 0)
+    {
+        llnodiff++;
+    }
+    static int callcnt = 0;
+    if (!(callcnt++ % 5000)) {
+        fprintf(stderr, "%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d\n",
+                lldiffhisto[0],lldiffhisto[1],lldiffhisto[2],lldiffhisto[3],lldiffhisto[4],lldiffhisto[5],
+                lldiffhisto[6],lldiffhisto[7],lldiffhisto[8],lldiffhisto[9],lldiffhisto[10],lldiffhisto[11]);
+        fprintf(stderr, "%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d\n",
+                lldiffhisto[12],lldiffhisto[13],lldiffhisto[14],lldiffhisto[15],lldiffhisto[16],lldiffhisto[17],
+                lldiffhisto[18],lldiffhisto[19],lldiffhisto[20],lldiffhisto[21],lldiffhisto[21],llnodiff);
+    }
 #endif
     if ((0 != m_ullTargetTime_tk) && (entertime_tk > m_ullTargetTime_tk))
         m_ullTimeDiff_tk += entertime_tk - m_ullTargetTime_tk;
 
     string reason;
 
-    payload = packLostData(packet, origintime);
+    payload = packLostData((w_packet), (origintime));
     if (payload > 0)
     {
         reason = "reXmit";
     }
     else if (m_PacketFilter && m_PacketFilter.packControlPacket(
-                m_iSndCurrSeqNo, m_pCryptoControl->getSndCryptoFlags(), (packet)))
+                m_iSndCurrSeqNo, m_pCryptoControl->getSndCryptoFlags(), (w_packet)))
     {
         HLOGC(mglog.Debug, log << "filter: filter/CTL packet ready - packing instead of data.");
-        payload        = packet.getLength();
+        payload        = w_packet.getLength();
         reason         = "filter";
         filter_ctl_pkt = true; // Mark that this packet ALREADY HAS timestamp field and it should not be set
 
@@ -8020,16 +8030,16 @@ int CUDT::packData(CPacket &packet, uint64_t &ts_tk)
             // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
             // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
             kflg    = m_pCryptoControl->getSndCryptoFlags();
-            payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo, origintime, kflg);
+            payload = m_pSndBuffer->readData((&w_packet.m_pcData), (w_packet.m_iMsgNo), (origintime), kflg);
             if (payload)
             {
                 m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
                 // m_pCryptoControl->m_iSndCurrSeqNo = m_iSndCurrSeqNo;
 
-                packet.m_iSeqNo = m_iSndCurrSeqNo;
+                w_packet.m_iSeqNo = m_iSndCurrSeqNo;
 
                 // every 16 (0xF) packets, a packet pair is sent
-                if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
+                if ((w_packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
                     probe = true;
 
                 new_packet_packed = true;
@@ -8038,18 +8048,18 @@ int CUDT::packData(CPacket &packet, uint64_t &ts_tk)
             {
                 m_ullTargetTime_tk = 0;
                 m_ullTimeDiff_tk   = 0;
-                ts_tk              = 0;
+                w_ts_tk              = 0;
                 return 0;
             }
         }
         else
         {
             HLOGC(dlog.Debug,
-                  log << "packData: CONGESTED: cwnd=min(" << m_iFlowWindowSize << "," << m_dCongestionWindow
-                      << ")=" << cwnd << " seqlen=(" << m_iSndLastAck << "-" << m_iSndCurrSeqNo << ")=" << seqdiff);
+                    log << "packData: CONGESTED: cwnd=min(" << m_iFlowWindowSize << "," << m_dCongestionWindow
+                    << ")=" << cwnd << " seqlen=(" << m_iSndLastAck << "-" << m_iSndCurrSeqNo << ")=" << seqdiff);
             m_ullTargetTime_tk = 0;
             m_ullTimeDiff_tk   = 0;
-            ts_tk              = 0;
+            w_ts_tk              = 0;
             return 0;
         }
 
@@ -8074,46 +8084,46 @@ int CUDT::packData(CPacket &packet, uint64_t &ts_tk)
              * doesn't screw up the start time on the other side.
              */
             if (origintime >= m_stats.startTime)
-                packet.m_iTimeStamp = int(origintime - m_stats.startTime);
+                w_packet.m_iTimeStamp = int(origintime - m_stats.startTime);
             else
-                packet.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
+                w_packet.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
         }
         else
         {
-            packet.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
+            w_packet.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
         }
     }
 
-    packet.m_iID = m_PeerID;
-    packet.setLength(payload);
+    w_packet.m_iID = m_PeerID;
+    w_packet.setLength(payload);
 
     /* Encrypt if 1st time this packet is sent and crypto is enabled */
     if (kflg)
     {
         // XXX Encryption flags are already set on the packet before calling this.
         // See readData() above.
-        if (m_pCryptoControl->encrypt((packet)))
+        if (m_pCryptoControl->encrypt((w_packet)))
         {
             // Encryption failed
             //>>Add stats for crypto failure
-            ts_tk = 0;
+            w_ts_tk = 0;
             LOGC(dlog.Error, log << "ENCRYPT FAILED - packet won't be sent, size=" << payload);
             return -1; // Encryption failed
         }
-        payload = packet.getLength(); /* Cipher may change length */
+        payload = w_packet.getLength(); /* Cipher may change length */
         reason += " (encrypted)";
     }
 
     if (new_packet_packed && m_PacketFilter)
     {
         HLOGC(mglog.Debug, log << "filter: Feeding packet for source clip");
-        m_PacketFilter.feedSource((packet));
+        m_PacketFilter.feedSource((w_packet));
     }
 
 #if ENABLE_HEAVY_LOGGING // Required because of referring to MessageFlagStr()
     HLOGC(mglog.Debug,
-          log << CONID() << "packData: " << reason << " packet seq=" << packet.m_iSeqNo << " (ACK=" << m_iSndLastAck
-              << " ACKDATA=" << m_iSndLastDataAck << " MSG/FLAGS: " << packet.MessageFlagStr() << ")");
+            log << CONID() << "packData: " << reason << " packet seq=" << w_packet.m_iSeqNo << " (ACK=" << m_iSndLastAck
+            << " ACKDATA=" << m_iSndLastDataAck << " MSG/FLAGS: " << w_packet.MessageFlagStr() << ")");
 #endif
 
     // Fix keepalive
@@ -8125,13 +8135,13 @@ int CUDT::packData(CPacket &packet, uint64_t &ts_tk)
     // the CSndQueue::worker thread. All others are reported from
     // CRcvQueue::worker. If you connect to this signal, make sure
     // that you are aware of prospective simultaneous access.
-    updateCC(TEV_SEND, &packet);
+    updateCC(TEV_SEND, &w_packet);
 
     // XXX This was a blocked code also originally in UDT. Probably not required.
     // Left untouched for historical reasons.
     // Might be possible that it was because of that this is send from
     // different thread than the rest of the signals.
-    // m_pSndTimeWindow->onPktSent(packet.m_iTimeStamp);
+    // m_pSndTimeWindow->onPktSent(w_packet.m_iTimeStamp);
 
     CGuard::enterCS(m_StatsLock);
     m_stats.traceBytesSent += payload;
@@ -8143,28 +8153,31 @@ int CUDT::packData(CPacket &packet, uint64_t &ts_tk)
     if (probe)
     {
         // sends out probing packet pair
-        ts_tk = entertime_tk;
+        w_ts_tk = entertime_tk;
         probe = false;
     }
     else
     {
 #if USE_BUSY_WAITING
-        ts_tk = entertime_tk + m_ullInterval_tk;
+        w_ts_tk = entertime_tk + m_ullInterval_tk;
 #else
         if (m_ullTimeDiff_tk >= m_ullInterval_tk)
         {
-            ts_tk = entertime_tk;
+            w_ts_tk = entertime_tk;
             m_ullTimeDiff_tk -= m_ullInterval_tk;
         }
         else
         {
-            ts_tk = entertime_tk + m_ullInterval_tk - m_ullTimeDiff_tk;
+            w_ts_tk = entertime_tk + m_ullInterval_tk - m_ullTimeDiff_tk;
             m_ullTimeDiff_tk = 0;
         }
 #endif
     }
 
-    m_ullTargetTime_tk = ts_tk;
+    m_ullTargetTime_tk = w_ts_tk;
+
+    HLOGC(mglog.Debug, log << "packData: Setting source address: " << SockaddrToString(&m_SourceAddr));
+    w_src_adr = m_SourceAddr;
 
     return payload;
 }
@@ -9073,6 +9086,14 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr *addr, CPacket &pac
 
     HLOGC(mglog.Debug, log << "processConnectRequest: new cookie: " << hex << cookie_val);
 
+   // Remember and use the incoming destination address here
+   // and use it as a source address when responding. It's not possible
+   // to record this address yet because this happens still in the frames
+   // of the listener socket. Only when processing switches to the newly
+   // spawned accepted socket can the address be recorded in its
+   // m_SourceAddr field.
+   sockaddr_any use_source_addr = packet.udpDestAddr();
+
     // REQUEST:INDUCTION.
     // Set a cookie, a target ID, and send back the same as
     // RESPONSE:INDUCTION.
@@ -9113,7 +9134,7 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr *addr, CPacket &pac
         size_t size = packet.getLength();
         hs.store_to((packet.m_pcData), (size));
         packet.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
-        m_pSndQueue->sendto(addr, packet);
+        m_pSndQueue->sendto(addr, packet, use_source_addr);
         return SRT_REJ_UNKNOWN; // EXCEPTION: this is a "no-error" code.
     }
 
@@ -9192,7 +9213,7 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr *addr, CPacket &pac
         hs.store_to((packet.m_pcData), (size));
         packet.m_iID        = id;
         packet.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
-        m_pSndQueue->sendto(addr, packet);
+        m_pSndQueue->sendto(addr, packet, use_source_addr);
     }
     else
     {
@@ -9248,7 +9269,7 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr *addr, CPacket &pac
             hs.store_to((packet.m_pcData), (size));
             packet.m_iID        = id;
             packet.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
-            m_pSndQueue->sendto(addr, packet);
+            m_pSndQueue->sendto(addr, packet, use_source_addr);
         }
         else
         {
