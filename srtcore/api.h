@@ -240,8 +240,8 @@ public:
       /// record the UDT exception.
       /// @param [in] e pointer to a UDT exception instance.
 
+   int setError(CodeMajor mj, CodeMinor mn, int syserr);
    void setError(CUDTException* e);
-
       /// look up the most recent UDT exception.
       /// @return pointer to a UDT exception instance.
 

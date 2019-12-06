@@ -2346,6 +2346,13 @@ void CUDTUnited::setError(CUDTException* e)
     pthread_setspecific(m_TLSError, e);
 }
 
+int CUDTUnited::setError(CodeMajor mj, CodeMinor mn, int syserr)
+{
+    setError(new CUDTException(mj, mn, syserr));
+    return SRT_ERROR;
+}
+
+
 CUDTException* CUDTUnited::getError()
 {
     if(!pthread_getspecific(m_TLSError))
@@ -2792,6 +2799,22 @@ SRTSOCKET CUDT::getGroupOfSocket(SRTSOCKET socket)
         return setError(MJ_NOTSUP, MN_INVAL, 0);
 
     return s->m_IncludedGroup->id();
+}
+
+int CUDT::configureGroup(SRTSOCKET groupid, const char* str)
+{
+    if ( (groupid & SRTGROUP_MASK) == 0)
+    {
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+    }
+
+    CUDTGroup* g = s_UDTUnited.locateGroup(groupid, s_UDTUnited.ERH_RETURN);
+    if (!g)
+    {
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+    }
+
+    return g->configure(str);
 }
 
 int CUDT::getGroupData(SRTSOCKET groupid, SRT_SOCKGROUPDATA* pdata, size_t* psize)

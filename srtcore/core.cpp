@@ -210,6 +210,9 @@ void CUDT::construct()
     m_uKmRefreshRatePkt = 0;
     m_uKmPreAnnouncePkt = 0;
 
+    m_iSndMinFlightSpan = -1; // -1 value means "not measured". Normally all current values of -1 are rejected.
+    // (note that flight == 0 is still a valid value)
+
     // Initilize mutex and condition variables
     initSynch();
 
@@ -7463,7 +7466,7 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear, bool instantaneous)
     perf->usPktSndPeriod      = m_ullInterval_tk / double(m_ullCPUFrequency);
     perf->pktFlowWindow       = m_iFlowWindowSize;
     perf->pktCongestionWindow = (int)m_dCongestionWindow;
-    perf->pktFlightSize       = CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - 1;
+    perf->pktFlightSize       = getFlightSpan();
     perf->msRTT               = (double)m_iRTT / 1000.0;
     //>new
     perf->msSndTsbPdDelay = m_bPeerTsbPd ? m_iPeerTsbPdDelay_ms : 0;
@@ -8249,6 +8252,7 @@ void CUDT::processCtrlAck(const CPacket& ctrlpkt, const uint64_t currtime_tk)
             CGuard ack_lock(m_RecvAckLock);
             m_iFlowWindowSize -= CSeqNo::seqoff(m_iSndLastAck, ackdata_seqno);
             m_iSndLastAck = ackdata_seqno;
+            m_iSndMinFlightSpan = getFlightSpan();
 
             // TODO: m_ullLastRspAckTime_tk should be protected with m_RecvAckLock
             // because the sendmsg2 may want to change it at the same time.
@@ -8302,6 +8306,7 @@ void CUDT::processCtrlAck(const CPacket& ctrlpkt, const uint64_t currtime_tk)
         // Update Flow Window Size, must update before and together with m_iSndLastAck
         m_iFlowWindowSize      = ackdata[ACKD_BUFFERLEFT];
         m_iSndLastAck          = ackdata_seqno;
+        m_iSndMinFlightSpan    = getFlightSpan();
         m_ullLastRspAckTime_tk = currtime_tk; // Should be protected with m_RecvAckLock
         m_iReXmitCount         = 1;           // Reset re-transmit count since last ACK
     }
@@ -9130,9 +9135,9 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
         // If no loss, and no packetfilter control packet, pack a new packet.
 
         // check congestion/flow window limit
-        int cwnd    = std::min(int(m_iFlowWindowSize), int(m_dCongestionWindow));
-        int seqdiff = CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo));
-        if (cwnd >= seqdiff)
+        int cwnd       = std::min(int(m_iFlowWindowSize), int(m_dCongestionWindow));
+        int flightspan = getFlightSpan() + 1;
+        if (cwnd >= flightspan)
         {
             // XXX Here it's needed to set kflg to msgno_bitset in the block stored in the
             // send buffer. This should be somehow avoided, the crypto flags should be set
@@ -9155,11 +9160,11 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
              // if this is the very first packet to send.
              if (m_parent->m_IncludedGroup && m_iSndCurrSeqNo != packet.m_iSeqNo && m_iSndCurrSeqNo == m_iISN)
              {
-                 int seqdiff = CSeqNo::seqcmp(packet.m_iSeqNo, m_iSndCurrSeqNo);
+                 int packetspan = CSeqNo::seqcmp(packet.m_iSeqNo, m_iSndCurrSeqNo);
 
                  HLOGC(mglog.Debug, log << CONID() << "packData: Fixing EXTRACTION sequence " << m_iSndCurrSeqNo
                      << " from SCHEDULING sequence " << packet.m_iSeqNo
-                     << " DIFF: " << seqdiff << " STAMP:" << BufferStamp(packet.m_pcData, packet.getLength()));
+                     << " DIFF: " << packetspan << " STAMP:" << BufferStamp(packet.m_pcData, packet.getLength()));
 
                  // This is the very first packet to be sent; so there's nothing in
                  // the sending buffer yet, and therefore we are in a situation as just
@@ -9170,14 +9175,14 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
                  // Additionally send the drop request to the peer so that it
                  // won't stupidly request the packets to be retransmitted.
                  // Don't do it if the difference isn't positive or exceeds the threshold.
-                 if (seqdiff > 0)
+                 if (packetspan > 0)
                  {
                      int32_t seqpair[2];
                      seqpair[0] = m_iSndCurrSeqNo;
                      seqpair[1] = packet.m_iSeqNo;
                      HLOGC(mglog.Debug, log << "... sending INITIAL DROP (ISN FIX): "
                              << "msg=" << MSGNO_SEQ::unwrap(packet.m_iMsgNo) << " SEQ:"
-                             << seqpair[0] << " - " << seqpair[1] << "(" << seqdiff << " packets)");
+                             << seqpair[0] << " - " << seqpair[1] << "(" << packetspan << " packets)");
 #ifndef SRT_TEST_DISABLE_KEY_CONTROL_PACKETS
                      sendCtrl(UMSG_DROPREQ, &packet.m_iMsgNo, seqpair, sizeof(seqpair));
 #endif
@@ -9219,7 +9224,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk, ref_t<socka
         {
             HLOGC(dlog.Debug,
                   log << "packData: CONGESTED: cwnd=min(" << m_iFlowWindowSize << "," << m_dCongestionWindow
-                      << ")=" << cwnd << " seqlen=(" << m_iSndLastAck << "-" << m_iSndCurrSeqNo << ")=" << seqdiff);
+                      << ")=" << cwnd << " seqlen=(" << m_iSndLastAck << "-" << m_iSndCurrSeqNo << ")=" << flightspan);
             m_ullTargetTime_tk = 0;
             m_ullTimeDiff_tk   = 0;
             ts_tk              = 0;
@@ -10984,12 +10989,20 @@ void CUDT::checkRexmitTimer(uint64_t currtime_tk)
     // We need to retransmit only when the data in the sender's buffer was already sent.
     // Otherwise it might still be sent regulary.
     bool retransmit = false;
+    int32_t unsent_seqno = CSeqNo::incseq(m_iSndCurrSeqNo);
+    // IF:
+    // - LATEREXMIT
+    // - flight window == 0
     // - the sender loss list is empty (the receiver didn't send any LOSSREPORT, or LOSSREPORT was lost on track)
-    if (is_laterexmit && (CSeqNo::incseq(m_iSndCurrSeqNo) != m_iSndLastAck) && m_pSndLossList->getLossLength() == 0)
+    if ( (is_laterexmit && unsent_seqno != m_iSndLastAck && m_pSndLossList->getLossLength() == 0)
+    // OF:
+            // - FASTREXMIT
+            // - flight window > 0
+         || (is_fastrexmit && getFlightSpan() != 0))
+    {
         retransmit = true;
+    }
 
-    if (is_fastrexmit && (CSeqNo::seqoff(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) > 0))
-        retransmit = true;
 
     if (retransmit)
     {
@@ -11381,7 +11394,9 @@ CUDTGroup::SocketData CUDTGroup::prepareData(CUDTSocket* s)
         -1, -1,
         sockaddr_any(), sockaddr_any(),
         false, false, false,
-        0
+        0.0, // load factor: no load in the beginning
+        1.0, // unit load: how much one packet would increase the load
+        0 // priority
     };
     return sd;
 }
@@ -11413,7 +11428,8 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
         m_bClosing(false),
         m_iLastSchedSeqNo(-1),
         m_iLastSchedMsgNo(-1),
-        m_iBalancingRoll(0)
+        m_uBalancingRoll(0),
+        m_RandomCredit(16)
 {
     CGuard::createMutex(m_GroupLock);
     CGuard::createMutex(m_RcvDataLock);
@@ -11437,7 +11453,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype):
     case SRT_GTYPE_BALANCING:
         //m_bSynchOnMsgNo = true;
         m_selfManaged = true;
-        m_cbSelectLink.set(this, &CUDTGroup::defaultSelectLink_fw);
+        m_cbSelectLink.set(this, &CUDTGroup::linkSelect_plain_fw);
         break;
 
     case SRT_GTYPE_MULTICAST:
@@ -15750,7 +15766,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             CUDTSocket* ps = selink->ps;
             InvertedGuard ug(&m_GroupLock, "Group");
 
-            HLOGC(dlog.Debug, log << "grp/sendBalancing: SENDING #" << r_mc.get().msgno << " through link [" << m_iBalancingRoll << "]");
+            HLOGC(dlog.Debug, log << "grp/sendBalancing: SENDING #" << r_mc.get().msgno << " through link [" << m_uBalancingRoll << "]");
 
             // NOTE: EXCEPTION PASSTHROUGH.
             stat = ps->core().sendmsg2(buf, len, r_mc);
@@ -16098,10 +16114,10 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST);
     }
 
-    if (m_iBalancingRoll >= sendable.size())
-        m_iBalancingRoll = 0;
+    if (m_uBalancingRoll >= sendable.size())
+        m_uBalancingRoll = 0;
 
-    gli_t d = sendable[m_iBalancingRoll];
+    gli_t d = sendable[m_uBalancingRoll];
     int erc = 0;
 
     try
@@ -16116,7 +16132,7 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_
         // Lift the group lock for a while, to avoid possible deadlocks.
         InvertedGuard ug(&m_GroupLock, "Group");
 
-        HLOGC(dlog.Debug, log << "grp/sendBalancing: SENDING #" << mc.msgno << " through link [" << m_iBalancingRoll << "]");
+        HLOGC(dlog.Debug, log << "grp/sendBalancing: SENDING #" << mc.msgno << " through link [" << m_uBalancingRoll << "]");
 
         // NOTE: EXCEPTION PASSTHROUGH.
         stat = ps->core().sendmsg2(buf, len, r_mc);
@@ -16435,7 +16451,7 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_
     }
 
     // Successful, so update the roll
-    ++m_iBalancingRoll;
+    ++m_uBalancingRoll;
 
 
     // Increase the message number only when at least one succeeded.
@@ -16504,7 +16520,50 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_
     return rstat;
 }
 
-CUDTGroup::gli_t CUDTGroup::defaultSelectLink(const CUDTGroup::BalancingLinkState& state)
+int CUDTGroup::configure(const char* str)
+{
+    string config = str;
+    switch (type())
+    {
+    case SRT_GTYPE_BALANCING:
+        // config contains the algorithm name
+        if (config == "" || config == "plain")
+        {
+            m_cbSelectLink.set(this, &CUDTGroup::linkSelect_plain_fw);
+            HLOGC(mglog.Debug, log << "group(balancing): PLAIN algorithm selected");
+        }
+        else if (config == "window")
+        {
+            m_cbSelectLink.set(this, &CUDTGroup::linkSelect_window_fw);
+            HLOGC(mglog.Debug, log << "group(balancing): WINDOW algorithm selected");
+        }
+        else
+        {
+            LOGC(mglog.Error, log << "group(balancing): unknown selection algorithm '"
+                    << config << "'");
+            m_pGlobal->setError(MJ_NOTSUP, MN_INVAL, 0);
+            return -1;
+        }
+
+        break;
+
+    default:
+        if (config == "")
+        {
+            // You can always call the config with empty string,
+            // it should set defaults or do nothing, if not supported.
+            return 0;
+        }
+        LOGC(mglog.Error, log << "this group type doesn't support any configuration");
+        m_pGlobal->setError(MJ_NOTSUP, MN_INVAL, 0);
+        return -1;
+
+    }
+
+    return 0;
+}
+
+CUDTGroup::gli_t CUDTGroup::linkSelect_plain(const CUDTGroup::BalancingLinkState& state)
 {
     if (state.ilink == gli_NULL())
     {
@@ -16546,5 +16605,242 @@ CUDTGroup::gli_t CUDTGroup::defaultSelectLink(const CUDTGroup::BalancingLinkStat
 
     return this_link;
 }
+
+struct LinkCapableData
+{
+    CUDTGroup::gli_t link;
+    int flight;
+};
+
+CUDTGroup::gli_t CUDTGroup::linkSelect_window(const CUDTGroup::BalancingLinkState& state)
+{
+    if (state.ilink == gli_NULL())
+    {
+        // Very first sending operation. Pick up the first link
+        return m_Group.begin();
+    }
+
+
+    gli_t this_link = gli_NULL();
+
+    if (m_RandomCredit <= 0)
+    {
+        vector<LinkCapableData> linkdata;
+        int total_flight = 0;
+        int number_links = 0;
+
+        // First, collect data required for selection
+        vector<gli_t> linkorder;
+
+        gli_t last = state.ilink;
+        ++last;
+        // NOTE: ++last could make it == m_Group.end() in which
+        // case the first loop will get 0 passes and the second
+        // one will be from begin() to end().
+        for (gli_t li = last; li != m_Group.end(); ++li)
+            linkorder.push_back(li);
+        for (gli_t li = m_Group.begin(); li != last; ++li)
+            linkorder.push_back(li);
+
+        // Sanity check
+        if (linkorder.empty())
+        {
+            LOGC(dlog.Error, log << "linkSelect_window: IPE: no links???");
+            return gli_NULL();
+        }
+
+        // Fallback
+        this_link = *linkorder.begin();
+
+        // This does the following:
+        // We have links: [ 1 2 3 4 5 ]
+        // Last used link was 4
+        // linkorder: [ (5) (1) (2) (3) (4) ]
+        for (vector<gli_t>::iterator i = linkorder.begin(); i != linkorder.end(); ++i)
+        {
+            gli_t li = *i;
+            int flight = li->ps->core().m_iSndMinFlightSpan;
+
+            HLOGC(dlog.Debug, log << "linkSelect_window: previous link was #" << distance(m_Group.begin(), state.ilink)
+                    << " Checking link #" << distance(m_Group.begin(), li) << " flight=" << flight);
+
+            // Upgrade idle to running
+            if (li->sndstate == GST_IDLE)
+                li->sndstate = GST_RUNNING;
+
+            if (li->sndstate != GST_RUNNING)
+            {
+                HLOGC(dlog.Debug, log << "linkSelect_window: ... not running, skipping");
+                // Skip pending/broken links
+                continue;
+            }
+
+            // Check if this link was used at least once so far.
+            // If not, select it immediately.
+            if (li->load_factor == 0)
+            {
+                HLOGC(dlog.Debug, log << "linkSelect_window: ... load factor empty: SELECTING.");
+                this_link = li;
+                goto ReportLink;
+            }
+
+            ++number_links;
+            if (flight == -1)
+            {
+                HLOGC(dlog.Debug, log << "linkSelect_window: link #" << distance(m_Group.begin(), this_link)
+                        << " HAS NO FLIGHT COUNTED - selecting, deferring to next 18 * numberlinks=" << number_links << " packets.");
+                // Not measureable flight. Use this link.
+                this_link = li;
+
+                // Also defer next measurement point by 16 per link.
+                // Of course, number_links doesn't contain the exact
+                // number of active links (the loop is underway), but
+                // it doesn't matter much. The probability is on the
+                // side of later links, so it's unlikely that earlier
+                // links could enforce more often update (worst case
+                // scenario, the probing will happen again in 16 packets).
+                m_RandomCredit = 16 * number_links;
+
+                goto ReportLink;
+            }
+            flight += 2; // prevent having 0 used for equations
+
+            total_flight += flight;
+
+            linkdata.push_back( (LinkCapableData){li, flight} );
+        }
+
+        if (linkdata.empty())
+        {
+            HLOGC(dlog.Debug, log << "linkSelect_window: no capable links found - requesting transmission interrupt!");
+            return gli_NULL();
+        }
+
+        this_link = linkdata.begin()->link;
+        double least_load = linkdata.begin()->link->load_factor;
+        double biggest_unit_load = 0;
+
+        HLOGC(dlog.Debug, log << "linkSelect_window: total_flight (with fix): " << total_flight
+                << " - updating link load factors:");
+        // Now that linkdata list is ready, update the link span values
+        // If at least one link has the span value not yet measureable
+        for (vector<LinkCapableData>::iterator i = linkdata.begin();
+                i != linkdata.end(); ++i)
+        {
+            // Here update the unit load basing on the percentage
+            // of the link flight size.
+            //
+            // The sum of all flight window sizes from all links is
+            // the total number. The value of the flight size for
+            // each link shows how much of a percentage this link
+            // has as share.
+            //
+            // Example: in case when all links go totally equally,
+            // and there is 5 links, each having 10 packets in flight:
+            //
+            // total_flitht = 50
+            // share_load = link_flight / total_flight = 10/50 = 1/5
+            // link_load = share_load * number_links = 1/5 * 5 = 1.0
+            //
+            // If the links are not perfectly equivalent, some deviation
+            // towards 1.0 will result.
+            double share_load = double(i->flight) / total_flight;
+            double link_load = share_load * number_links;
+            i->link->unit_load = link_load;
+
+            HLOGC(dlog.Debug, log << "linkSelect_window: ... #" << distance(m_Group.begin(), i->link)
+                    << " flight=" << i->flight << " share_load=" << (100*share_load) << "% unit-load="
+                    << link_load << " current-load:" << i->link->load_factor);
+
+            if (link_load > biggest_unit_load)
+                biggest_unit_load = link_load;
+
+            if (i->link->load_factor < least_load)
+            {
+                HLOGC(dlog.Debug, log << "linkSelect_window: ... this link has currently smallest load");
+                this_link = i->link;
+                least_load = i->link->load_factor;
+            }
+        }
+
+        HLOGC(dlog.Debug, log << "linkSelect_window: selecting link #" << distance(m_Group.begin(), this_link));
+        // Now that a link is selected and all load factors updated,
+        // do a CUTOFF by the value of at least one size of unit load.
+
+
+        // This comparison can be used to recognize if all values of
+        // the load factor have already exceeded the value that should
+        // result in a cutoff.
+        if (biggest_unit_load > 0 && least_load > 2 * biggest_unit_load)
+        {
+            for (vector<LinkCapableData>::iterator i = linkdata.begin();
+                    i != linkdata.end(); ++i)
+            {
+                i->link->load_factor -= biggest_unit_load;
+            }
+            HLOGC(dlog.Debug, log << "linkSelect_window: cutting off value of " << biggest_unit_load
+                    << " from all load factors");
+        }
+
+        // The above loop certainly found something.
+        goto ReportLink;
+    }
+
+    HLOGC(dlog.Debug, log << "linkSelect_window: remaining credit: " << m_RandomCredit
+            << " - staying with equal balancing");
+
+    // This starts from 16, decreases here. As long as
+    // there is a credit given, simply roll over all links
+    // equally.
+    --m_RandomCredit;
+
+    this_link = state.ilink;
+    for (;;)
+    {
+        // Roll to the next link
+        ++this_link;
+        if (this_link == m_Group.end())
+            this_link = m_Group.begin(); // roll around
+
+        // Check the status. If the link is PENDING or BROKEN,
+        // skip it. If the link is IDLE, turn it to ACTIVE.
+        // If the rolling reached back to the original link,
+        // and this one isn't usable either, return gli_NULL().
+
+        if (this_link->sndstate == GST_IDLE)
+            this_link->sndstate = GST_RUNNING;
+
+        if (this_link->sndstate == GST_RUNNING)
+        {
+            // Found you, buddy. Go on.
+            break;
+        }
+
+        if (this_link == state.ilink)
+        {
+            // No more links. Sorry.
+            return gli_NULL();
+        }
+
+        // Check maybe next link...
+    }
+
+ReportLink:
+
+    // When a link is used for sending, the load factor is
+    // increased by this link's unit load, which is calculated
+    // basing on how big share among all flight sizes this link has.
+    // The larger the flight window, the bigger the unit load.
+    // This unit load then defines how much "it costs" to send
+    // a packet over that link. The bigger this value is then,
+    // the less often will this link be selected among others.
+
+    this_link->load_factor += this_link->unit_load;
+
+    HLOGC(dlog.Debug, log << "linkSelect_window: link #" << distance(m_Group.begin(), this_link)
+            << " selected, upd load_factor=" << this_link->load_factor);
+    return this_link;
+}
+
 
 

@@ -222,6 +222,19 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
                 Error("With //group, the group 'type' must be specified.");
             }
 
+            vector<string> parts;
+            Split(m_group_type, '/', back_inserter(parts));
+            if (parts.size() == 0 || parts.size() > 2)
+            {
+                Error("Invalid specification for 'type' parameter");
+            }
+
+            if (parts.size() == 2)
+            {
+                m_group_type = parts[0];
+                m_group_config = parts[1];
+            }
+
             vector<string> nodes;
             Split(par["nodes"], ',', back_inserter(nodes));
 
@@ -729,8 +742,18 @@ void SrtCommon::OpenGroupClient()
     }
 
     m_sock = srt_create_group(type);
+    if (m_sock == -1)
+        Error(UDT::getlasterror(), "srt_create_group");
 
-    int stat = ConfigurePre(m_sock);
+    int stat = -1;
+    if (m_group_config != "")
+    {
+        stat = srt_group_configure(m_sock, m_group_config.c_str());
+        if (stat == SRT_ERROR)
+            Error(UDT::getlasterror(), "srt_group_configure");
+    }
+
+    stat = ConfigurePre(m_sock);
 
     if ( stat == SRT_ERROR )
         Error(UDT::getlasterror(), "ConfigurePre");

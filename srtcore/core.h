@@ -218,6 +218,10 @@ public:
         bool ready_read;
         bool ready_write;
         bool ready_error;
+
+        // Balancing data
+        double load_factor;
+        double unit_load;
         // Configuration
         int priority;
     };
@@ -403,6 +407,7 @@ public:
 
     void syncWithSocket(const CUDT& core);
     int getGroupData(SRT_SOCKGROUPDATA *pdata, size_t *psize);
+    int configure(const char* str);
 
     /// Predicted to be called from the reading function to fill
     /// the group data array as requested.
@@ -673,7 +678,18 @@ private:
     pthread_mutex_t m_RcvDataLock;
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
     volatile int32_t m_iLastSchedMsgNo;
-    size_t m_iBalancingRoll;
+    unsigned int m_uBalancingRoll;
+
+    /// This is initialized with some number that should be
+    /// decreased with every packet sent. Any decision and
+    /// analysis for a decision concerning bonding group behavior
+    /// should be taken only when this value is 0. During some
+    /// of the analysis steps this value may be reset to some
+    /// higer value so that for particular number of packets
+    /// no analyusis is being done (this prevents taking measurement
+    /// data too early when the number of collected data was
+    /// too little and therefore any average is little reliable).
+    unsigned int m_RandomCredit;
 
     struct BalancingLinkState
     {
@@ -683,11 +699,21 @@ private:
     };
     Callback<gli_t, const BalancingLinkState> m_cbSelectLink;
 
-    gli_t defaultSelectLink(const BalancingLinkState&);
-    static gli_t defaultSelectLink_fw(void* opaq, const BalancingLinkState& st)
+    // Plain algorithm: simply distribute the load
+    // on all links equally.
+    gli_t linkSelect_plain(const BalancingLinkState&);
+    static gli_t linkSelect_plain_fw(void* opaq, const BalancingLinkState& st)
     {
         CUDTGroup* g = (CUDTGroup*)opaq;
-        return g->defaultSelectLink(st);
+        return g->linkSelect_plain(st);
+    }
+
+    // Window algorihm: keep balance, but 
+    gli_t linkSelect_window(const BalancingLinkState&);
+    static gli_t linkSelect_window_fw(void* opaq, const BalancingLinkState& st)
+    {
+        CUDTGroup* g = (CUDTGroup*)opaq;
+        return g->linkSelect_window(st);
     }
 
 public:
@@ -827,6 +853,7 @@ public: //API
     static int removeSocketFromGroup(SRTSOCKET socket);
     static SRTSOCKET getGroupOfSocket(SRTSOCKET socket);
     static int getGroupData(SRTSOCKET groupid, SRT_SOCKGROUPDATA* pdata, size_t* psize);
+    static int configureGroup(SRTSOCKET groupid, const char* str);
     static bool isgroup(SRTSOCKET sock) { return (sock & SRTGROUP_MASK) != 0; }
     static int bind(SRTSOCKET u, const sockaddr* name, int namelen);
     static int bind(SRTSOCKET u, int udpsock);
@@ -948,6 +975,18 @@ public: // internal API
     int32_t ISN() const { return m_iISN; }
     int32_t peerISN() const { return m_iPeerISN; }
     sockaddr_any peerAddr() const { return m_PeerAddr; }
+
+    uint32_t getFlightSpan()
+    {
+        // This is a number of unacknowledged packets at this moment
+        // Note that normally m_iSndLastAck should be PAST m_iSndCurrSeqNo,
+        // however in a case when the sending stopped and all packets were
+        // ACKed, the m_iSndLastAck is one sequence past m_iSndCurrSeqNo.
+        // Therefore in order to get the real distance, we need to:
+        // - increment m_iSndCurrSeqNo by 1, so that the all-ack results with 0 diff
+        // - result is decreased by 1 so that in the above situation result is 0
+        return CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - 1;
+    }
 
     int minSndSize(int len = 0) const
     {
@@ -1413,6 +1452,9 @@ private: // Sending related data
     }
 
     uint64_t m_ullSndLastAck2Time;               // The time when last ACK2 was sent back
+
+    volatile int m_iSndMinFlightSpan;            // updated with every ACK, number of packets in flight at ACK
+
     int32_t m_iISN;                              // Initial Sequence Number
     bool m_bPeerTsbPd;                           // Peer accept TimeStamp-Based Rx mode
     bool m_bPeerTLPktDrop;                       // Enable sender late packet dropping
