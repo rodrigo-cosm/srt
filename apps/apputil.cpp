@@ -18,12 +18,6 @@
 #include "apputil.hpp"
 #include "netinet_any.h"
 
-#ifdef WIN32
-   #include <iphlpapi.h> // getting local interfaces
-#else
-   #include <ifaddrs.h> // getting local interfaces
-#endif
-
 using namespace std;
 
 
@@ -39,7 +33,7 @@ using namespace std;
 // See:
 //    https://msdn.microsoft.com/en-us/library/windows/desktop/ms742214(v=vs.85).aspx
 //    http://www.winsocketdotnetworkprogramming.com/winsock2programming/winsock2advancedInternet3b.html
-#if defined(__MINGW32__) && !defined(InetPton)
+#if defined(_WIN32) && !defined(HAVE_INET_PTON)
 namespace // Prevent conflict in case when still defined
 {
 int inet_pton(int af, const char * src, void * dst)
@@ -81,7 +75,7 @@ int inet_pton(int af, const char * src, void * dst)
    return 0;
 }
 }
-#endif // __MINGW__
+#endif // _WIN32 && !HAVE_INET_PTON
 
 sockaddr_in CreateAddrInet(const string& name, unsigned short port)
 {
