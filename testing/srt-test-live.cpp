@@ -294,12 +294,6 @@ int main( int argc, char** argv )
 
     options_t params = ProcessOptions(argv, argc, optargs);
 
-    // Check the special option: -g
-    // The syntax is:
-    // ./stransmit -g SRT1 SRT2 SRT3 SRT4: <1, 2, 3> is a source redundancy group, 4 is target
-    // ./stransmit SRT1 -g SRT2 SRT3 SRT4: 1 is a single source, 2 3 4 is a target redundancy group
-    // ./stransmit SRT1 SRT2 SRT3 -g SRT4 SRT5 SRT6: 1, 2, 3 is a source redundancy group, 4, 5, 6 is a target redundancy group
-
     bool need_help = Option<OutString>(params, "no", o_help) != "no";
 
     vector<string> args = params[""];
