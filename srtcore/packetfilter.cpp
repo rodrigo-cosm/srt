@@ -80,8 +80,7 @@ void PacketFilter::receive(CUnit* unit, std::vector<CUnit*>& w_incoming, loss_se
         ++m_parent->m_stats.rcvFilterExtraTotal;
     }
 
-    // w_loss_seqs enters empty into this function and can be only filled here.
-    // XXX ASSERT?
+    // w_loss_seqs enters empty into this function and can be only filled here. XXX ASSERT?
     for (loss_seqs_t::iterator i = w_loss_seqs.begin();
             i != w_loss_seqs.end(); ++i)
     {

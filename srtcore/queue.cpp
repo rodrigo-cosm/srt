@@ -295,7 +295,7 @@ void CSndUList::update(const CUDT *u, EReschedule reschedule)
     insert_(1, u);
 }
 
-int CSndUList::pop(sockaddr*& w_addr, CPacket& w_pkt, sockaddr_any& w_src)
+int CSndUList::pop(sockaddr*& w_addr, CPacket& w_pkt)
 {
     CGuard listguard(m_ListLock);
 
@@ -323,7 +323,7 @@ int CSndUList::pop(sockaddr*& w_addr, CPacket& w_pkt, sockaddr_any& w_src)
         return -1;
 
     // pack a packet from the socket
-    if (u->packData((w_pkt), (ts), (w_src)) <= 0)
+    if (u->packData((w_pkt), (ts)) <= 0)
         return -1;
 
     w_addr = u->m_pPeerAddr;
@@ -595,8 +595,7 @@ void *CSndQueue::worker(void *param)
         // it is time to send the next pkt
         sockaddr *addr;
         CPacket   pkt;
-        sockaddr_any source_addr;
-        if (self->m_pSndUList->pop((addr), (pkt), (source_addr)) < 0)
+        if (self->m_pSndUList->pop((addr), (pkt)) < 0)
         {
             continue;
 
@@ -614,7 +613,7 @@ void *CSndQueue::worker(void *param)
             HLOGC(dlog.Debug,
                   log << self->CONID() << "chn:SENDING SIZE " << pkt.getLength() << " SEQ: " << pkt.getSeqNo());
         }
-        self->m_pChannel->sendto(addr, pkt, source_addr);
+        self->m_pChannel->sendto(addr, pkt);
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         self->m_WorkerStats.lSendTo++;
@@ -625,10 +624,10 @@ void *CSndQueue::worker(void *param)
     return NULL;
 }
 
-int CSndQueue::sendto(const sockaddr* addr, CPacket& packet, const sockaddr_any& src)
+int CSndQueue::sendto(const sockaddr* addr, CPacket& packet)
 {
     // send out the packet immediately (high priority), this is a control packet
-    m_pChannel->sendto(addr, packet, src);
+    m_pChannel->sendto(addr, packet);
     return (int)packet.getLength();
 }
 
@@ -1576,8 +1575,6 @@ int CRcvQueue::recvfrom(int32_t id, CPacket& w_packet)
     memcpy(w_packet.m_nHeader, newpkt->m_nHeader, CPacket::HDR_SIZE);
     memcpy(w_packet.m_pcData, newpkt->m_pcData, newpkt->getLength());
     w_packet.setLength(newpkt->getLength());
-
-    w_packet.m_DestAddr = newpkt->m_DestAddr;
 
     delete[] newpkt->m_pcData;
     delete newpkt;
