@@ -81,7 +81,7 @@ public:
       /// @param [in] ttl time to live in milliseconds
       /// @param [in] order if the block should be delivered in order, for DGRAM only
 
-   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, int32_t& r_msgno);
+   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, int32_t& w_msgno);
 
       /// Read a block of data from file and insert it into the sending list.
       /// @param [in] ifs input file stream.

@@ -159,7 +159,7 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
     int32_t inorder = order ? MSGNO_PACKET_INORDER::mask : 0;
 
     HLOGC(dlog.Debug, log << CONID() << "addBuffer: adding "
-        << size << " packets (" << len << " bytes) to send, w_msgno=" << m_iNextMsgNo
+        << size << " packets (" << len << " bytes) to send, msgno=" << m_iNextMsgNo
         << (inorder ? "" : " NOT") << " in order");
 
     Block* s = m_pLastBlock;

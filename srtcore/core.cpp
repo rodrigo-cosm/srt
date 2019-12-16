@@ -2112,8 +2112,8 @@ bool CUDT::createSrtHandshake(
     return true;
 }
 
-static int
-FindExtensionBlock(uint32_t *begin, size_t total_length, size_t& w_out_len, uint32_t *& w_next_block)
+static int FindExtensionBlock(uint32_t *begin, size_t total_length,
+        size_t& w_out_len, uint32_t *& w_next_block)
 {
     // Check if there's anything to process
     if (total_length == 0)
@@ -2590,10 +2590,10 @@ int CUDT::processSrtMsg_HSRSP(const uint32_t *srtdata, size_t len, uint32_t ts, 
 }
 
 // This function is called only when the URQ_CONCLUSION handshake has been received from the peer.
-bool CUDT::interpretSrtHandshake(const CHandShake &hs,
+bool CUDT::interpretSrtHandshake(const CHandShake& hs,
                                  const CPacket&   hspkt,
                                  uint32_t*        out_data,
-                                 size_t *         pw_len)
+                                 size_t*          pw_len)
 {
     // Initialize pw_len to 0 to handle the unencrypted case
     if (pw_len)
@@ -5136,8 +5136,7 @@ void CUDT::acceptAndRespond(const sockaddr *peer, const CPacket &hspkt, CHandSha
         HLOGC(mglog.Debug,
               log << CONID() << "acceptAndRespond: sending HS to peer, reqtype=" << RequestTypeStr(debughs.m_iReqType)
                   << " version=" << debughs.m_iVersion << " (connreq:" << RequestTypeStr(m_ConnReq.m_iReqType)
-                  << "), target_socket=" << response.m_iID << ", my_socket=" << debughs.m_iID
-                  << " sourceIP=" << SockaddrToString(&m_SourceAddr));
+                  << "), target_socket=" << response.m_iID << ", my_socket=" << debughs.m_iID);
     }
 #endif
     // NOTE: BLOCK THIS instruction in order to cause the final
@@ -5332,12 +5331,15 @@ void CUDT::checkSndTimers(Whether2RegenKm regen)
     }
 }
 
-void CUDT::addressAndSend(CPacket &pkt)
+void CUDT::addressAndSend(CPacket &w_pkt)
 {
-    pkt.m_iID        = m_PeerID;
-    pkt.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
+    w_pkt.m_iID        = m_PeerID;
+    w_pkt.m_iTimeStamp = int(CTimer::getTime() - m_stats.startTime);
 
-    m_pSndQueue->sendto(m_pPeerAddr, pkt);
+    // NOTE: w_pkt isn't modified in this call,
+    // just in CChannel::sendto it's modified for sending
+    // and then modification is reversed.
+    m_pSndQueue->sendto(m_pPeerAddr, w_pkt);
 }
 
 bool CUDT::close()
@@ -7421,7 +7423,7 @@ void CUDT::processCtrlAck(const CPacket &ctrlpkt, const uint64_t currtime_tk)
     CGuard::leaveCS(m_StatsLock);
 }
 
-void CUDT::processCtrl(CPacket &ctrlpkt)
+void CUDT::processCtrl(const CPacket &ctrlpkt)
 {
     // Just heard from the peer, reset the expiration count.
     m_iEXPCount = 1;
@@ -7875,32 +7877,32 @@ void CUDT::updateAfterSrtHandshake(int srt_cmd, int hsv)
     }
 }
 
-int CUDT::packLostData(CPacket &packet, uint64_t &origintime)
+int CUDT::packLostData(CPacket& w_packet, uint64_t& w_origintime)
 {
     // protect m_iSndLastDataAck from updating by ACK processing
     CGuard ackguard(m_RecvAckLock);
 
-    while ((packet.m_iSeqNo = m_pSndLossList->popLostSeq()) >= 0)
+    while ((w_packet.m_iSeqNo = m_pSndLossList->popLostSeq()) >= 0)
     {
-        const int offset = CSeqNo::seqoff(m_iSndLastDataAck, packet.m_iSeqNo);
+        const int offset = CSeqNo::seqoff(m_iSndLastDataAck, w_packet.m_iSeqNo);
         if (offset < 0)
         {
             LOGC(dlog.Error,
-                 log << "IPE: packLostData: LOST packet negative offset: seqoff(m_iSeqNo " << packet.m_iSeqNo
+                 log << "IPE: packLostData: LOST packet negative offset: seqoff(m_iSeqNo " << w_packet.m_iSeqNo
                      << ", m_iSndLastDataAck " << m_iSndLastDataAck << ")=" << offset << ". Continue");
             continue;
         }
 
         int msglen;
 
-        const int payload = m_pSndBuffer->readData(&(packet.m_pcData), offset, (packet.m_iMsgNo), (origintime), (msglen));
+        const int payload = m_pSndBuffer->readData(&(w_packet.m_pcData), offset, (w_packet.m_iMsgNo), (w_origintime), (msglen));
         SRT_ASSERT(payload != 0);
         if (payload == -1)
         {
             int32_t seqpair[2];
-            seqpair[0] = packet.m_iSeqNo;
+            seqpair[0] = w_packet.m_iSeqNo;
             seqpair[1] = CSeqNo::incseq(seqpair[0], msglen);
-            sendCtrl(UMSG_DROPREQ, &packet.m_iMsgNo, seqpair, 8);
+            sendCtrl(UMSG_DROPREQ, &w_packet.m_iMsgNo, seqpair, 8);
 
             // only one msg drop request is necessary
             m_pSndLossList->remove(seqpair[1]);
@@ -7938,7 +7940,7 @@ int CUDT::packLostData(CPacket &packet, uint64_t &origintime)
         // So, set here the rexmit flag if the peer understands it.
         if (m_bPeerRexmitFlag)
         {
-            packet.m_iMsgNo |= PACKET_SND_REXMIT;
+            w_packet.m_iMsgNo |= PACKET_SND_REXMIT;
         }
 
         return payload;

@@ -118,7 +118,7 @@ int CCryptoControl::processSrtMsg_KMREQ(
      */
 #ifdef SRT_ENABLE_ENCRYPTION
     w_srtlen = bytelen/sizeof(srtdata[SRT_KMR_KMSTATE]);
-    HtoNLA(pw_srtdata_out, srtdata, w_srtlen);
+    HtoNLA((pw_srtdata_out), srtdata, w_srtlen);
     unsigned char* kmdata = reinterpret_cast<unsigned char*>(pw_srtdata_out);
 
     std::vector<unsigned char> kmcopy(kmdata, kmdata + bytelen);
