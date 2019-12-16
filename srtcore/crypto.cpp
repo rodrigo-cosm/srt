@@ -838,6 +838,7 @@ EncryptionStatus CCryptoControl::decrypt(CPacket& w_packet SRT_ATR_UNUSED)
 CCryptoControl::~CCryptoControl()
 {
 #ifdef SRT_ENABLE_ENCRYPTION
+    close();
     if (m_hSndCrypto)
     {
         HaiCrypt_Close(m_hSndCrypto);
