@@ -125,9 +125,9 @@ const SRTSOCKET UDT::INVALID_SOCK = CUDT::INVALID_SOCK;
 const int       UDT::ERROR        = CUDT::ERROR;
 
 // SRT Version constants
-#define SRT_VERSION_UNK 0
-#define SRT_VERSION_MAJ1 0x010000           /* Version 1 major */
-#define SRT_VERSION_MAJ(v) (0xFF0000 & (v)) /* Major number ensuring backward compatibility */
+#define SRT_VERSION_UNK     0
+#define SRT_VERSION_MAJ1    0x010000            /* Version 1 major */
+#define SRT_VERSION_MAJ(v) (0xFF0000 & (v))     /* Major number ensuring backward compatibility */
 #define SRT_VERSION_MIN(v) (0x00FF00 & (v))
 #define SRT_VERSION_PCH(v) (0x0000FF & (v))
 
@@ -5257,7 +5257,11 @@ SRT_REJECT_REASON CUDT::setupCC()
               << " rcvrate=" << m_iDeliveryRate << "p/s (" << m_iByteDeliveryRate << "B/S)"
               << " rtt=" << m_iRTT << " bw=" << m_iBandwidth);
 
-    updateCC(TEV_INIT, TEV_INIT_RESET);
+    if (!updateCC(TEV_INIT, TEV_INIT_RESET))
+    {
+        LOGC(mglog.Error, log << "setupCC: IPE: resrouces not yet initialized!");
+        return SRT_REJ_IPE;
+    }
     return SRT_REJ_UNKNOWN;
 }
 
@@ -6695,7 +6699,7 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear, bool instantaneous)
     }
 }
 
-void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
+bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
 {
     // Special things that must be done HERE, not in SrtCongestion,
     // because it involves the input buffer in CUDT. It would be
@@ -6709,7 +6713,7 @@ void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
              log << "updateCC: CAN'T DO UPDATE - congctl " << (m_CongCtl.ready() ? "ready" : "NOT READY")
                  << "; sending buffer " << (m_pSndBuffer ? "NOT CREATED" : "created"));
 
-        return;
+        return false;
     }
 
     HLOGC(mglog.Debug, log << "updateCC: EVENT:" << TransmissionEventStr(evt));
@@ -6814,6 +6818,8 @@ void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
     if (!(callcnt++ % 250)) cerr << "SndPeriod=" << (m_ullInterval_tk/m_ullCPUFrequency) << "\n");
 
 #endif
+
+    return true;
 }
 
 void CUDT::initSynch()
