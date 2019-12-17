@@ -60,19 +60,6 @@ modified by
 #include "utilities.h"
 #include <fstream>
 
-// The notation used for "circular numbers" in comments:
-// The "cicrular numbers" are numbers that when increased up to the
-// maximum become zero, and similarly, when the zero value is decreased,
-// it turns into the maximum value minus one. This wrapping works the
-// same for adding and subtracting. Circular numbers cannot be multiplied.
-
-// Operations done on these numbers are marked with additional % character:
-// a %> b : a is later than b
-// a ++% (++%a) : shift a by 1 forward
-// a +% b : shift a by b
-// a == b : equality is same as for just numbers
-
-
 class CSndBuffer
 {
 public:
@@ -345,6 +332,10 @@ public:
 
    int readMsg(char* data, int len);
 
+#if ENABLE_HEAVY_LOGGING
+   void readMsgHeavyLogging(int p);
+#endif
+
       /// read a message.
       /// @param [out] data buffer to write the message into.
       /// @param [in] len size of the buffer.
@@ -362,9 +353,9 @@ public:
 
    bool isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq);
 #ifdef SRT_DEBUG_TSBPD_OUTJITTER
-   void debugJitter(uint64_t);
+   void debugTraceJitter(uint64_t);
 #else
-   void debugJitter(uint64_t) {}
+   void debugTraceJitter(uint64_t) {}
 #endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
 
    bool isRcvDataReady();
@@ -411,9 +402,9 @@ public:
    void skipData(int len);
 
 #if ENABLE_HEAVY_LOGGING
-   void reportBufferStats(); // Heavy logging Debug only
+   void reportBufferStats() const; // Heavy logging Debug only
 #endif
-   bool empty()
+   bool empty() const
    {
        // This will not always return the intended value,
        // that is, it may return false when the buffer really is
@@ -423,8 +414,8 @@ public:
        // is going to be broken - so this behavior is acceptable.
        return m_iStartPos == m_iLastAckPos;
    }
-   bool full() { return m_iStartPos == (m_iLastAckPos+1)%m_iSize; }
-   int capacity() { return m_iSize; }
+   bool full() const { return m_iStartPos == (m_iLastAckPos+1)%m_iSize; }
+   int capacity() const { return m_iSize; }
 
 
 private:
@@ -491,14 +482,14 @@ private:
    }
 
    // Simplified versions with ++ and --; avoid using division instruction
-   int shift_forward(int basepos) const
+   int shiftFwd(int basepos) const
    {
        if (++basepos == m_iSize)
            return 0;
        return basepos;
    }
 
-   int shift_backward(int basepos) const
+   int shiftBack(int basepos) const
    {
        if (basepos == 0)
            return m_iSize-1;
@@ -512,6 +503,7 @@ private:
 
    int m_iStartPos;                     // HEAD: first packet available for reading
    int m_iLastAckPos;                   // the last ACKed position (exclusive), follows the last readable
+                                        // EMPTY: m_iStartPos = m_iLastAckPos   FULL: m_iStartPos = m_iLastAckPos + 1
    int m_iMaxPos;                       // delta between acked-TAIL and reception-TAIL
 
 

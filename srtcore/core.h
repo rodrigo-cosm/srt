@@ -212,9 +212,13 @@ public: //API
     static std::string getstreamid(SRTSOCKET u);
     static int getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes);
     static SRT_REJECT_REASON rejectReason(SRTSOCKET s);
-    static int setError(const CUDTException& e);
-    static int setError(CodeMajor mj, CodeMinor mn, int syserr);
 
+    static int setError(CodeMajor mj, CodeMinor mn, int syserr);
+    static int setError(const CUDTException& e)
+    {
+        s_UDTUnited.setError(new CUDTException(e));
+        return SRT_ERROR;
+    }
 
 public: // internal API
     static const SRTSOCKET INVALID_SOCK = -1;         // invalid socket descriptor
@@ -799,20 +803,19 @@ private: // synchronization: mutexes and conditions
 
 private: // Common connection Congestion Control setup
 
-    // XXX This can fail only when it failed to create a congctl
+    // This can fail only when it failed to create a congctl
     // which only may happen when the congctl list is extended 
     // with user-supplied congctl modules, not a case so far.
-    // SRT_ATR_NODISCARD
+    SRT_ATR_NODISCARD
     SRT_REJECT_REASON setupCC();
-    
+
     // for updateCC it's ok to discard the value. This returns false only if
     // the congctl isn't created, and this can be prevented from.
     bool updateCC(ETransmissionEvent, EventVariant arg);
-    
-    // XXX Unsure as to this return value is meaningful.
-    // May happen that this failure is acceptable slongs
-    // the other party will be sending unencrypted stream.
-    // SRT_ATR_NODISCARD
+
+    // Failure to create the crypter means that an encrypted
+    // connection should be rejected if ENFORCEDENCRYPTION is on.
+    SRT_ATR_NODISCARD
     bool createCrypter(HandshakeSide side, bool bidi);
 
 private: // Generation and processing of packets

@@ -727,7 +727,7 @@ int CUDTUnited::bind(CUDTSocket* s, const sockaddr_any& name)
    return 0;
 }
 
-int CUDTUnited::bind(CUDTSocket* s, int udpsock)
+int CUDTUnited::bind(CUDTSocket* s, UDPSOCKET udpsock)
 {
    CGuard cg(s->m_ControlLock, "Control");
 
@@ -1698,7 +1698,7 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
 
          CUDTSocket* as = si->second;
 
-           as->makeClosed();
+         as->makeClosed();
          m_ClosedSockets[*q] = as;
          m_Sockets.erase(*q);
       }
@@ -2097,12 +2097,6 @@ SRTSOCKET CUDT::socket()
    }
 }
 
-int CUDT::setError(const CUDTException& e)
-{
-    s_UDTUnited.setError(new CUDTException(e));
-    return SRT_ERROR;
-}
-
 int CUDT::setError(CodeMajor mj, CodeMinor mn, int syserr)
 {
     s_UDTUnited.setError(new CUDTException(mj, mn, syserr));
@@ -2145,7 +2139,7 @@ int CUDT::bind(SRTSOCKET u, const sockaddr* name, int namelen)
    }
 }
 
-int CUDT::bind(SRTSOCKET u, int udpsock)
+int CUDT::bind(SRTSOCKET u, UDPSOCKET udpsock)
 {
     try
     {
@@ -2208,6 +2202,11 @@ SRTSOCKET CUDT::accept(SRTSOCKET u, sockaddr* addr, int* addrlen)
    catch (const CUDTException& e)
    {
       s_UDTUnited.setError(new CUDTException(e));
+      return INVALID_SOCK;
+   }
+   catch (bad_alloc&)
+   {
+      s_UDTUnited.setError(new CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0));
       return INVALID_SOCK;
    }
    catch (const std::exception& ee)
