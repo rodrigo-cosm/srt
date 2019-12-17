@@ -8411,63 +8411,6 @@ inline void ThreadCheckAffinity(const char* function SRT_ATR_UNUSED, pthread_t t
 
 #define THREAD_CHECK_AFFINITY(thr) ThreadCheckAffinity(__FUNCTION__, thr)
 
-// [[using affinity(m_pRcvBuffer->workerThread())]];
-vector<int32_t> CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
-{
-    CUDT* self = (CUDT*)vself;
-    vector<int32_t> output;
-
-    int initial_loss_ttl = 0;
-    if ( self->m_bPeerRexmitFlag )
-        initial_loss_ttl = self->m_iReorderTolerance;
-
-    int seqdiff = CSeqNo::seqcmp(pkt.m_iSeqNo, self->m_iRcvCurrSeqNo);
-
-    HLOGC(mglog.Debug, log << "defaultPacketArrival: checking sequence " << pkt.m_iSeqNo
-            << " against latest " << self->m_iRcvCurrSeqNo << " (distance: " << seqdiff << ")");
-
-    // Loss detection.
-    if (seqdiff > 1) // packet is later than the very subsequent packet
-    {
-        int32_t seqlo = CSeqNo::incseq(self->m_iRcvCurrSeqNo);
-        int32_t seqhi = CSeqNo::decseq(pkt.m_iSeqNo);
-
-        {
-            // If loss found, insert them to the receiver loss list
-            CGuard lg(self->m_RcvLossLock);
-            self->m_pRcvLossList->insert(seqlo, seqhi);
-
-            if ( initial_loss_ttl )
-            {
-                // pack loss list for (possibly belated) NAK
-                // The LOSSREPORT will be sent in a while.
-                self->m_FreshLoss.push_back(CRcvFreshLoss(seqlo, seqhi, initial_loss_ttl));
-                HLOGF(mglog.Debug, "defaultPacketArrival: added loss sequence %d-%d (%d) with tolerance %d", seqlo, seqhi,
-                        1+CSeqNo::seqcmp(seqhi, seqlo), initial_loss_ttl);
-            }
-        }
-
-        if (!initial_loss_ttl)
-        {
-            // old code; run immediately when tolerance = 0
-            // or this feature isn't used because of the peer
-            if ( seqlo == seqhi )
-            {
-                output.push_back(seqlo);
-                HLOGF(mglog.Debug, "defaultPacketArrival: lost 1 packet %d: sending LOSSREPORT", seqlo);
-            }
-            else
-            {
-                output.push_back(seqlo | LOSSDATA_SEQNO_RANGE_FIRST);
-                output.push_back(seqhi);
-                HLOGF(mglog.Debug, "defaultPacketArrival: lost %d packets %d-%d: sending LOSSREPORT",
-                        1+CSeqNo::seqcmp(seqhi, seqlo), seqlo, seqhi);
-            }
-        }
-    }
-
-    return output;
-}
 
 #if ENABLE_HEAVY_LOGGING
 std::string DisplayLossArray(const vector<int32_t>& a)
@@ -8600,7 +8543,6 @@ int CUDT::processData(CUnit* in_unit)
     ++m_stats.recvTotal;
     CGuard::leaveCS(m_StatsLock, "Stats");
 
-    typedef vector<pair<int32_t, int32_t> > loss_seqs_t;
     loss_seqs_t                             filter_loss_seqs;
     loss_seqs_t                             srt_loss_seqs;
     vector<CUnit*>                          incoming;
@@ -8830,6 +8772,10 @@ int CUDT::processData(CUnit* in_unit)
             // Otherwise it's an error.
             if (adding_successful)
             {
+                // XXX move this code do CUDT::defaultPacketArrival and call it from here:
+
+                // srt_loss_seqs = CALLBACK_CALL(m_cbPacketArrival, rpkt);
+
                 HLOGC(dlog.Debug,
                       log << "CONTIGUITY CHECK: sequence distance: " << CSeqNo::seqoff(m_iRcvCurrSeqNo, rpkt.m_iSeqNo));
                 if (CSeqNo::seqcmp(rpkt.m_iSeqNo, CSeqNo::incseq(m_iRcvCurrSeqNo)) > 0) // Loss detection.
@@ -9061,6 +9007,56 @@ int CUDT::processData(CUnit* in_unit)
     }
 
     return 0;
+}
+
+
+// XXX This function is currently unused. It should be fixed and put into use.
+// See the blocked call in CUDT::processData().
+CUDT::loss_seqs_t CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
+{
+// [[using affinity(m_pRcvBuffer->workerThread())]];
+    CUDT* self = (CUDT*)vself;
+    loss_seqs_t output;
+
+    int initial_loss_ttl = 0;
+    if ( self->m_bPeerRexmitFlag )
+        initial_loss_ttl = self->m_iReorderTolerance;
+
+    int seqdiff = CSeqNo::seqcmp(pkt.m_iSeqNo, self->m_iRcvCurrSeqNo);
+
+    HLOGC(mglog.Debug, log << "defaultPacketArrival: checking sequence " << pkt.m_iSeqNo
+            << " against latest " << self->m_iRcvCurrSeqNo << " (distance: " << seqdiff << ")");
+
+    // Loss detection.
+    if (seqdiff > 1) // packet is later than the very subsequent packet
+    {
+        int32_t seqlo = CSeqNo::incseq(self->m_iRcvCurrSeqNo);
+        int32_t seqhi = CSeqNo::decseq(pkt.m_iSeqNo);
+
+        {
+            // If loss found, insert them to the receiver loss list
+            CGuard lg(self->m_RcvLossLock, "rcvloss");
+            self->m_pRcvLossList->insert(seqlo, seqhi);
+
+            if (initial_loss_ttl)
+            {
+                // pack loss list for (possibly belated) NAK
+                // The LOSSREPORT will be sent in a while.
+                self->m_FreshLoss.push_back(CRcvFreshLoss(seqlo, seqhi, initial_loss_ttl));
+                HLOGF(mglog.Debug, "defaultPacketArrival: added loss sequence %d-%d (%d) with tolerance %d", seqlo, seqhi,
+                        1+CSeqNo::seqcmp(seqhi, seqlo), initial_loss_ttl);
+            }
+        }
+
+        if (!initial_loss_ttl)
+        {
+            // old code; run immediately when tolerance = 0
+            // or this feature isn't used because of the peer
+            output.push_back(make_pair(seqlo, seqhi));
+        }
+    }
+
+    return output;
 }
 
 /// This function is called when a packet has arrived, which was behind the current

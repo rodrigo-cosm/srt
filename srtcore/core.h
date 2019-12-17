@@ -340,7 +340,9 @@ public: // internal API
     // This is in public section so prospective overriding it can be
     // done by directly assigning to a field.
 
-    Callback<std::vector<int32_t>, CPacket> m_cbPacketArrival;
+    typedef std::vector< std::pair<int32_t, int32_t> > loss_seqs_t;
+    typedef loss_seqs_t packetArrival_cb(void*, CPacket&);
+    CallbackHolder<packetArrival_cb> m_cbPacketArrival;
 
 private:
     /// initialize a UDT entity and bind to a local address.
@@ -561,7 +563,7 @@ private:
 
     void updateForgotten(int seqlen, int32_t lastack, int32_t skiptoseqno);
 
-    static std::vector<int32_t> defaultPacketArrival(void* vself, CPacket& pkt);
+    static loss_seqs_t defaultPacketArrival(void* vself, CPacket& pkt);
 
     static CUDTUnited s_UDTUnited;               // UDT global management base
 
