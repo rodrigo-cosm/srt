@@ -743,42 +743,10 @@ struct CallbackHolder
         fn = f;
     }
 
-#if HAVE_CXX11
-    // This is a possible implementation for C++11.
-    // For C++03, unfortunately, use the below CALLBACK_CALL macro.
-    template <typename... Args>
-    std::result_of<Signature>::type call(Args&&... args)
-    {
-        return (*fn)(opaque, std::forward(args)...);
-    }
-#endif
-
     operator bool() { return fn != NULL; }
 };
 
 #define CALLBACK_CALL(holder,...) (*holder.fn)(holder.opaque, __VA_ARGS__)
-
-template <class Result, class Arg>
-struct Callback
-{
-    void* opaque;
-    typedef Result fn_t(void*, Arg&);
-    fn_t* fn;
-
-    Callback(): opaque(0), fn(0)  {}
-
-    Result call(Arg& arg)
-    {
-        return fn(opaque, arg);
-    }
-
-    void set(void* o, fn_t* f)
-    {
-        opaque = o;
-        fn = f;
-    }
-};
-
 
 inline std::string FormatBinaryString(const uint8_t* bytes, size_t size)
 {
