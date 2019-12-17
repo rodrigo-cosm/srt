@@ -328,7 +328,6 @@ private:
    static void TLSDestroy(void* e) {if (NULL != e) delete (CUDTException*)e;}
 
 private:
-   void connect_complete(SRTSOCKET u);
    CUDTSocket* locateSocket(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
    CUDTGroup* locateGroup(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);

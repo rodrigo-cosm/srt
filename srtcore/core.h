@@ -82,7 +82,8 @@ extern Logger
     mglog,
     dlog,
     tslog,
-    rxlog;
+    rxlog,
+    cclog;
 
 }
 
@@ -551,7 +552,6 @@ public: //API
     static int setError(const CUDTException& e);
     static int setError(CodeMajor mj, CodeMinor mn, int syserr);
 
-
 public: // internal API
     static const SRTSOCKET INVALID_SOCK = -1;         // invalid socket descriptor
     static const int ERROR = -1;                      // socket api error returned value
@@ -683,7 +683,9 @@ public: // internal API
     // This is in public section so prospective overriding it can be
     // done by directly assigning to a field.
 
-    Callback<std::vector<int32_t>, CPacket> m_cbPacketArrival;
+    typedef std::vector< std::pair<int32_t, int32_t> > loss_seqs_t;
+    typedef loss_seqs_t packetArrival_cb(void*, CPacket&);
+    CallbackHolder<packetArrival_cb> m_cbPacketArrival;
 
 private:
     /// initialize a UDT entity and bind to a local address.
@@ -909,7 +911,7 @@ private:
 
     void updateForgotten(int seqlen, int32_t lastack, int32_t skiptoseqno);
 
-    static std::vector<int32_t> defaultPacketArrival(void* vself, CPacket& pkt);
+    static loss_seqs_t defaultPacketArrival(void* vself, CPacket& pkt);
 
     static CUDTUnited s_UDTUnited;               // UDT global management base
 
@@ -1170,20 +1172,19 @@ private: // synchronization: mutexes and conditions
 
 private: // Common connection Congestion Control setup
 
-    // XXX This can fail only when it failed to create a congctl
+    // This can fail only when it failed to create a congctl
     // which only may happen when the congctl list is extended 
     // with user-supplied congctl modules, not a case so far.
-    // SRT_ATR_NODISCARD
+    SRT_ATR_NODISCARD
     SRT_REJECT_REASON setupCC();
-    
+
     // for updateCC it's ok to discard the value. This returns false only if
     // the congctl isn't created, and this can be prevented from.
     bool updateCC(ETransmissionEvent, EventVariant arg);
-    
-    // XXX Unsure as to this return value is meaningful.
-    // May happen that this failure is acceptable slongs
-    // the other party will be sending unencrypted stream.
-    // SRT_ATR_NODISCARD
+
+    // Failure to create the crypter means that an encrypted
+    // connection should be rejected if ENFORCEDENCRYPTION is on.
+    SRT_ATR_NODISCARD
     bool createCrypter(HandshakeSide side, bool bidi);
 
 private: // Generation and processing of packets

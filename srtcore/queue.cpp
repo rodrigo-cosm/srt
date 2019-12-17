@@ -849,15 +849,15 @@ void CRendezvousQueue::insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& 
     r.m_ullTTL = ttl;
 
     m_lRendezvousID.push_back(r);
-   HLOGC(mglog.Debug, log << "RID: adding socket @" << id << " for address: " << SockaddrToString(addr)
-           << " expires: " << FormatTime(ttl)
-           << " (total connectors: " << m_lRendezvousID.size() << ")");
+    HLOGC(mglog.Debug, log << "RID: adding socket @" << id << " for address: " << SockaddrToString(addr)
+            << " expires: " << FormatTime(ttl)
+            << " (total connectors: " << m_lRendezvousID.size() << ")");
 }
 
 void CRendezvousQueue::remove(const SRTSOCKET& id, bool should_lock)
 {
-   CGuard vg(m_RIDVectorLock, "RdvQId", should_lock);
-   HLOGC(mglog.Debug, log << "RID: socket @" << id << " removed");
+    CGuard vg(m_RIDVectorLock, "RdvQId", should_lock);
+    HLOGC(mglog.Debug, log << "RID: socket @" << id << " removed");
 
     for (list<CRL>::iterator i = m_lRendezvousID.begin(); i != m_lRendezvousID.end(); ++i)
     {
@@ -871,7 +871,7 @@ void CRendezvousQueue::remove(const SRTSOCKET& id, bool should_lock)
 
 CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> r_id)
 {
-   CGuard vg(m_RIDVectorLock, "RdvQId");
+    CGuard vg(m_RIDVectorLock, "RdvQId");
     SRTSOCKET& id = *r_id;
 
     // TODO: optimize search
@@ -879,9 +879,9 @@ CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> r_id
     {
         if (i->m_PeerAddr == addr && ((id == 0) || (id == i->m_iID)))
         {
-          HLOGC(mglog.Debug, log << "RID: found id @" << i->m_iID << " while looking for "
-                  << (id ? "THIS ID FROM " : "A NEW CONNECTION FROM ")
-                  << SockaddrToString(i->m_PeerAddr));
+            HLOGC(mglog.Debug, log << "RID: found id @" << i->m_iID << " while looking for "
+                    << (id ? "THIS ID FROM " : "A NEW CONNECTION FROM ")
+                    << SockaddrToString(i->m_PeerAddr));
             id = i->m_iID;
             return i->m_pUDT;
         }
