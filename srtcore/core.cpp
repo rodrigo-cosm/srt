@@ -9629,7 +9629,6 @@ int CUDT::processData(CUnit* in_unit)
     ++m_stats.recvTotal;
     CGuard::leaveCS(m_StatsLock, "Stats");
 
-    typedef vector<pair<int32_t, int32_t> > loss_seqs_t;
     loss_seqs_t                             filter_loss_seqs;
     loss_seqs_t                             srt_loss_seqs;
     vector<CUnit*>                          incoming;
@@ -9859,6 +9858,10 @@ int CUDT::processData(CUnit* in_unit)
             // Otherwise it's an error.
             if (adding_successful)
             {
+                // XXX move this code do CUDT::defaultPacketArrival and call it from here:
+
+                // srt_loss_seqs = CALLBACK_CALL(m_cbPacketArrival, rpkt);
+
                 HLOGC(dlog.Debug,
                       log << "CONTIGUITY CHECK: sequence distance: " << CSeqNo::seqoff(m_iRcvCurrSeqNo, rpkt.m_iSeqNo));
                 if (CSeqNo::seqcmp(rpkt.m_iSeqNo, CSeqNo::incseq(m_iRcvCurrSeqNo)) > 0) // Loss detection.
@@ -10183,11 +10186,13 @@ void CUDT::updateIdleLinkFrom(CUDT* source)
     setInitialRcvSeq(source->m_iRcvLastSkipAck);
 }
 
-vector<int32_t> CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
+// XXX This function is currently unused. It should be fixed and put into use.
+// See the blocked call in CUDT::processData().
+CUDT::loss_seqs_t CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
 {
 // [[using affinity(m_pRcvBuffer->workerThread())]];
     CUDT* self = (CUDT*)vself;
-    vector<int32_t> output;
+    loss_seqs_t output;
 
     // XXX When an alternative packet arrival callback is installed
     // in case of groups, move this part to the groupwise version.
@@ -10223,7 +10228,7 @@ vector<int32_t> CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
             CGuard lg(self->m_RcvLossLock, "rcvloss");
             self->m_pRcvLossList->insert(seqlo, seqhi);
 
-            if ( initial_loss_ttl )
+            if (initial_loss_ttl)
             {
                 // pack loss list for (possibly belated) NAK
                 // The LOSSREPORT will be sent in a while.
@@ -10237,18 +10242,7 @@ vector<int32_t> CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
         {
             // old code; run immediately when tolerance = 0
             // or this feature isn't used because of the peer
-            if ( seqlo == seqhi )
-            {
-                output.push_back(seqlo);
-                HLOGF(mglog.Debug, "defaultPacketArrival: lost 1 packet %d: sending LOSSREPORT", seqlo);
-            }
-            else
-            {
-                output.push_back(seqlo | LOSSDATA_SEQNO_RANGE_FIRST);
-                output.push_back(seqhi);
-                HLOGF(mglog.Debug, "defaultPacketArrival: lost %d packets %d-%d: sending LOSSREPORT",
-                        1+CSeqNo::seqcmp(seqhi, seqlo), seqlo, seqhi);
-            }
+            output.push_back(make_pair(seqlo, seqhi));
         }
     }
 
@@ -15741,7 +15735,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // 6. If the selector returned a valid link, go to p. 2.
 
         // Call selection. Default: defaultSelectLink
-        selink = m_cbSelectLink.call(lstate);
+        selink = CALLBACK_CALL(m_cbSelectLink, lstate);
 
         if (selink == m_Group.null())
         {
@@ -16662,7 +16656,9 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_window(const CUDTGroup::BalancingLinkStat
             int flight = li->ps->core().m_iSndMinFlightSpan;
 
             HLOGC(dlog.Debug, log << "linkSelect_window: previous link was #" << distance(m_Group.begin(), state.ilink)
-                    << " Checking link #" << distance(m_Group.begin(), li) << " flight=" << flight);
+                    << " Checking link #" << distance(m_Group.begin(), li)
+                    << "@" << li->id << " TO " << SockaddrToString(li->peer)
+                    << " flight=" << flight);
 
             // Upgrade idle to running
             if (li->sndstate == GST_IDLE)
@@ -16670,7 +16666,7 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_window(const CUDTGroup::BalancingLinkStat
 
             if (li->sndstate != GST_RUNNING)
             {
-                HLOGC(dlog.Debug, log << "linkSelect_window: ... not running, skipping");
+                HLOGC(dlog.Debug, log << "linkSelect_window: ... state=" << StateStr(li->sndstate) << " - skipping");
                 // Skip pending/broken links
                 continue;
             }

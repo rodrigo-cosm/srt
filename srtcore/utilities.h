@@ -743,6 +743,16 @@ struct CallbackHolder
         fn = f;
     }
 
+#if HAVE_CXX11
+    // This is a possible implementation for C++11.
+    // For C++03, unfortunately, use the below CALLBACK_CALL macro.
+    template <typename... Args>
+    std::result_of<Signature>::type call(Args&&... args)
+    {
+        return (*fn)(opaque, std::forward(args)...);
+    }
+#endif
+
     operator bool() { return fn != NULL; }
 };
 
@@ -1035,11 +1045,13 @@ inline ValueType avg_iir(ValueType old_value, ValueType new_value)
     return (old_value*(DEPRLEN-1) + new_value)/DEPRLEN;
 }
 
-#define SRTU_PROPERTY_RO(type, name, field) type name() { return field; }
+#define SRTU_PROPERTY_RO(type, name, field) type name() const { return field; }
+#define SRTU_PROPERTY_RR(type, name, field) type name() { return field; }
 #define SRTU_PROPERTY_WO(type, name, field) void name(type arg) { field = arg; }
 #define SRTU_PROPERTY_WO_CHAIN(otype, type, name, field) otype& name(type arg) { field = arg; return *this; }
 #define SRTU_PROPERTY_RW(type, name, field) SRTU_PROPERTY_RO(type, name, field); SRTU_PROPERTY_WO(type, name, field)
 #define SRTU_PROPERTY_RW_CHAIN(otype, type, name, field) SRTU_PROPERTY_RO(type, name, field); SRTU_PROPERTY_WO_CHAIN(otype, type, name, field)
+#define SRTU_PROPERTY_RRW_CHAIN(otype, type, name, field) SRTU_PROPERTY_RR(type, name, field); SRTU_PROPERTY_WO_CHAIN(otype, type, name, field)
 
 
 #endif

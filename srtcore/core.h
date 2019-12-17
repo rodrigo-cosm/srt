@@ -697,7 +697,8 @@ private:
         int status;  // 0 = normal first entry; -1 = repeated selection
         int errorcode;
     };
-    Callback<gli_t, const BalancingLinkState> m_cbSelectLink;
+    typedef gli_t selectLink_cb(void*, const BalancingLinkState&);
+    CallbackHolder<selectLink_cb> m_cbSelectLink;
 
     // Plain algorithm: simply distribute the load
     // on all links equally.
@@ -787,7 +788,7 @@ public:
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool,           managed,              m_selfManaged);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type,                 m_type);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t,        currentSchedSequence, m_iLastSchedSeqNo);
-    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, std::set<int>&, epollset,             m_sPollID);
+    SRTU_PROPERTY_RRW_CHAIN(CUDTGroup, std::set<int>&, epollset,             m_sPollID);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int64_t,        latency,              m_iTsbPdDelay_us);
 
     // Required for SRT_tsbpdLoop
@@ -795,7 +796,7 @@ public:
     SRTU_PROPERTY_RO(bool,           isTLPktDrop,    m_bTLPktDrop);
     SRTU_PROPERTY_RO(bool,           isSynReceiving, m_bSynRecving);
     SRTU_PROPERTY_RO(CUDTUnited*,    uglobal,        m_pGlobal);
-    SRTU_PROPERTY_RO(std::set<int>&, pollset,        m_sPollID);
+    SRTU_PROPERTY_RR(std::set<int>&, pollset,        m_sPollID);
 };
 
 inline void fwd_swap(CUDTGroup::BufferedMessage& a, CUDTGroup::BufferedMessage& b)
@@ -1037,8 +1038,8 @@ public: // internal API
     SRTU_PROPERTY_RO(CRcvBuffer*, rcvBuffer, m_pRcvBuffer);
     SRTU_PROPERTY_RO(bool, isTLPktDrop, m_bTLPktDrop);
     SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
-    SRTU_PROPERTY_RO(pthread_cond_t*, recvDataCond, &m_RecvDataCond);
-    SRTU_PROPERTY_RO(pthread_cond_t*, recvTsbPdCond, &m_RcvTsbPdCond);
+    SRTU_PROPERTY_RR(pthread_cond_t*, recvDataCond, &m_RecvDataCond);
+    SRTU_PROPERTY_RR(pthread_cond_t*, recvTsbPdCond, &m_RcvTsbPdCond);
 
     void ConnectSignal(ETransmissionEvent tev, EventSlot sl);
     void DisconnectSignal(ETransmissionEvent tev);
@@ -1046,7 +1047,9 @@ public: // internal API
     // This is in public section so prospective overriding it can be
     // done by directly assigning to a field.
 
-    Callback<std::vector<int32_t>, CPacket> m_cbPacketArrival;
+    typedef std::vector< std::pair<int32_t, int32_t> > loss_seqs_t;
+    typedef loss_seqs_t packetArrival_cb(void*, CPacket&);
+    CallbackHolder<packetArrival_cb> m_cbPacketArrival;
 
 private:
     /// initialize a UDT entity and bind to a local address.
@@ -1276,8 +1279,8 @@ private:
 
     void updateForgotten(int seqlen, int32_t lastack, int32_t skiptoseqno);
 
-    static std::vector<int32_t> defaultPacketArrival(void* vself, CPacket& pkt);
-    static std::vector<int32_t> groupPacketArrival(void* vself, CPacket& pkt);
+    static loss_seqs_t defaultPacketArrival(void* vself, CPacket& pkt);
+    static loss_seqs_t groupPacketArrival(void* vself, CPacket& pkt);
 
     static CUDTUnited s_UDTUnited;               // UDT global management base
 
