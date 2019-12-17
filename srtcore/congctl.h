@@ -79,12 +79,18 @@ public:
     // 1. The congctl is individual, so don't copy it. Set NULL.
     // 2. The selected name is copied so that it's configured correctly.
     SrtCongestion(const SrtCongestion& source): congctl(), selector(source.selector) {}
+    void operator=(const SrtCongestion& source) { congctl = 0; selector = source.selector; }
 
     // This function will be called by the parent CUDT
     // in appropriate time. It should select appropriate
     // congctl basing on the value in selector, then
     // pin oneself in into CUDT for receiving event signals.
     bool configure(CUDT* parent);
+
+    // This function will intentionally delete the contained object.
+    // This makes future calls to ready() return false. Calling
+    // configure on it again will create it again.
+    void dispose();
 
     // Will delete the pinned in congctl object.
     // This must be defined in *.cpp file due to virtual

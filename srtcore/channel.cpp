@@ -50,29 +50,6 @@ modified by
    Haivision Systems Inc.
 *****************************************************************************/
 
-/*
-#ifndef _WIN32
-   #if __APPLE__
-      #define __APPLE_USE_RFC_3542
-      //#define __POSIX_C_SOURCE
-      #include "TargetConditionals.h"
-   #endif
-   #include <sys/socket.h>
-   #include <sys/ioctl.h>
-   #include <netdb.h>
-   #include <arpa/inet.h>
-   #include <unistd.h>
-   #include <fcntl.h>
-   #include <cstring>
-   #include <cstdio>
-   #include <cerrno>
-#else
-   #include <winsock2.h>
-   #include <ws2tcpip.h>
-   #include <mswsock.h>
-#endif
-*/
-
 #include "platform_sys.h"
 
 #include <iostream>
@@ -104,9 +81,6 @@ m_iIpToS(-1),   /* IPv4 Type of Service or IPv6 Traffic Class [0x00..0xff] (-1:u
 m_iSndBufSize(65536),
 m_iRcvBufSize(65536),
 m_iIpV6Only(-1)
-#ifdef SRT_ENABLE_PKTINFO
-, m_bBindMasked(true)
-#endif
 {
 }
 
@@ -121,28 +95,9 @@ m_iSndBufSize(65536),
 m_iRcvBufSize(65536),
 m_iIpV6Only(-1),
 m_BindAddr(version)
-#ifdef SRT_ENABLE_PKTINFO
-, m_bBindMasked(true)
-#endif
 {
    SRT_ASSERT(version == AF_INET || version == AF_INET6);
    m_iSockAddrSize = (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
-
-#ifdef SRT_ENABLE_PKTINFO
-   // Do the check for ancillary data buffer size, kinda assertion
-   static const size_t CMSG_MAX_SPACE = sizeof (CMSGNodeAlike);
-
-   if (CMSG_MAX_SPACE < CMSG_SPACE(sizeof(in_pktinfo))
-           || CMSG_MAX_SPACE < CMSG_SPACE(sizeof(in6_pktinfo)))
-   {
-       LOGC(mglog.Fatal, log << "Size of CMSG_MAX_SPACE="
-               << CMSG_MAX_SPACE << " too short for cmsg "
-               << CMSG_SPACE(sizeof(in_pktinfo)) << ", "
-               << CMSG_SPACE(sizeof(in6_pktinfo)) << " - PLEASE FIX");
-       throw CUDTException(MJ_SETUP, MN_NONE, 0);
-   }
-#endif
-
 }
 
 CChannel::~CChannel()
@@ -172,9 +127,6 @@ void CChannel::open(const sockaddr* addr)
          throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
       memcpy(&m_BindAddr, addr, namelen);
       m_BindAddr.len = namelen;
-#ifdef SRT_ENABLE_PKTINFO
-      m_bBindMasked = m_BindAddr.isany();
-#endif
    }
    else
    {
@@ -199,12 +151,6 @@ void CChannel::open(const sockaddr* addr)
       }
       memcpy(&m_BindAddr, res->ai_addr, res->ai_addrlen);
       m_BindAddr.len = (socklen_t) res->ai_addrlen;
-
-#ifdef SRT_ENABLE_PKTINFO
-      // We know that this is intentionally bound now to "any",
-      // so the requester-destination address must be remembered and passed.
-      m_bBindMasked = true;
-#endif
 
       ::freeaddrinfo(res);
    }
@@ -327,17 +273,6 @@ void CChannel::setUDPSockOpt()
    // Set receiving time-out value
    if (0 != ::setsockopt(m_iSocket, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(timeval)))
       throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
-#endif
-
-#ifdef SRT_ENABLE_PKTINFO
-    if (m_bBindMasked)
-    {
-        HLOGP(mglog.Debug, "Socket bound to ANY - setting PKTINFO for address retrieval");
-        int on = 1, off = 0;
-        ::setsockopt(m_iSocket, IPPROTO_IP, IP_PKTINFO, (char*)&on, sizeof(on));
-        ::setsockopt(m_iSocket, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
-        ::setsockopt(m_iSocket, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
-    }
 #endif
 }
 
@@ -550,20 +485,7 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet, const sockaddr_any& 
 #endif
 
    // convert control information into network order
-   // XXX USE HtoNLA!
-   if (packet.isControl())
-      for (ptrdiff_t i = 0, n = (ptrdiff_t) packet.getLength() / 4; i < n; ++i)
-         *((uint32_t *)packet.m_pcData + i) = htonl(*((uint32_t *)packet.m_pcData + i));
-
-   // convert packet header into network order
-   //for (int j = 0; j < 4; ++ j)
-   //   packet.m_nHeader[j] = htonl(packet.m_nHeader[j]);
-   uint32_t* p = packet.m_nHeader;
-   for (int j = 0; j < 4; ++ j)
-   {
-      *p = htonl(*p);
-      ++ p;
-   }
+   packet.toNL();
 
    #ifndef _WIN32
       msghdr mh;
@@ -571,31 +493,11 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet, const sockaddr_any& 
       mh.msg_namelen = m_iSockAddrSize;
       mh.msg_iov = (iovec*)packet.m_PacketVector;
       mh.msg_iovlen = 2;
-      bool have_set_src = false;
-
-#ifdef SRT_ENABLE_PKTINFO
-      if (m_bBindMasked && !source_addr.isany())
-      {
-          if (!setSourceAddress(mh, source_addr))
-          {
-              LOGC(mglog.Error, log << "CChannel::setSourceAddress: source address invalid family #" << source_addr.family() << ", NOT setting.");
-          }
-          else
-          {
-              HLOGC(mglog.Debug, log << "CChannel::setSourceAddress: setting as " << SockaddrToString(&source_addr));
-              have_set_src = true;
-          }
-      }
-#endif
-
-      if (!have_set_src)
-      {
-          mh.msg_control = NULL;
-          mh.msg_controllen = 0;
-      }
+      mh.msg_control = NULL;
+      mh.msg_controllen = 0;
       mh.msg_flags = 0;
 
-      int res = ::sendmsg(m_iSocket, &mh, 0);
+      const int res = ::sendmsg(m_iSocket, &mh, 0);
    #else
       DWORD size = (DWORD) (CPacket::HDR_SIZE + packet.getLength());
       int addrsize = m_iSockAddrSize;
@@ -603,21 +505,7 @@ int CChannel::sendto(const sockaddr* addr, CPacket& packet, const sockaddr_any& 
       res = (0 == res) ? size : -1;
    #endif
 
-   // convert back into local host order
-   //for (int k = 0; k < 4; ++ k)
-   //   packet.m_nHeader[k] = ntohl(packet.m_nHeader[k]);
-   p = packet.m_nHeader;
-   for (int k = 0; k < 4; ++ k)
-   {
-      *p = ntohl(*p);
-       ++ p;
-   }
-
-   if (packet.isControl())
-   {
-      for (ptrdiff_t l = 0, n = packet.getLength() / 4; l < n; ++ l)
-         *((uint32_t *)packet.m_pcData + l) = ntohl(*((uint32_t *)packet.m_pcData + l));
-   }
+   packet.toHL();
 
    return res;
 }
@@ -647,39 +535,16 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
     }
 
 #ifndef _WIN32
-    msghdr mh; // will not be used on failure
-
     if (select_ret > 0)
     {
+        msghdr mh;
         mh.msg_name = addr;
         mh.msg_namelen = m_iSockAddrSize;
         mh.msg_iov = packet.m_PacketVector;
         mh.msg_iovlen = 2;
-
-#ifdef SRT_ENABLE_PKTINFO
-        if (!m_bBindMasked)
-        {
-            // We don't need ancillary data - the source address
-            // will always be the bound address.
-            mh.msg_control = NULL;
-            mh.msg_controllen = 0;
-        }
-        else
-        {
-            // Extract the destination IP address from the ancillary
-            // data. This might be interesting for the connection to
-            // know to which address the packet should be sent back during
-            // the handshake and then addressed when sending during connection.
-            mh.msg_control = m_acCmsgRecvBuffer;
-            mh.msg_controllen = sizeof m_acCmsgRecvBuffer;
-        }
-#else
         mh.msg_control = NULL;
         mh.msg_controllen = 0;
-#endif
-
         mh.msg_flags = 0;
-
 
         recv_size = ::recvmsg(m_iSocket, &mh, 0);
         msg_flags = mh.msg_flags;
@@ -723,16 +588,6 @@ EReadStatus CChannel::recvfrom(sockaddr* addr, CPacket& packet) const
         goto Return_error;
     }
 
-#ifdef SRT_ENABLE_PKTINFO
-    if (m_bBindMasked)
-    {
-        // Extract the address. Set it explicitly; if this returns address that isany(),
-        // it will simply set this on the packet so that it behaves as if nothing was
-        // extracted (it will "fail the old way").
-        packet.m_DestAddr = getTargetAddress(mh);
-        HLOGC(mglog.Debug, log << CONID() << "(sys)recvmsg: ANY BOUND, retrieved DEST ADDR: " << SockaddrToString(&packet.m_DestAddr));
-    }
-#endif
 #else
     // XXX REFACTORING NEEDED!
     // This procedure uses the WSARecvFrom function that just reads
