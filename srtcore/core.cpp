@@ -617,7 +617,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void *optval, int optlen)
         memset(&m_CryptoSecret, 0, sizeof(m_CryptoSecret));
         m_CryptoSecret.typ = HAICRYPT_SECTYP_PASSPHRASE;
         m_CryptoSecret.len = (optlen <= (int)sizeof(m_CryptoSecret.str) ? optlen : (int)sizeof(m_CryptoSecret.str));
-        memcpy(m_CryptoSecret.str, optval, m_CryptoSecret.len);
+        memcpy((m_CryptoSecret.str), optval, m_CryptoSecret.len);
 #else
         if (optlen == 0)
             break;
@@ -1421,7 +1421,7 @@ size_t CUDT::fillSrtHandshake(uint32_t *srtdata, size_t srtlen, int msgtype, int
 
     srtlen = SRT_HS__SIZE; // We use only that much space.
 
-    memset(srtdata, 0, sizeof(uint32_t) * srtlen);
+    memset((srtdata), 0, sizeof(uint32_t) * srtlen);
     /* Current version (1.x.x) SRT handshake */
     srtdata[SRT_HS_VERSION] = m_lSrtVersion; /* Required version */
     srtdata[SRT_HS_FLAGS] |= SrtVersionCapabilities();
@@ -1918,8 +1918,8 @@ bool CUDT::createSrtHandshake(
         size_t wordsize         = (m_sStreamName.size() + 3) / 4;
         size_t aligned_bytesize = wordsize * 4;
 
-        memset(p + offset, 0, aligned_bytesize);
-        memcpy(p + offset, m_sStreamName.data(), m_sStreamName.size());
+        memset((p + offset), 0, aligned_bytesize);
+        memcpy((p + offset), m_sStreamName.data(), m_sStreamName.size());
         // Preswap to little endian (in place due to possible padding zeros)
         HtoILA((uint32_t *)(p + offset), (uint32_t *)(p + offset), wordsize);
 
@@ -1950,9 +1950,9 @@ bool CUDT::createSrtHandshake(
         size_t wordsize         = (sm.size() + 3) / 4;
         size_t aligned_bytesize = wordsize * 4;
 
-        memset(p + offset, 0, aligned_bytesize);
+        memset((p + offset), 0, aligned_bytesize);
 
-        memcpy(p + offset, sm.data(), sm.size());
+        memcpy((p + offset), sm.data(), sm.size());
         // Preswap to little endian (in place due to possible padding zeros)
         HtoILA((uint32_t *)(p + offset), (uint32_t *)(p + offset), wordsize);
 
@@ -1974,8 +1974,8 @@ bool CUDT::createSrtHandshake(
         size_t wordsize         = (m_OPT_PktFilterConfigString.size() + 3) / 4;
         size_t aligned_bytesize = wordsize * 4;
 
-        memset(p + offset, 0, aligned_bytesize);
-        memcpy(p + offset, m_OPT_PktFilterConfigString.data(), m_OPT_PktFilterConfigString.size());
+        memset((p + offset), 0, aligned_bytesize);
+        memcpy((p + offset), m_OPT_PktFilterConfigString.data(), m_OPT_PktFilterConfigString.size());
 
         ra_size   = wordsize;
         *pcmdspec = HS_CMDSPEC_CMD::wrap(SRT_CMD_FILTER) | HS_CMDSPEC_SIZE::wrap(ra_size);
@@ -2859,8 +2859,8 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs,
                 // subsequent characters of the string plus at least one '\0' at the end. This will
                 // make it a perfect NUL-terminated string, to be used to initialize a string.
                 char target[MAX_SID_LENGTH + 1];
-                memset(target, 0, MAX_SID_LENGTH + 1);
-                memcpy(target, begin + 1, bytelen);
+                memset((target), 0, MAX_SID_LENGTH + 1);
+                memcpy((target), begin + 1, bytelen);
 
                 // Un-swap on big endian machines
                 ItoHLA((uint32_t *)target, (uint32_t *)target, blocklen);
@@ -2890,8 +2890,8 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs,
                 have_congctl = true;
 
                 char target[MAX_SID_LENGTH + 1];
-                memset(target, 0, MAX_SID_LENGTH + 1);
-                memcpy(target, begin + 1, bytelen);
+                memset((target), 0, MAX_SID_LENGTH + 1);
+                memcpy((target), begin + 1, bytelen);
                 // Un-swap on big endian machines
                 ItoHLA((uint32_t *)target, (uint32_t *)target, blocklen);
 
@@ -2927,8 +2927,8 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs,
                 // shall be normally limited somehow, especially if used
                 // together with SID!
                 char target[MAX_SID_LENGTH + 1];
-                memset(target, 0, MAX_SID_LENGTH + 1);
-                memcpy(target, begin + 1, bytelen);
+                memset((target), 0, MAX_SID_LENGTH + 1);
+                memcpy((target), begin + 1, bytelen);
                 string fltcfg = target;
 
                 HLOGC(mglog.Debug,
@@ -3095,7 +3095,7 @@ void CUDT::startConnect(const sockaddr *serv_addr, int32_t forced_isn)
     // record peer/server address
     delete m_pPeerAddr;
     m_pPeerAddr = (AF_INET == m_iIPversion) ? (sockaddr *)new sockaddr_in : (sockaddr *)new sockaddr_in6;
-    memcpy(m_pPeerAddr, serv_addr, (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
+    memcpy((m_pPeerAddr), serv_addr, (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
 
     // register this socket in the rendezvous queue
     // RendezevousQueue is used to temporarily store incoming handshake, non-rendezvous connections also require this
@@ -3730,7 +3730,7 @@ EConnectStatus CUDT::processRendezvous(const CPacket &response, const sockaddr *
 
                         // Just do the same thing as in CCryptoControl::processSrtMsg_KMREQ for that case,
                         // that is, copy the NOSECRET code into KMX message.
-                        memcpy(kmdata, &m_pCryptoControl->m_RcvKmState, sizeof(int32_t));
+                        memcpy((kmdata), &m_pCryptoControl->m_RcvKmState, sizeof(int32_t));
                         kmdatasize = 1;
                     }
                     break;
@@ -3760,14 +3760,14 @@ EConnectStatus CUDT::processRendezvous(const CPacket &response, const sockaddr *
                     {
                         // Sanity check
                         LOGC(mglog.Error, log << "IPE: KMX data not aligned to 4 bytes! size=" << msgsize);
-                        memset(kmdata + (kmdatasize * 4), 0, msgsize - (kmdatasize * 4));
+                        memset((kmdata + (kmdatasize * 4)), 0, msgsize - (kmdatasize * 4));
                         ++kmdatasize;
                     }
 
                     HLOGC(mglog.Debug,
                           log << "processRendezvous: getting KM DATA from the fore-recorded KMX from KMREQ, size="
                               << kmdatasize);
-                    memcpy(kmdata, m_pCryptoControl->getKmMsg_data(0), msgsize);
+                    memcpy((kmdata), m_pCryptoControl->getKmMsg_data(0), msgsize);
                 }
             }
             else
@@ -4187,7 +4187,7 @@ void CUDT::applyResponseSettings()
     m_iRcvCurrSeqNo    = m_ConnRes.m_iISN - 1;
     m_iRcvCurrPhySeqNo = m_ConnRes.m_iISN - 1;
     m_PeerID           = m_ConnRes.m_iID;
-    memcpy(m_piSelfIP, m_ConnRes.m_piPeerIP, 16);
+    memcpy((m_piSelfIP), m_ConnRes.m_piPeerIP, 16);
 
     HLOGC(mglog.Debug,
           log << CONID() << "applyResponseSettings: HANSHAKE CONCLUDED. SETTING: payload-size=" << m_iMaxSRTPayloadSize
@@ -4996,7 +4996,7 @@ void CUDT::acceptAndRespond(const sockaddr *peer, const CPacket &hspkt, CHandSha
     }
 
     // get local IP address and send the peer its IP address (because UDP cannot get local IP address)
-    memcpy(m_piSelfIP, w_hs.m_piPeerIP, 16);
+    memcpy((m_piSelfIP), w_hs.m_piPeerIP, 16);
     CIPAddress::ntop(peer, w_hs.m_piPeerIP, m_iIPversion);
 
     int udpsize          = m_iMSS - CPacket::UDP_HDR_SIZE;
@@ -5055,7 +5055,7 @@ void CUDT::acceptAndRespond(const sockaddr *peer, const CPacket &hspkt, CHandSha
     }
 
     m_pPeerAddr = (AF_INET == m_iIPversion) ? (sockaddr *)new sockaddr_in : (sockaddr *)new sockaddr_in6;
-    memcpy(m_pPeerAddr, peer, (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
+    memcpy((m_pPeerAddr), peer, (AF_INET == m_iIPversion) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
 
     // And of course, it is connected.
     m_bConnected = true;
@@ -9443,7 +9443,7 @@ bool CUDT::runAcceptHook(CUDT *acore, const sockaddr* peer, const CHandShake& hs
 
     // We need streamid.
     char target[MAX_SID_LENGTH + 1];
-    memset(target, 0, MAX_SID_LENGTH + 1);
+    memset((target), 0, MAX_SID_LENGTH + 1);
 
     // Just for a case, check the length.
     // This wasn't done before, and we could risk memory crash.
@@ -9477,10 +9477,10 @@ bool CUDT::runAcceptHook(CUDT *acore, const sockaddr* peer, const CHandShake& hs
                     return false;
                 }
                 // See comment at CUDT::interpretSrtHandshake().
-                memcpy(target, begin + 1, bytelen);
+                memcpy((target), begin + 1, bytelen);
 
                 // Un-swap on big endian machines
-                ItoHLA((uint32_t *)target, (uint32_t *)target, blocklen);
+                ItoHLA(((uint32_t *)target), (uint32_t *)target, blocklen);
 
                 // Nothing more expected from connection block.
                 break;

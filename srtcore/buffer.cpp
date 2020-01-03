@@ -169,7 +169,7 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
             pktlen = m_iMSS;
 
         HLOGC(dlog.Debug, log << "addBuffer: spreading from=" << (i*m_iMSS) << " size=" << pktlen << " TO BUFFER:" << (void*)s->m_pcData);
-        memcpy(s->m_pcData, data + i * m_iMSS, pktlen);
+        memcpy((s->m_pcData), data + i * m_iMSS, pktlen);
         s->m_iLength = pktlen;
 
         s->m_iMsgNoBitset = m_iNextMsgNo | inorder;
@@ -815,7 +815,7 @@ int CRcvBuffer::readBuffer(char* data, int len)
 
         HLOGC(dlog.Debug, log << CONID() << "readBuffer: copying buffer #" << p
                 << " targetpos=" << int(data-begin) << " sourcepos=" << m_iNotch << " size=" << unitsize << " left=" << (unitsize-rs));
-        memcpy(data, m_pUnit[p]->m_Packet.m_pcData + m_iNotch, unitsize);
+        memcpy((data), m_pUnit[p]->m_Packet.m_pcData + m_iNotch, unitsize);
         data += unitsize;
 
         if ((rs > unitsize) || (rs == int(m_pUnit[p]->m_Packet.getLength()) - m_iNotch))
@@ -1697,7 +1697,7 @@ int CRcvBuffer::readMsg(char* data, int len, SRT_MSGCTRL& w_msgctl)
 
         if (unitsize > 0)
         {
-            memcpy(data, m_pUnit[p]->m_Packet.m_pcData, unitsize);
+            memcpy((data), m_pUnit[p]->m_Packet.m_pcData, unitsize);
             data += unitsize;
             rs -= unitsize;
             IF_HEAVY_LOGGING(readMsgHeavyLogging(p));

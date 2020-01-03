@@ -690,17 +690,17 @@ void TcpMedium::Connect()
     ConfigurePost(m_socket);
 }
 
-int SrtMedium::ReadInternal(char* buffer, int size)
+int SrtMedium::ReadInternal(char* w_buffer, int size)
 {
-    int st = srt_recv(m_socket, buffer, size);
+    int st = srt_recv(m_socket, (w_buffer), size);
     if (st == SRT_ERROR)
         return -1;
     return st;
 }
 
-int TcpMedium::ReadInternal(char* buffer, int size)
+int TcpMedium::ReadInternal(char* w_buffer, int size)
 {
-    return ::recv(m_socket, buffer, size, 0);
+    return ::recv(m_socket, (w_buffer), size, 0);
 }
 
 bool SrtMedium::IsErrorAgain()
@@ -745,7 +745,7 @@ Medium::ReadStatus Medium::Read(bytevector& w_output)
     size_t pred_size = shift + m_chunk;
 
     w_output.resize(pred_size);
-    int st = ReadInternal(w_output.data() + shift, m_chunk);
+    int st = ReadInternal((w_output.data() + shift), m_chunk);
     if (st == -1)
     {
         if (IsErrorAgain())

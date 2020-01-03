@@ -368,7 +368,7 @@ void CSndUList::realloc_()
         throw CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0);
     }
 
-    memcpy(temp, m_pHeap, sizeof(CSNode *) * m_iArrayLength);
+    memcpy((temp), m_pHeap, sizeof(CSNode *) * m_iArrayLength);
     m_iArrayLength *= 2;
     delete[] m_pHeap;
     m_pHeap = temp;
@@ -841,7 +841,7 @@ void CRendezvousQueue::insert(
     r.m_pUDT       = u;
     r.m_iIPversion = ipv;
     r.m_pPeerAddr  = (AF_INET == ipv) ? (sockaddr *)new sockaddr_in : (sockaddr *)new sockaddr_in6;
-    memcpy(r.m_pPeerAddr, addr, (AF_INET == ipv) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
+    memcpy((r.m_pPeerAddr), addr, (AF_INET == ipv) ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
     r.m_tsTTL = ttl;
 
     m_lRendezvousID.push_back(r);
@@ -1575,8 +1575,8 @@ int CRcvQueue::recvfrom(int32_t id, CPacket& w_packet)
     // copies it into the passed packet and then the source packet
     // gets deleted. Why not simply return the originally stored packet,
     // without copying, allocation and deallocation?
-    memcpy(w_packet.m_nHeader, newpkt->m_nHeader, CPacket::HDR_SIZE);
-    memcpy(w_packet.m_pcData, newpkt->m_pcData, newpkt->getLength());
+    memcpy((w_packet.m_nHeader), newpkt->m_nHeader, CPacket::HDR_SIZE);
+    memcpy((w_packet.m_pcData), newpkt->m_pcData, newpkt->getLength());
     w_packet.setLength(newpkt->getLength());
 
     delete[] newpkt->m_pcData;

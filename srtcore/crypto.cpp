@@ -268,7 +268,7 @@ int CCryptoControl::processSrtMsg_KMREQ(
                     );
 
                 // Write the KM message into the field from which it will be next sent.
-                memcpy(m_SndKmMsg[0].Msg, kmdata, bytelen);
+                memcpy((m_SndKmMsg[0].Msg), kmdata, bytelen);
                 m_SndKmMsg[0].MsgLen = bytelen;
                 m_SndKmMsg[0].iPeerRetry = 0; // Don't start sending them upon connection :)
             }
@@ -497,7 +497,7 @@ void CCryptoControl::regenCryptoKm(bool sendit, bool bidirectional)
                     << FormatBinaryString((const uint8_t*)out_p[i], out_len_p[i]));
 
             /* New Keying material, send to peer */
-            memcpy(m_SndKmMsg[ki].Msg, out_p[i], out_len_p[i]);
+            memcpy((m_SndKmMsg[ki].Msg), out_p[i], out_len_p[i]);
             m_SndKmMsg[ki].MsgLen = out_len_p[i];
             m_SndKmMsg[ki].iPeerRetry = SRT_MAX_KMRETRY;  
 

@@ -408,14 +408,14 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr* peer, cons
          ns->m_pSelfAddr = (sockaddr*)(new sockaddr_in);
          ((sockaddr_in*)(ns->m_pSelfAddr))->sin_port = 0;
          ns->m_pPeerAddr = (sockaddr*)(new sockaddr_in);
-         memcpy(ns->m_pPeerAddr, peer, sizeof(sockaddr_in));
+         memcpy((ns->m_pPeerAddr), peer, sizeof(sockaddr_in));
       }
       else
       {
          ns->m_pSelfAddr = (sockaddr*)(new sockaddr_in6);
          ((sockaddr_in6*)(ns->m_pSelfAddr))->sin6_port = 0;
          ns->m_pPeerAddr = (sockaddr*)(new sockaddr_in6);
-         memcpy(ns->m_pPeerAddr, peer, sizeof(sockaddr_in6));
+         memcpy((ns->m_pPeerAddr), peer, sizeof(sockaddr_in6));
       }
    }
    catch (...)
@@ -847,7 +847,7 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* addr, int* addrle
          *addrlen = sizeof(sockaddr_in6);
 
       // copy address information of peer node
-      memcpy(addr, s->m_pPeerAddr, *addrlen);
+      memcpy((addr), s->m_pPeerAddr, *addrlen);
    }
 
    return u;
@@ -920,12 +920,12 @@ int CUDTUnited::connect(const SRTSOCKET u, const sockaddr* name, int namelen, in
    if (AF_INET == s->m_iIPversion)
    {
       s->m_pPeerAddr = (sockaddr*)(new sockaddr_in);
-      memcpy(s->m_pPeerAddr, name, sizeof(sockaddr_in));
+      memcpy((s->m_pPeerAddr), name, sizeof(sockaddr_in));
    }
    else
    {
       s->m_pPeerAddr = (sockaddr*)(new sockaddr_in6);
-      memcpy(s->m_pPeerAddr, name, sizeof(sockaddr_in6));
+      memcpy((s->m_pPeerAddr), name, sizeof(sockaddr_in6));
    }
 
    // CGuard destructor will delete cg and unlock s->m_ControlLock
@@ -1112,7 +1112,7 @@ int CUDTUnited::getpeername(const SRTSOCKET u, sockaddr* name, int* namelen)
       *namelen = sizeof(sockaddr_in6);
 
    // copy address information of peer node
-   memcpy(name, s->m_pPeerAddr, *namelen);
+   memcpy((name), s->m_pPeerAddr, *namelen);
 
    return 0;
 }
@@ -1136,7 +1136,7 @@ int CUDTUnited::getsockname(const SRTSOCKET u, sockaddr* name, int* namelen)
       *namelen = sizeof(sockaddr_in6);
 
    // copy address information of local node
-   memcpy(name, s->m_pSelfAddr, *namelen);
+   memcpy((name), s->m_pSelfAddr, *namelen);
 
    return 0;
 }

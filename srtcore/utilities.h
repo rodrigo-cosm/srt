@@ -833,8 +833,8 @@ inline std::string BufferStamp(const char* mem, size_t size)
 
     int n = 16-size;
     if (n > 0)
-        memset(spread+16-n, 0, n);
-    memcpy(spread, mem, min(size_t(16), size));
+        memset((spread + 16 - n), 0, n);
+    memcpy((spread), mem, min(size_t(16), size));
 
     // Now prepare 4 cells for uint32_t.
     union
@@ -842,7 +842,7 @@ inline std::string BufferStamp(const char* mem, size_t size)
         uint32_t sum;
         char cells[4];
     };
-    memset(cells, 0, 4);
+    memset((cells), 0, 4);
 
     for (size_t x = 0; x < 4; ++x)
         for (size_t y = 0; y < 4; ++y)
@@ -920,7 +920,7 @@ ATR_CONSTEXPR size_t Size(const V (&)[N]) ATR_NOEXCEPT { return N; }
 template <size_t DEPRLEN, typename ValueType>
 inline ValueType avg_iir(ValueType old_value, ValueType new_value)
 {
-    return (old_value*(DEPRLEN-1) + new_value)/DEPRLEN;
+    return (old_value * (DEPRLEN - 1) + new_value) / DEPRLEN;
 }
 
 #endif

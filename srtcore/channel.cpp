@@ -131,7 +131,7 @@ void CChannel::open(const sockaddr* addr)
 
       if (0 != ::bind(m_iSocket, addr, namelen))
          throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
-      memcpy(&m_BindAddr, addr, namelen);
+      memcpy((&m_BindAddr), addr, namelen);
       m_BindAddr.len = namelen;
    }
    else
@@ -155,7 +155,7 @@ void CChannel::open(const sockaddr* addr)
           ::freeaddrinfo(res);
           throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
       }
-      memcpy(&m_BindAddr, res->ai_addr, res->ai_addrlen);
+      memcpy((&m_BindAddr), res->ai_addr, res->ai_addrlen);
       m_BindAddr.len = (socklen_t) res->ai_addrlen;
 
       ::freeaddrinfo(res);
