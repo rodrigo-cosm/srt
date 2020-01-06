@@ -90,7 +90,6 @@ if (ENABLE_DEBUG)
 	set(ENABLE_HEAVY_LOGGING_DEFAULT ON)
 endif()
 
-set (ENABLE_PKTINFO_DEFAULT 0)
 
 # options
 option(CYGWIN_USE_POSIX "Should the POSIX API be used for cygwin. Ignored if the system isn't cygwin." OFF)
@@ -104,7 +103,6 @@ option(ENABLE_HAICRYPT_LOGGING "Should logging in haicrypt be enabled" 0)
 option(ENABLE_THREAD_LOGGING "Should logging for thread/mutex/CV be enabled" 0)
 option(ENABLE_SHARED "Should libsrt be built as a shared library" ON)
 option(ENABLE_STATIC "Should libsrt be built as a static library" ON)
-option(ENABLE_PKTINFO "Enable target IP address extraction on listner" ${ENABLE_PKTINFO_DEFAULT})
 option(ENABLE_RELATIVE_LIBPATH "Should application contain relative library paths, like ../lib" OFF)
 option(ENABLE_SUFLIP "Should suflip tool be built" OFF)
 option(ENABLE_GETNAMEINFO "In-logs sockaddr-to-string should do rev-dns" OFF)
@@ -118,15 +116,10 @@ option(ENABLE_MONOTONIC_CLOCK "Enforced clock_gettime with monotonic clock on GC
 option(USE_OPENSSL_PC "Use pkg-config to find OpenSSL libraries" ON)
 option(USE_BUSY_WAITING "Enable more accurate sending times at a cost of potentially higher CPU load" OFF)
 option(USE_GNUSTL "Get c++ library/headers from the gnustl.pc" OFF)
-option(ENABLE_CONSELF_CHECK_WIN32 "Enable rendezvous-connect-to-self prevention on Windows (adds Iphlpapi.lib dep)" OFF)
 
 set(TARGET_srt "srt" CACHE STRING "The name for the SRT library")
 
 set (DISPLAY_LOGGING DISABLED)
-if (WIN32 AND ENABLE_PKTINFO)
-	message(FATAL_ERROR "PKTINFO is not implemented on Windows.")
-endif()
-
 
 if (NOT ENABLE_LOGGING)
 	set (ENABLE_HEAVY_LOGGING OFF)
@@ -450,11 +443,6 @@ if (ENABLE_GETNAMEINFO)
 	list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_GETNAMEINFO=1")
 endif()
 
-if (ENABLE_PKTINFO)
-	list(APPEND SRT_EXTRA_CFLAGS "-DSRT_ENABLE_PKTINFO=1")
-endif()
-
-
 if (ENABLE_THREAD_CHECK)
 	add_definitions(
 		-DSRT_ENABLE_THREADCHECK=1
@@ -477,8 +465,9 @@ if (ENABLE_CODE_COVERAGE)
 	if (HAVE_COMPILER_GNU_COMPAT)
 		add_definitions(-g -O0 --coverage)
 		link_libraries(--coverage)
+		message(STATUS "ENABLE_CODE_COVERAGE: ON")
 	else()
-		message(FATAL_ERROR "Code coverage option is not supported on this platform")
+		message(FATAL_ERROR "ENABLE_CODE_COVERAGE: option is not supported on this platform")
 	endif()
 endif()
 
@@ -840,10 +829,6 @@ macro(srt_add_program name)
 	target_include_directories(${name} PRIVATE apps)
 	target_include_directories(${name} PRIVATE common)
 	install(TARGETS ${name} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-	if (MICROSOFT AND ENABLE_CONSELF_CHECK_WIN32)
-		target_link_libraries(${name} Iphlpapi)
-		add_definitions(-DSRT_ENABLE_CONSELF_CHECK_WIN32)
-	endif()
 endmacro()
 
 macro(srt_make_application name)
@@ -874,7 +859,6 @@ macro(srt_make_application name)
 	if (USE_GNUSTL)
 		target_link_libraries(${name} PRIVATE ${GNUSTL_LIBRARIES} ${GNUSTL_LDFLAGS})
 	endif()
-
 	if (srt_libspec_static AND CMAKE_DL_LIBS)
 		target_link_libraries(${name} ${CMAKE_DL_LIBS})
 	endif()
