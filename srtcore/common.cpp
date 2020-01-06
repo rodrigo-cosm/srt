@@ -71,16 +71,14 @@ modified by
 #include <srt_compat.h> // SysStrError
 
 using namespace std;
+using namespace srt::sync;
 
-
-bool CTimer::m_bUseMicroSecond = false;
-uint64_t CTimer::s_ullCPUFrequency = CTimer::readCPUFrequency();
 
 pthread_mutex_t CTimer::m_EventLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t CTimer::m_EventCond = PTHREAD_COND_INITIALIZER;
 
 CTimer::CTimer():
-m_ullSchedTime_tk(),
+m_tsSchedTime(),
 m_TickCond(),
 m_TickLock()
 {
@@ -102,98 +100,12 @@ CTimer::~CTimer()
     pthread_cond_destroy(&m_TickCond);
 }
 
-void CTimer::rdtsc(uint64_t &x)
+void CTimer::sleepto(const srt::sync::steady_clock::time_point &nexttime)
 {
-   if (m_bUseMicroSecond)
-   {
-      x = getTime();
-      return;
-   }
+   // Use class member such that the method can be interrupted by others
+   m_tsSchedTime = nexttime;
 
-   #ifdef IA32
-      uint32_t lval, hval;
-      //asm volatile ("push %eax; push %ebx; push %ecx; push %edx");
-      //asm volatile ("xor %eax, %eax; cpuid");
-      asm volatile ("rdtsc" : "=a" (lval), "=d" (hval));
-      //asm volatile ("pop %edx; pop %ecx; pop %ebx; pop %eax");
-      x = hval;
-      x = (x << 32) | lval;
-   #elif defined(IA64)
-      asm ("mov %0=ar.itc" : "=r"(x) :: "memory");
-   #elif defined(AMD64)
-      uint32_t lval, hval;
-      asm ("rdtsc" : "=a" (lval), "=d" (hval));
-      x = hval;
-      x = (x << 32) | lval;
-   #elif defined(_WIN32)
-      // This function should not fail, because we checked the QPC
-      // when calling to QueryPerformanceFrequency. If it failed,
-      // the m_bUseMicroSecond was set to true.
-      QueryPerformanceCounter((LARGE_INTEGER *)&x);
-   #elif defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
-      x = mach_absolute_time();
-   #else
-      // use system call to read time clock for other archs
-      x = getTime();
-   #endif
-}
-
-uint64_t CTimer::readCPUFrequency()
-{
-   uint64_t frequency = 1;  // 1 tick per microsecond.
-
-#if defined(IA32) || defined(IA64) || defined(AMD64)
-    uint64_t t1, t2;
-
-    rdtsc(t1);
-    timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = 100000000;
-    nanosleep(&ts, NULL);
-    rdtsc(t2);
-
-    // CPU clocks per microsecond
-    frequency = (t2 - t1) / 100000;
-#elif defined(_WIN32)
-    LARGE_INTEGER counts_per_sec;
-    if (QueryPerformanceFrequency(&counts_per_sec))
-        frequency = counts_per_sec.QuadPart / 1000000;
-#elif defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
-    mach_timebase_info_data_t info;
-    mach_timebase_info(&info);
-    frequency = info.denom * uint64_t(1000) / info.numer;
-#endif
-
-   // Fall back to microsecond if the resolution is not high enough.
-   if (frequency < 10)
-   {
-      frequency = 1;
-      m_bUseMicroSecond = true;
-   }
-   return frequency;
-}
-
-uint64_t CTimer::getCPUFrequency()
-{
-   return s_ullCPUFrequency;
-}
-
-void CTimer::sleep(uint64_t interval_tk)
-{
-   uint64_t t;
-   rdtsc(t);
-
-   // sleep next "interval" time
-   sleepto(t + interval_tk);
-}
-
-void CTimer::sleepto(uint64_t nexttime_tk)
-{
-    // Use class member such that the method can be interrupted by others
-    m_ullSchedTime_tk = nexttime_tk;
-
-    uint64_t t;
-    rdtsc(t);
+   steady_clock::time_point t = steady_clock::now();
 
 #if USE_BUSY_WAITING
 #if defined(_WIN32)
@@ -201,20 +113,20 @@ void CTimer::sleepto(uint64_t nexttime_tk)
 #else
     const uint64_t threshold_us = 1000;    // 1 ms on non-Windows platforms
 #endif
-#endif
+#endif // USE_BUSY_WAITING
 
-    while (t < m_ullSchedTime_tk)
+    while (t < m_tsSchedTime)
     {
 #if USE_BUSY_WAITING
-        uint64_t wait_us = (m_ullSchedTime_tk - t) / s_ullCPUFrequency;
+        uint64_t wait_us = count_microseconds(m_tsSchedTime - t);
         if (wait_us <= 2 * threshold_us)
             break;
         wait_us -= threshold_us;
 #else
-        const uint64_t wait_us = (m_ullSchedTime_tk - t) / s_ullCPUFrequency;
+        const uint64_t wait_us = count_microseconds(m_tsSchedTime - t);
         if (wait_us == 0)
             break;
-#endif
+#endif // USE_BUSY_WAITING
 
         timespec timeout;
 #if ENABLE_MONOTONIC_CLOCK
@@ -228,7 +140,7 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         const uint64_t time_us = now.tv_sec * uint64_t(1000000) + now.tv_usec + wait_us;
         timeout.tv_sec = time_us / 1000000;
         timeout.tv_nsec = (time_us % 1000000) * 1000;
-#endif
+#endif // ENABLE_MONOTONIC_CLOCK
 
         THREAD_PAUSED();
         pthread_mutex_lock(&m_TickLock);
@@ -236,11 +148,11 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         pthread_mutex_unlock(&m_TickLock);
         THREAD_RESUMED();
 
-        rdtsc(t);
+        t = steady_clock::now();
     }
 
 #if USE_BUSY_WAITING
-    while (t < m_ullSchedTime_tk)
+    while (t < m_tsSchedTime)
     {
 #ifdef IA32
         __asm__ volatile ("pause; rep; nop; nop; nop; nop; nop;");
@@ -256,15 +168,15 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         __nop();
 #endif
 
-        rdtsc(t);
+       t = steady_clock::now();
     }
-#endif
+#endif // USE_BUSY_WAITING
 }
 
 void CTimer::interrupt()
 {
    // schedule the sleepto time to the current CCs, so that it will stop
-   rdtsc(m_ullSchedTime_tk);
+   m_tsSchedTime = steady_clock::now();
    tick();
 }
 
@@ -273,28 +185,6 @@ void CTimer::tick()
     pthread_cond_signal(&m_TickCond);
 }
 
-uint64_t CTimer::getTime()
-{
-    // XXX Do further study on that. Currently Cygwin is also using gettimeofday,
-    // however Cygwin platform is supported only for testing purposes.
-
-    //For other systems without microsecond level resolution, add to this conditional compile
-#if defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
-    // Otherwise we will have an infinite recursive functions calls
-    if (m_bUseMicroSecond == false)
-    {
-        uint64_t x;
-        rdtsc(x);
-        return x / s_ullCPUFrequency;
-    }
-    // Specific fix may be necessary if rdtsc is not available either.
-    // Going further on Apple platforms might cause issue, fixed with PR #301.
-    // But it is very unlikely for the latest platforms.
-#endif
-    timeval t;
-    gettimeofday(&t, 0);
-    return t.tv_sec * uint64_t(1000000) + t.tv_usec;
-}
 
 void CTimer::triggerEvent()
 {
@@ -582,8 +472,9 @@ void CCondDelegate::wait()
 /// @param [in] timestamp Absolute time (since epoch [us]) to wait up to
 /// @retval true Resumed due to getting a CV signal
 /// @retval false Resumed due to being past @a timestamp
-bool CCondDelegate::wait_until(uint64_t timestamp)
+bool CCondDelegate::wait_until(const steady_clock::time_point& timestamp_tp)
 {
+    uint64_t timestamp = count_microseconds(timestamp_tp);
     timespec locktime;
     locktime.tv_sec = timestamp / 1000000;
     locktime.tv_nsec = (timestamp % 1000000) * 1000;
@@ -600,12 +491,10 @@ bool CCondDelegate::wait_until(uint64_t timestamp)
 /// @param [in] delay Maximum time to wait since the moment of the call
 /// @retval true Resumed due to getting a CV signal
 /// @retval false Resumed due to being past @a timestamp
-bool CCondDelegate::wait_for(uint64_t delay)
+bool CCondDelegate::wait_for(const steady_clock::duration& delay)
 {
-    timeval now;
-    gettimeofday(&now, 0); //  CTimer::getTime ???
-    uint64_t time_us = now.tv_sec * uint64_t(1000000) + now.tv_usec + delay;
-    return wait_until(time_us);
+    steady_clock::time_point timeout = steady_clock::now() + delay;
+    return wait_until(timeout);
 }
 
 void CCondDelegate::lock_signal()
@@ -665,11 +554,7 @@ m_iMinor(minor)
       m_iErrno = err;
 }
 
-CUDTException::~CUDTException()
-{
-}
-
-const char* CUDTException::getErrorMessage()
+const char* CUDTException::getErrorMessage() const ATR_NOTHROW
 {
    // translate "Major:Minor" code into text message.
 

@@ -62,6 +62,7 @@ modified by
 #include "queue.h"
 
 using namespace std;
+using namespace srt::sync;
 using namespace srt_logging;
 
 CUnitQueue::CUnitQueue()
@@ -282,20 +283,20 @@ void CSndUList::update(const CUDT* u, EReschedule reschedule)
 
         if (n->m_iHeapLoc == 0)
         {
-            n->m_llTimeStamp_tk = 1;
+            n->m_tsTimeStamp = steady_clock::now();
             m_pTimer->interrupt();
             return;
         }
 
         remove_(u);
-        insert_norealloc_(1, u);
+        insert_norealloc_(steady_clock::now(), u);
         return;
     }
 
-    insert_(1, u);
+    insert_(steady_clock::now(), u);
 }
 
-int CSndUList::pop(ref_t<sockaddr_any> r_addr, ref_t<CPacket> r_pkt, ref_t<sockaddr_any> r_src)
+int CSndUList::pop(ref_t<sockaddr_any> r_addr, ref_t<CPacket> r_pkt)
 {
     CGuard listguard(m_ListLock, "List");
 
@@ -303,9 +304,7 @@ int CSndUList::pop(ref_t<sockaddr_any> r_addr, ref_t<CPacket> r_pkt, ref_t<socka
         return -1;
 
     // no pop until the next schedulled time
-    uint64_t ts;
-    CTimer::rdtsc(ts);
-    if (ts < m_pHeap[0]->m_llTimeStamp_tk)
+    if (m_pHeap[0]->m_tsTimeStamp > steady_clock::now())
         return -1;
 
     CUDT* u = m_pHeap[0]->m_pUDT;
@@ -323,14 +322,17 @@ int CSndUList::pop(ref_t<sockaddr_any> r_addr, ref_t<CPacket> r_pkt, ref_t<socka
         return -1;
 
     // pack a packet from the socket
-    if (u->packData(r_pkt, Ref(ts), r_src) <= 0)
+    const std::pair<int, steady_clock::time_point> res_time = u->packData(*r_pkt);
+
+    if (res_time.first <= 0)
         return -1;
 
     *r_addr = u->m_PeerAddr;
 
     // insert a new entry, ts is the next processing time
-    if (ts > 0)
-        insert_norealloc_(ts, u);
+    const steady_clock::time_point send_time = res_time.second;
+    if (!is_zero(send_time))
+        insert_norealloc_(send_time, u);
 
     return 1;
 }
@@ -342,14 +344,14 @@ void CSndUList::remove(const CUDT* u)
     remove_(u);
 }
 
-uint64_t CSndUList::getNextProcTime()
+steady_clock::time_point CSndUList::getNextProcTime()
 {
     CGuard listguard(m_ListLock, "List");
 
     if (-1 == m_iLastEntry)
-        return 0;
+        return steady_clock::time_point();
 
-    return m_pHeap[0]->m_llTimeStamp_tk;
+    return m_pHeap[0]->m_tsTimeStamp;
 }
 
 void CSndUList::realloc_()
@@ -371,7 +373,7 @@ void CSndUList::realloc_()
     m_pHeap = temp;
 }
 
-void CSndUList::insert_(int64_t ts, const CUDT* u)
+void CSndUList::insert_(const steady_clock::time_point& ts, const CUDT* u)
 {
     // increase the heap array size if necessary
     if (m_iLastEntry == m_iArrayLength - 1)
@@ -380,7 +382,7 @@ void CSndUList::insert_(int64_t ts, const CUDT* u)
     insert_norealloc_(ts, u);
 }
 
-void CSndUList::insert_norealloc_(int64_t ts, const CUDT* u)
+void CSndUList::insert_norealloc_(const steady_clock::time_point& ts, const CUDT* u)
 {
     CSNode* n = u->m_pSNode;
 
@@ -392,14 +394,14 @@ void CSndUList::insert_norealloc_(int64_t ts, const CUDT* u)
 
     m_iLastEntry++;
     m_pHeap[m_iLastEntry] = n;
-    n->m_llTimeStamp_tk   = ts;
-
+    n->m_tsTimeStamp = ts;
+    
     int q = m_iLastEntry;
     int p = q;
     while (p != 0)
     {
         p = (q - 1) >> 1;
-        if (m_pHeap[p]->m_llTimeStamp_tk <= m_pHeap[q]->m_llTimeStamp_tk)
+        if (m_pHeap[p]->m_tsTimeStamp <= m_pHeap[q]->m_tsTimeStamp)
             break;
 
         swap(m_pHeap[p], m_pHeap[q]);
@@ -437,10 +439,10 @@ void CSndUList::remove_(const CUDT* u)
         int p = q * 2 + 1;
         while (p <= m_iLastEntry)
         {
-            if ((p + 1 <= m_iLastEntry) && (m_pHeap[p]->m_llTimeStamp_tk > m_pHeap[p + 1]->m_llTimeStamp_tk))
+            if ((p + 1 <= m_iLastEntry) && (m_pHeap[p]->m_tsTimeStamp > m_pHeap[p + 1]->m_tsTimeStamp))
                 p++;
 
-            if (m_pHeap[q]->m_llTimeStamp_tk > m_pHeap[p]->m_llTimeStamp_tk)
+            if (m_pHeap[q]->m_tsTimeStamp > m_pHeap[p]->m_tsTimeStamp)
             {
                 swap(m_pHeap[p], m_pHeap[q]);
                 m_pHeap[p]->m_iHeapLoc = p;
@@ -535,13 +537,13 @@ void* CSndQueue::worker(void* param)
 
     while (!self->m_bClosing)
     {
-        uint64_t next_time = self->m_pSndUList->getNextProcTime();
+        steady_clock::time_point next_time = self->m_pSndUList->getNextProcTime();
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         self->m_WorkerStats.lIteration++;
 #endif /* SRT_DEBUG_SNDQ_HIGHRATE */
 
-        if (next_time <= 0)
+        if (is_zero(next_time))
         {
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
             self->m_WorkerStats.lNotReadyTs++;
@@ -565,8 +567,7 @@ void* CSndQueue::worker(void* param)
         }
 
         // wait until next processing time of the first socket on the list
-        uint64_t currtime;
-        CTimer::rdtsc(currtime);
+        const steady_clock::time_point currtime = steady_clock::now();
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         if (self->m_ullDbgTime <= currtime)
@@ -599,7 +600,7 @@ void* CSndQueue::worker(void* param)
         sockaddr_any addr;
         CPacket      pkt;
         sockaddr_any source_addr;
-        if (self->m_pSndUList->pop(Ref(addr), Ref(pkt), Ref(source_addr)) < 0)
+        if (self->m_pSndUList->pop(Ref(addr), Ref(pkt)) < 0)
         {
             continue;
 
@@ -617,7 +618,7 @@ void* CSndQueue::worker(void* param)
             HLOGC(dlog.Debug,
                   log << self->CONID() << "chn:SENDING SIZE " << pkt.getLength() << " SEQ: " << pkt.getSeqNo());
         }
-        self->m_pChannel->sendto(addr, pkt, source_addr);
+        self->m_pChannel->sendto(addr, pkt);
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         self->m_WorkerStats.lSendTo++;
@@ -628,10 +629,10 @@ void* CSndQueue::worker(void* param)
     return NULL;
 }
 
-int CSndQueue::sendto(const sockaddr_any& addr, CPacket& packet, const sockaddr_any& src)
+int CSndQueue::sendto(const sockaddr_any& addr, CPacket& packet)
 {
     // send out the packet immediately (high priority), this is a control packet
-    m_pChannel->sendto(addr, packet, src);
+    m_pChannel->sendto(addr, packet);
     return (int)packet.getLength();
 }
 
@@ -647,7 +648,7 @@ CRcvUList::~CRcvUList() {}
 void CRcvUList::insert(const CUDT* u)
 {
     CRNode* n = u->m_pRNode;
-    CTimer::rdtsc(n->m_llTimeStamp_tk);
+    n->m_tsTimeStamp = steady_clock::now();
 
     if (NULL == m_pUList)
     {
@@ -703,7 +704,7 @@ void CRcvUList::update(const CUDT* u)
     if (!n->m_bOnList)
         return;
 
-    CTimer::rdtsc(n->m_llTimeStamp_tk);
+    n->m_tsTimeStamp = steady_clock::now();
 
     // if n is the last node, do not need to change
     if (NULL == n->m_pNext)
@@ -825,7 +826,8 @@ CRendezvousQueue::~CRendezvousQueue()
     m_lRendezvousID.clear();
 }
 
-void CRendezvousQueue::insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl)
+void CRendezvousQueue::insert(
+    const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, const steady_clock::time_point &ttl)
 {
     CGuard vg(m_RIDVectorLock, "RIDVector");
 
@@ -833,7 +835,7 @@ void CRendezvousQueue::insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& 
     r.m_iID        = id;
     r.m_pUDT       = u;
     r.m_PeerAddr = addr;
-    r.m_ullTTL = ttl;
+    r.m_tsTTL = ttl;
 
     m_lRendezvousID.push_back(r);
 }
@@ -909,14 +911,16 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
         {
             // If no packet has been received from the peer,
             // avoid sending too many requests, at most 1 request per 250ms
-            const uint64_t then     = i->m_pUDT->m_llLastReqTime;
-            const uint64_t now      = CTimer::getTime();
-            const bool     nowstime = (now - then) > 250000;
+            const steady_clock::time_point then = i->m_pUDT->m_tsLastReqTime;
+            const steady_clock::time_point now = steady_clock::now();
+            const steady_clock::duration timeout_250ms = milliseconds_from(250);
+            const bool now_is_time = (now - then) > timeout_250ms;
             HLOGC(mglog.Debug,
-                  log << "RID:@" << i->m_iID << " then=" << then << " now=" << now << " passed=" << (now - then)
-                      << "<=> 250000 -- now's " << (nowstime ? "" : "NOT ") << "the time");
+                  log << "RID:@" << i->m_iID << " then=" << FormatTime(then)
+                      << " now=" << FormatTime(now) << " passed=" << count_microseconds(now - then)
+                      << "<=> 250000 -- now's " << (now_is_time ? "" : "NOT ") << "the time");
 
-            if (!nowstime)
+            if (!now_is_time)
                 continue;
         }
 
@@ -936,10 +940,10 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
         //
         // Maybe the time should be simply checked once and the whole loop not
         // done when "it's not the time"?
-        if (CTimer::getTime() >= i->m_ullTTL)
+        if (steady_clock::now() >= i->m_tsTTL)
         {
             HLOGC(mglog.Debug,
-                  log << "RendezvousQueue: EXPIRED (" << (i->m_ullTTL ? "enforced on FAILURE" : "passed TTL")
+                  log << "RendezvousQueue: EXPIRED (" << (!is_zero(i->m_tsTTL) ? "enforced on FAILURE" : "passed TTL")
                       << ". removing from queue");
             // connection timer expired, acknowledge app via epoll
             i->m_pUDT->m_bConnecting = false;
@@ -991,7 +995,7 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                 // its already set in this case.
                 LOGC(mglog.Error, log << "RendezvousQueue: processAsyncConnectRequest FAILED. Setting TTL as EXPIRED.");
                 i->m_pUDT->sendCtrl(UMSG_SHUTDOWN);
-                i->m_ullTTL = 0; // Make it expire right now, will be picked up at the next iteration
+                i->m_tsTTL = steady_clock::time_point(); // Make it expire right now, will be picked up at the next iteration
 #if ENABLE_HEAVY_LOGGING
                 ++debug_nfail;
 #endif
@@ -1165,12 +1169,10 @@ void* CRcvQueue::worker(void* param)
         // OTHERWISE: this is an "AGAIN" situation. No data was read, but the process should continue.
 
         // take care of the timing event for all UDT sockets
-        uint64_t currtime_tk;
-        CTimer::rdtsc(currtime_tk);
+        const steady_clock::time_point curtime_minus_syn = steady_clock::now() - microseconds_from(CUDT::COMM_SYN_INTERVAL_US);
 
         CRNode*  ul             = self->m_pRcvUList->m_pUList;
-        const uint64_t ctime_tk = currtime_tk - CUDT::COMM_SYN_INTERVAL_US * CTimer::getCPUFrequency();
-        while ((NULL != ul) && (ul->m_llTimeStamp_tk < ctime_tk))
+        while ((NULL != ul) && (ul->m_tsTimeStamp < curtime_minus_syn))
         {
             CUDT* u = ul->m_pUDT;
 
@@ -1534,7 +1536,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
 
     if (i == m_mBuffer.end())
     {
-        CTimer::condTimedWaitUS(&m_PassCond, &m_PassLock, 1000000);
+        SyncEvent::wait_for(&m_PassCond, &m_PassLock, seconds_from(1));
 
         i = m_mBuffer.find(id);
         if (i == m_mBuffer.end())
@@ -1564,8 +1566,6 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
     memcpy(packet.m_nHeader, newpkt->m_nHeader, CPacket::HDR_SIZE);
     memcpy(packet.m_pcData, newpkt->m_pcData, newpkt->getLength());
     packet.setLength(newpkt->getLength());
-
-    packet.m_DestAddr = newpkt->m_DestAddr;
 
     delete[] newpkt->m_pcData;
     delete newpkt;
@@ -1598,10 +1598,10 @@ void CRcvQueue::removeListener(const CUDT* u)
         m_pListener = NULL;
 }
 
-void CRcvQueue::registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl)
+void CRcvQueue::registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, const srt::sync::steady_clock::time_point& ttl)
 {
     HLOGC(mglog.Debug,
-          log << "registerConnector: adding @" << id << " addr=" << SockaddrToString(addr) << " TTL=" << ttl);
+          log << "registerConnector: adding @" << id << " addr=" << SockaddrToString(addr) << " TTL=" << FormatTime(ttl));
     m_pRendezvousQueue->insert(id, u, addr, ttl);
 }
 
