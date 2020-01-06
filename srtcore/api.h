@@ -80,7 +80,7 @@ public:
    /// of sockets in order to prevent other methods from accessing invalid address.
    /// A timer is started and the socket will be removed after approximately
    /// 1 second (see CUDTUnited::checkBrokenSockets()).
-   uint64_t m_ClosureTimeStamp;
+   srt::sync::steady_clock::time_point m_tsClosureTimeStamp;
 
    int m_iIPversion;                         //< IP version
    sockaddr* m_pSelfAddr;                    //< pointer to the local address of the socket
@@ -215,7 +215,7 @@ private:
 private:
    std::map<SRTSOCKET, CUDTSocket*> m_Sockets;       // stores all the socket structures
 
-   pthread_mutex_t m_GlobControlLock;              // used to synchronize UDT API
+   pthread_mutex_t m_GlobControlLock;                // used to synchronize UDT API
 
    pthread_mutex_t m_IDLock;                         // used to synchronize ID generation
    SRTSOCKET m_SocketIDGenerator;                             // seed to generate a new unique socket ID

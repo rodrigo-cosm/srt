@@ -116,6 +116,38 @@ string Join(const vector<string>& in, string sep)
     return os.str();
 }
 
+// OPTION LIBRARY
+
+OptionScheme::Args OptionName::DetermineTypeFromHelpText(const std::string& helptext)
+{
+    if (helptext.empty())
+        return OptionScheme::ARG_NONE;
+
+
+    if (helptext[0] == '<')
+    {
+        // If the argument is <one-argument>, then it's ARG_NONE.
+        // If it's <multiple-arguments...>, then it's ARG_VAR.
+        // When closing angle bracket isn't found, fallback to ARG_ONE.
+        size_t pos = helptext.find('>');
+        if (pos == std::string::npos)
+            return OptionScheme::ARG_ONE;
+
+        if (pos >= 4 && helptext.substr(pos-4, 4) == "...>")
+            return OptionScheme::ARG_VAR;
+    }
+
+    if (helptext[0] == '[')
+    {
+        // Argument in [] means it is optional; in this case
+        // you should state that the argument can be given or not.
+        return OptionScheme::ARG_VAR;
+    }
+
+    // Also as fallback
+    return OptionScheme::ARG_NONE;
+}
+
 options_t ProcessOptions(char* const* argv, int argc, std::vector<OptionScheme> scheme)
 {
     using namespace std;
@@ -170,7 +202,7 @@ options_t ProcessOptions(char* const* argv, int argc, std::vector<OptionScheme> 
             // Find the key in the scheme. If not found, treat it as ARG_NONE.
             for (auto s: scheme)
             {
-                if (s.id.names.count(current_key))
+                if (s.names().count(current_key))
                 {
                     // cout << "*D found '" << current_key << "' in scheme type=" << int(s.type) << endl;
                     if (s.type == OptionScheme::ARG_NONE)
@@ -264,7 +296,6 @@ string OptionHelpItem(const OptionName& o)
     out += " -" + hlp;
     return out;
 }
-
 
 // Stats module
 
@@ -454,4 +485,5 @@ SrtStatsPrintFormat ParsePrintFormat(string pf)
 
     return SRTSTATS_PROFMAT_INVALID;
 }
+
 
