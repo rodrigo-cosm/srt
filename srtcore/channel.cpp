@@ -371,7 +371,7 @@ void CChannel::setIpToS(int tos)
 
 #endif
 
-int CChannel::ioctlQuery(int SRT_ATR_UNUSED type) const
+int CChannel::ioctlQuery(int type SRT_ATR_UNUSED) const
 {
 #if defined(unix) || defined(__APPLE__)
     int value = 0;
@@ -382,7 +382,7 @@ int CChannel::ioctlQuery(int SRT_ATR_UNUSED type) const
     return -1;
 }
 
-int CChannel::sockoptQuery(int SRT_ATR_UNUSED level, int SRT_ATR_UNUSED option) const
+int CChannel::sockoptQuery(int level SRT_ATR_UNUSED, int option SRT_ATR_UNUSED) const
 {
 #if defined(unix) || defined(__APPLE__)
     int value = 0;
@@ -411,16 +411,12 @@ void CChannel::getPeerAddr(ref_t<sockaddr_any> addr) const
 }
 
 
-int CChannel::sendto(const sockaddr_any& addr, CPacket& packet, const sockaddr_any& source_addr SRT_ATR_UNUSED) const
+int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
 {
     LOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
         << " target=@" << packet.m_iID
         << " size=" << packet.getLength()
-        << " pkt.ts=" << FormatTime(packet.m_iTimeStamp)
-#ifdef SRT_ENABLE_PKTINFO
-        << " sourceIP="
-        << (m_bBindMasked && !source_addr.isany() ? SockaddrToString(source_addr) : "default")
-#endif
+        << " pkt.ts=" << packet.m_iTimeStamp
         << " " << packet.Info());
 
 #ifdef SRT_TEST_FAKE_LOSS

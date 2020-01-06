@@ -511,8 +511,6 @@ CPacket* CPacket::clone() const
    memcpy(pkt->m_pcData, m_pcData, m_PacketVector[PV_DATA].size());
    pkt->m_PacketVector[PV_DATA].setLength(m_PacketVector[PV_DATA].size());
 
-   pkt->m_DestAddr = m_DestAddr;
-
    return pkt;
 }
 
@@ -544,6 +542,7 @@ inline void SprintSpecialWord(std::ostream& os, int32_t val)
         os << val;
 }
 
+#if ENABLE_LOGGING
 std::string CPacket::Info()
 {
     std::ostringstream os;
@@ -601,3 +600,4 @@ std::string CPacket::Info()
 
     return os.str();
 }
+#endif
