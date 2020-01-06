@@ -147,7 +147,7 @@ private:
 struct CSNode
 {
    CUDT* m_pUDT;		// Pointer to the instance of CUDT socket
-   uint64_t m_llTimeStamp_tk;      // Time Stamp
+   srt::sync::steady_clock::time_point m_tsTimeStamp;
 
    int m_iHeapLoc;		// location on the heap, -1 means not on the heap
 };
@@ -177,7 +177,7 @@ public:
       /// @param [out] pkt the next packet to be sent
       /// @return 1 if successfully retrieved, -1 if no packet found.
 
-   int pop(ref_t<sockaddr_any> addr, ref_t<CPacket> pkt, ref_t<sockaddr_any> src);
+   int pop(ref_t<sockaddr_any> addr, ref_t<CPacket> pkt);
 
       /// Remove UDT instance from the list.
       /// @param [in] u pointer to the UDT instance
@@ -187,7 +187,7 @@ public:
       /// Retrieve the next scheduled processing time.
       /// @return Scheduled processing time of the first UDT socket in the list.
 
-   uint64_t getNextProcTime();
+   srt::sync::steady_clock::time_point getNextProcTime();
 
 private:
 
@@ -199,14 +199,14 @@ private:
    ///
    /// @param [in] ts time stamp: next processing time
    /// @param [in] u pointer to the UDT instance
-   void insert_(int64_t ts, const CUDT* u);
+   void insert_(const srt::sync::steady_clock::time_point &ts, const CUDT* u);
 
    /// Insert a new UDT instance into the list without realloc.
    /// Should be called if there is a gauranteed space for the element.
    ///
    /// @param [in] ts time stamp: next processing time
    /// @param [in] u pointer to the UDT instance
-   void insert_norealloc_(int64_t ts, const CUDT* u);
+   void insert_norealloc_(const srt::sync::steady_clock::time_point &ts, const CUDT* u);
 
    void remove_(const CUDT* u);
 
@@ -230,7 +230,7 @@ private:
 struct CRNode
 {
    CUDT* m_pUDT;                // Pointer to the instance of CUDT socket
-   uint64_t m_llTimeStamp_tk;      // Time Stamp
+   srt::sync::steady_clock::time_point m_tsTimeStamp;      // Time Stamp
 
    CRNode* m_pPrev;             // previous link
    CRNode* m_pNext;             // next link
@@ -325,7 +325,8 @@ public:
    ~CRendezvousQueue();
 
 public:
-   void insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
+   void insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr,
+               const srt::sync::steady_clock::time_point &ttl);
 
    // The should_lock parameter is given here to state as to whether
    // the lock should be applied here. If called from some internals
@@ -339,12 +340,12 @@ public:
 private:
    struct CRL
    {
-      SRTSOCKET m_iID;			// UDT socket ID (self)
-      CUDT* m_pUDT;			// UDT instance
+      SRTSOCKET m_iID;        // UDT socket ID (self)
+      CUDT* m_pUDT;           // UDT instance
       sockaddr_any m_PeerAddr;		// UDT sonnection peer address
-      uint64_t m_ullTTL;			// the time that this request expires
+      srt::sync::steady_clock::time_point m_tsTTL;    // the time that this request expires
    };
-   std::list<CRL> m_lRendezvousID;      // The sockets currently in rendezvous mode
+   std::list<CRL> m_lRendezvousID;    // The sockets currently in rendezvous mode
 
    pthread_mutex_t m_RIDVectorLock;
 };
@@ -372,16 +373,12 @@ public:
 
    void init(CChannel* c, CTimer* t);
 
-      /// Send out a packet to a given address. The @a src parameter is
-      /// blindly passed by the caller down the call with intention to
-      /// be received eventually by CChannel::sendto, and used only if
-      /// appropriate conditions state so.
+      /// Send out a packet to a given address.
       /// @param [in] addr destination address
       /// @param [in] packet packet to be sent out
-      /// @param [in] src The source IP address (details above)
       /// @return Size of data sent out.
 
-   int sendto(const sockaddr_any& addr, CPacket& packet, const sockaddr_any& src);
+   int sendto(const sockaddr_any& addr, CPacket& packet);
 
 #ifdef SRT_ENABLE_IPOPTS
       /// Get the IP TTL.
@@ -410,14 +407,14 @@ private:
 
 
 private:
-   CSndUList* m_pSndUList;		// List of UDT instances for data sending
+   CSndUList* m_pSndUList;              // List of UDT instances for data sending
    CChannel* m_pChannel;                // The UDP channel for data sending
-   CTimer* m_pTimer;			// Timing facility
+   CTimer* m_pTimer;                    // Timing facility
 
    pthread_mutex_t m_WindowLock;
    pthread_cond_t m_WindowCond;
 
-   volatile bool m_bClosing;		// closing the worker
+   volatile bool m_bClosing;            // closing the worker
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)//>>debug high freq worker
    uint64_t m_ullDbgPeriod;
@@ -503,7 +500,7 @@ private:
    int setListener(CUDT* u);
    void removeListener(const CUDT* u);
 
-   void registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
+   void registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, const srt::sync::steady_clock::time_point& ttl);
    void removeConnector(const SRTSOCKET& id, bool should_lock = true);
 
    void setNewEntry(CUDT* u);
