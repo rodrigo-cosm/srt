@@ -221,7 +221,7 @@ int CUDTUnited::startup()
 
    m_bClosing = false;
    createMutex(m_GCStopLock, "GCStop");
-   createCond(m_GCStopCond, "GCStop");
+   createCond_monotonic(m_GCStopCond, "GCStop");
    {
        ThreadName tn("SRT:GC");
        pthread_create(&m_GCThread, NULL, garbageCollect, this);
@@ -1879,7 +1879,7 @@ void* CUDTUnited::garbageCollect(void* p)
        self->checkBrokenSockets();
 
        HLOGC(mglog.Debug, log << "GC: sleep 1 s");
-       gcsync.wait_for(seconds_from(1));
+       gcsync.wait_for_monotonic(seconds_from(1));
    }
 
    // remove all sockets and multiplexers
@@ -2081,7 +2081,7 @@ int CUDT::connect(
    {
       return s_UDTUnited.connect(u, name, namelen, forced_isn);
    }
-   catch (const CUDTException e)
+   catch (const CUDTException &e)
    {
       s_UDTUnited.setError(new CUDTException(e));
       return ERROR;

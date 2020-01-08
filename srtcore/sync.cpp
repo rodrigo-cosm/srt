@@ -60,11 +60,6 @@ void rdtsc(uint64_t& x)
     // when calling to QueryPerformanceFrequency. If it failed,
     // the m_bUseMicroSecond was set to true.
     QueryPerformanceCounter((LARGE_INTEGER*)&x);
-#elif defined(TIMING_USE_CLOCK_GETTIME)
-    // get_cpu_frequency() returns 1 us accuracy in this case
-    timespec tm;
-    clock_gettime(CLOCK_MONOTONIC, &tm);
-    x = tm.tv_sec * uint64_t(1000000) + t.tv_usec;
 #elif defined(TIMING_USE_MACH_ABS_TIME)
     x = mach_absolute_time();
 #else
@@ -83,9 +78,6 @@ int64_t get_cpu_frequency()
     LARGE_INTEGER ccf; // in counts per second
     if (QueryPerformanceFrequency(&ccf))
         frequency = ccf.QuadPart / 1000000; // counts per microsecond
-
-#elif defined(TIMING_USE_CLOCK_GETTIME)
-    frequency = 1;
 
 #elif defined(TIMING_USE_MACH_ABS_TIME)
 
@@ -258,15 +250,32 @@ void createCond(CCondition& cond, const char* name SRT_ATR_UNUSED)
     cond.cvname = cv.str();
 #endif
 
-   pthread_condattr_t* pattr = NULL;
+    pthread_condattr_t* pattr = NULL;
+    pthread_cond_init(RawAddr(cond), pattr);
+}
+
+void createCond_monotonic(CCondition& cond, const char* name SRT_ATR_UNUSED)
+{
+#if ENABLE_THREAD_LOGGING
+    std::ostringstream cv;
+    cv << &cond.in_sysobj;
+    if (name)
+    {
+        cv << "(" << name << ")";
+    }
+    cond.cvname = cv.str();
+#endif
+
+    pthread_condattr_t* pattr = NULL;
 #if ENABLE_MONOTONIC_CLOCK
-   pthread_condattr_t  CondAttribs;
-   pthread_condattr_init(&CondAttribs);
-   pthread_condattr_setclock(&CondAttribs, CLOCK_MONOTONIC);
-   pattr = &CondAttribs;
+    pthread_condattr_t  CondAttribs;
+    pthread_condattr_init(&CondAttribs);
+    pthread_condattr_setclock(&CondAttribs, CLOCK_MONOTONIC);
+    pattr = &CondAttribs;
 #endif
     pthread_cond_init(RawAddr(cond), pattr);
 }
+
 
 void releaseCond(CCondition& cond)
 {
@@ -361,6 +370,29 @@ bool CSync::wait_for(const steady_clock::duration& delay)
 
     return signaled;
 }
+
+/// Block the call until either @a timestamp time achieved
+/// or the conditional is signaled.
+/// @param [in] delay Maximum time to wait since the moment of the call
+/// @retval true Resumed due to getting a CV signal
+/// @retval false Resumed due to being past @a timestamp
+bool CSync::wait_for_monotonic(const steady_clock::duration& delay)
+{
+    // Note: this is implemented this way because the pthread API
+    // does not provide a possibility to wait relative time. When
+    // you implement it for different API that does provide relative
+    /// time waiting, you may want to implement it better way.
+
+    LOGS(std::cerr, log << "Cond: WAIT:" << m_cond->cvname << " UNLOCK:" << m_mutex->lockname << " - for "
+            << count_microseconds(delay) << "us...");
+    THREAD_PAUSED();
+    bool signaled = CondWaitFor_monotonic(m_cond, m_mutex, delay) != ETIMEDOUT;
+    THREAD_RESUMED();
+    LOGS(std::cerr, log << "Cond: CAUGHT:" << m_cond->cvname << " LOCKED:" << m_mutex->lockname << " REASON:" << (signaled ? "SIGNAL" : "TIMEOUT"));
+
+    return signaled;
+}
+
 
 void CSync::lock_signal()
 {
@@ -542,19 +574,30 @@ std::string srt::sync::FormatTimeSys(const steady_clock::time_point& timestamp)
 int srt::sync::CondWaitFor(pthread_cond_t* cond, pthread_mutex_t* mutex, const Duration<steady_clock>& rel_time)
 {
     timespec timeout;
-#if ENABLE_MONOTONIC_CLOCK
-    clock_gettime(CLOCK_MONOTONIC, &timeout);
-    const uint64_t now_us = timeout.tv_sec * uint64_t(1000000) + (timeout.tv_nsec / 1000);
-    timeout = us_to_timespec(now_us + count_microseconds(rel_time));
-#else
     timeval now;
     gettimeofday(&now, 0);
     const uint64_t now_us = now.tv_sec * uint64_t(1000000) + now.tv_usec;
     timeout = us_to_timespec(now_us + count_microseconds(rel_time));
-#endif
 
     return pthread_cond_timedwait(cond, mutex, &timeout);
 }
+
+#if ENABLE_MONOTONIC_CLOCK
+int srt::sync::CondWaitFor_monotonic(pthread_cond_t* cond, pthread_mutex_t* mutex, const Duration<steady_clock>& rel_time)
+{
+    timespec timeout;
+    clock_gettime(CLOCK_MONOTONIC, &timeout);
+    const uint64_t now_us = timeout.tv_sec * uint64_t(1000000) + (timeout.tv_nsec / 1000);
+    timeout = us_to_timespec(now_us + count_microseconds(rel_time));
+
+    return pthread_cond_timedwait(cond, mutex, &timeout);
+}
+#else
+int srt::sync::CondWaitFor_monotonic(pthread_cond_t* cond, pthread_mutex_t* mutex, const Duration<steady_clock>& rel_time)
+{
+    return CondWaitFor(cond, mutex, rel_time);
+}
+#endif
 
 #if ENABLE_THREAD_LOGGING
 void srt::sync::ThreadCheckAffinity(const char* function, pthread_t thr)

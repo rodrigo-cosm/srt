@@ -309,6 +309,7 @@ void createMutex(CMutex& lock, const char* name);
 void releaseMutex(CMutex& lock);
 
 void createCond(CCondition& cond, const char* name);
+void createCond_monotonic(CCondition& cond, const char* name);
 void releaseCond(CCondition& cond);
 
 
@@ -345,6 +346,7 @@ public:
 /// @return result of pthread_cond_wait(...) function call
 ///
 int CondWaitFor(pthread_cond_t* cond, pthread_mutex_t* mutex, const steady_clock::duration& rel_time);
+int CondWaitFor_monotonic(pthread_cond_t* cond, pthread_mutex_t* mutex, const steady_clock::duration& rel_time);
 
 #if ENABLE_THREAD_LOGGING
 inline int CondWaitFor(CConditionWrapper* cond, CMutexWrapper* mutex, const steady_clock::duration& rel_time)
@@ -390,6 +392,7 @@ public:
     // Wait only for a given time delay (in microseconds). This function
     // extracts first current time using steady_clock::now().
     bool wait_for(const steady_clock::duration& delay);
+    bool wait_for_monotonic(const steady_clock::duration& delay);
 
     // Wait until the given time is achieved. This actually
     // refers to wait_for for the time remaining to achieve

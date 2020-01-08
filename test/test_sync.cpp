@@ -261,7 +261,8 @@ TEST(SyncTimePoint, OperatorMinusEqDuration)
  */
 /*****************************************************************************/
 
-TEST(SyncEvent, WaitFor)
+template <bool USE_MONOTONIC_CLOCK = false>
+void TestSyncWaitFor()
 {
     CCondition  cond;
     CMutex mutex;
@@ -271,24 +272,40 @@ TEST(SyncEvent, WaitFor)
     for (int tout_us : {50, 100, 500, 1000, 101000, 1001000})
     {
         const steady_clock::duration   timeout = microseconds_from(tout_us);
-        const steady_clock::time_point start   = steady_clock::now();
-        EXPECT_FALSE(CondWaitFor(&cond, &mutex, timeout) == 0);
+        const steady_clock::time_point start = steady_clock::now();
+        if (USE_MONOTONIC_CLOCK)
+            EXPECT_FALSE(CondWaitFor_monotonic(&cond, &mutex, timeout) == 0);
+        else
+            EXPECT_FALSE(CondWaitfor(&cond, &mutex, timeout) == 0);
         const steady_clock::time_point stop = steady_clock::now();
         if (tout_us < 1000)
         {
             cerr << "CondWaitFor(" << count_microseconds(timeout) << "us) took " << count_microseconds(stop - start)
-                 << "us" << endl;
+                << "us" << endl;
         }
         else
         {
             cerr << "CondWaitFor(" << count_milliseconds(timeout) << " ms) took "
-                 << count_microseconds(stop - start) / 1000.0 << " ms" << endl;
+                << count_microseconds(stop - start) / 1000.0 << " ms" << endl;
         }
     }
 
     releaseMutex(mutex);
     releaseCond(cond);
 }
+
+
+TEST(SyncEvent, WaitFor)
+{
+    TestSyncWaitFor();
+}
+
+#if ENABLE_MONOTONIC_CLOCK
+TEST(SyncEvent, WaitForMonotonic)
+{
+    TestSyncWaitFor<true>();
+}
+#endif
 
 TEST(SyncEvent, WaitForNotifyOne)
 {
@@ -442,7 +459,7 @@ TEST(Sync, FormatTime)
 {
     auto parse_time = [](const string& timestr) -> long long {
         // Example string: 1D 02:10:55.972651 [STD]
-        const regex rex("([[:digit:]]D )?([[:digit:]]{2}):([[:digit:]]{2}):([[:digit:]]{2}).([[:digit:]]{6}) \\[STD\\]");
+        const regex rex("([[:digit:]]+D )?([[:digit:]]{2}):([[:digit:]]{2}):([[:digit:]]{2}).([[:digit:]]{6}) \\[STD\\]");
         std::smatch sm;
         EXPECT_TRUE(regex_match(timestr, sm, rex));
         EXPECT_LE(sm.size(), 6);
