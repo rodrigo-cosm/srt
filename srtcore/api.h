@@ -74,7 +74,6 @@ class CUDTSocket
 public:
    CUDTSocket():
        m_Status(SRTS_INIT),
-       m_ClosureTimeStamp(0),
        m_SocketID(0),
        m_ListenSocket(0),
        m_PeerID(0),
@@ -102,7 +101,7 @@ public:
    /// of sockets in order to prevent other methods from accessing invalid address.
    /// A timer is started and the socket will be removed after approximately
    /// 1 second (see CUDTUnited::checkBrokenSockets()).
-   uint64_t m_ClosureTimeStamp;
+   srt::sync::steady_clock::time_point m_tsClosureTimeStamp;
 
    sockaddr_any m_SelfAddr;                  //< local address of the socket
    sockaddr_any m_PeerAddr;                  //< peer address of the socket
@@ -212,7 +211,7 @@ public:
       // socket APIs
 
    int bind(CUDTSocket* u, const sockaddr_any& name);
-   int bind(CUDTSocket* u, int udpsock);
+   int bind(CUDTSocket* u, UDPSOCKET udpsock);
    int listen(const SRTSOCKET u, int backlog);
    SRTSOCKET accept(const SRTSOCKET listen, sockaddr* addr, int* addrlen);
    int connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const sockaddr* tarname, int tarlen);
@@ -312,7 +311,7 @@ private:
    sockets_t m_Sockets;
    groups_t m_Groups;
 
-   pthread_mutex_t m_GlobControlLock;              // used to synchronize UDT API
+   pthread_mutex_t m_GlobControlLock;                // used to synchronize UDT API
 
    pthread_mutex_t m_IDLock;                         // used to synchronize ID generation
 
@@ -330,11 +329,10 @@ private:
 private:
    friend struct FLookupSocketWithEvent;
 
-   void connect_complete(SRTSOCKET u);
    CUDTSocket* locateSocket(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
    CUDTGroup* locateGroup(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
-   void updateMux(CUDTSocket* s, const sockaddr_any& addr, const int* udp_sockets = NULL);
+   void updateMux(CUDTSocket* s, const sockaddr_any& addr, const UDPSOCKET* = NULL);
    void updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
 
 private:
@@ -371,15 +369,7 @@ private:
 // Debug support
 inline std::string SockaddrToString(const sockaddr_any& sadr)
 {
-    void* addr =
-        sadr.family() == AF_INET ?
-            (void*)&sadr.sin.sin_addr
-        : sadr.family() == AF_INET6 ?
-            (void*)&sadr.sin6.sin6_addr
-        : 0;
-    // (cast to (void*) is required because otherwise the 2-3 arguments
-    // of ?: operator would have different types, which isn't allowed in C++.
-    if ( !addr )
+    if (sadr.family() != AF_INET && sadr.family() != AF_INET6)
         return "unknown:0";
 
     std::ostringstream output;

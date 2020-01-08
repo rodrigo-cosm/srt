@@ -56,8 +56,8 @@ modified by
 #include "udt.h"
 #include "common.h"
 #include "utilities.h"
-#include "packetfilter_api.h"
 #include "netinet_any.h"
+#include "packetfilter_api.h"
 
 //////////////////////////////////////////////////////////////////////////////
 // The purpose of the IOVector class is to proide a platform-independet interface
@@ -65,59 +65,59 @@ modified by
 // to the native structure for use in WSARecvFrom() and recvmsg(...) functions 
 class IOVector
 #ifdef _WIN32
-	: public WSABUF
+    : public WSABUF
 #else
-	: public iovec
+    : public iovec
 #endif
 {
 public:
 
-	inline void set(void  *buffer, size_t length)
-	{
+    inline void set(void  *buffer, size_t length)
+    {
 #ifdef _WIN32
-		len = (ULONG)length;
-		buf = (CHAR*)buffer;
+        len = (ULONG)length;
+        buf = (CHAR*)buffer;
 #else
-		iov_base = (void*)buffer;
-		iov_len = length;
+        iov_base = (void*)buffer;
+        iov_len = length;
 #endif
-	}
+    }
 
-	inline char*& dataRef()
-	{
+    inline char*& dataRef()
+    {
 #ifdef _WIN32
-		return buf;
+        return buf;
 #else
-		return (char*&) iov_base;
+        return (char*&) iov_base;
 #endif
-	}
+    }
 
-	inline char* data()
-	{
+    inline char* data()
+    {
 #ifdef _WIN32
-		return buf;
+        return buf;
 #else
-		return (char*)iov_base;
+        return (char*)iov_base;
 #endif
-	}
+    }
 
-	inline size_t size() const
-	{
+    inline size_t size() const
+    {
 #ifdef _WIN32
-		return (size_t) len;
+        return (size_t) len;
 #else
-		return iov_len;
+        return iov_len;
 #endif
-	}
+    }
 
-	inline void setLength(size_t length)
-	{
+    inline void setLength(size_t length)
+    {
 #ifdef _WIN32
-		len = length;
+        len = length;
 #else
-		iov_len = length;
+        iov_len = length;
 #endif
-	}
+    }
 };
 
 
@@ -334,8 +334,6 @@ public:
 
    uint32_t getMsgTimeStamp() const;
 
-   sockaddr_any udpDestAddr() const { return m_DestAddr; }
-
 #ifdef SRT_DEBUG_TSBPD_WRAP //Receiver
    static const uint32_t MAX_TIMESTAMP = 0x07FFFFFF; //27 bit fast wraparound for tests (~2m15s)
 #else
@@ -359,6 +357,10 @@ public:
        PV_SIZE = 2
    };
 
+public:
+    void toNL();
+    void toHL();
+
 protected:
    // Length in bytes
 
@@ -378,7 +380,6 @@ protected:
 
    int32_t __pad;
    bool m_data_owned;
-   sockaddr_any m_DestAddr;
 
 protected:
    CPacket& operator=(const CPacket&);

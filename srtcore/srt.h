@@ -72,22 +72,46 @@ written by
 // When compiling in C++17 mode, use the standard C++17 attributes
 // (out of these, only [[deprecated]] is supported in C++14, so
 // for all lesser standard use compiler-specific attributes).
-#if defined(__cplusplus) && __cplusplus > 201406
+#if defined(SRT_NO_DEPRECATED)
+
+// Unused: do not issue an unused variable warning
+#define SRT_ATR_UNUSED
+
+// Deprecated: function or symbol is deprecated
+// The *_PX version is the prefix attribute, which applies only
+// to functions (Microsoft compilers).
+
+// When deprecating a function, mark it:
+//
+// SRT_ATR_DEPRECATED_PX retval function(arguments) SRT_ATR_DEPRECATED;
+//
+#define SRT_ATR_DEPRECATED
+#define SRT_ATR_DEPRECATED_PX
+
+// Nodiscard: issue a warning if the return value was discarded.
+#define SRT_ATR_NODISCARD
+
+#elif defined(__cplusplus) && __cplusplus > 201406
+
 #define SRT_ATR_UNUSED [[maybe_unused]]
 #define SRT_ATR_DEPRECATED [[deprecated]]
+#define SRT_ATR_DEPRECATED_PX
 #define SRT_ATR_NODISCARD [[nodiscard]]
 
-// GNUG is GNU C++; this syntax is also supported by Clang
-#elif defined( __GNUG__)
+// GNUG is GNU C/C++; this syntax is also supported by Clang
+#elif defined(__GNUC__)
 #define SRT_ATR_UNUSED __attribute__((unused))
+#define SRT_ATR_DEPRECATED_PX
 #define SRT_ATR_DEPRECATED __attribute__((deprecated))
 #define SRT_ATR_NODISCARD __attribute__((warn_unused_result))
 #elif defined(_MSC_VER)
 #define SRT_ATR_UNUSED __pragma(warning(suppress: 4100 4101))
-#define SRT_ATR_DEPRECATED __declspec((deprecated))
+#define SRT_ATR_DEPRECATED_PX __declspec(deprecated)
+#define SRT_ATR_DEPRECATED // no postfix-type modifier
 #define SRT_ATR_NODISCARD _Check_return_
 #else
 #define SRT_ATR_UNUSED
+#define SRT_ATR_DEPRECATED_PX
 #define SRT_ATR_DEPRECATED
 #define SRT_ATR_NODISCARD
 #endif
@@ -198,6 +222,40 @@ typedef enum SRT_SOCKOPT {
    SRTO_PACKETFILTER = 60          // Add and configure a packet filter
 } SRT_SOCKOPT;
 
+
+#ifdef __cplusplus
+
+
+#if __cplusplus > 199711L // C++11
+    // Newer compilers report error when [[deprecated]] is applied to types,
+    // and C++11 and higher uses this.
+    // Note that this doesn't exactly use the 'deprecated' attribute,
+    // as it's introduced in C++14. What is actually used here is the
+    // fact that unknown attributes are ignored, but still warned about.
+    // This should only catch an eye - and that's what it does.
+#define SRT_DEPRECATED_OPTION(value) ((SRT_SOCKOPT [[deprecated]])value)
+#else
+    // Older (pre-C++11) compilers use gcc deprecated applied to a typedef
+    typedef SRT_ATR_DEPRECATED SRT_SOCKOPT SRT_SOCKOPT_DEPRECATED;
+#define SRT_DEPRECATED_OPTION(value) ((SRT_SOCKOPT_DEPRECATED)value)
+#endif
+
+
+#else
+
+// deprecated enum labels are supported only since gcc 6, so in C there
+// will be a whole deprecated enum type, as it's not an error in C to mix
+// enum types
+enum SRT_ATR_DEPRECATED SRT_SOCKOPT_DEPRECATED
+{
+
+    // Dummy last option, as every entry ends with a comma
+    SRTO_DEPRECATED_END = 0
+
+};
+#define SRT_DEPRECATED_OPTION(value) ((enum SRT_SOCKOPT_DEPRECATED)value)
+#endif
+
 // DEPRECATED OPTIONS:
 
 // SRTO_TWOWAYDATA: not to be used. SRT connection is always bidirectional if
@@ -207,36 +265,37 @@ typedef enum SRT_SOCKOPT {
 // differences between bidirectional support (especially concerning encryption)
 // with HSv4 and HSv5 (that is, HSv4 was decided to remain unidirectional only,
 // even though partial support is already provided in this version).
-static const SRT_SOCKOPT SRTO_TWOWAYDATA SRT_ATR_DEPRECATED = (SRT_SOCKOPT)37;
+
+#define SRTO_TWOWAYDATA SRT_DEPRECATED_OPTION(37)
 
 // This has been deprecated a long time ago, treat this as never implemented.
 // The value is also already reused for another option.
-static const SRT_SOCKOPT SRTO_TSBPDMAXLAG SRT_ATR_DEPRECATED = (SRT_SOCKOPT)32;
+#define SRTO_TSBPDMAXLAG SRT_DEPRECATED_OPTION(32)
 
 // This option is a derivative from UDT; the mechanism that uses it is now
 // settable by SRTO_CONGESTION, or more generally by SRTO_TRANSTYPE. The freed
 // number has been reused for a read-only option SRTO_ISN. This option should
 // have never been used anywhere, just for safety this is temporarily declared
 // as deprecated.
-static const SRT_SOCKOPT SRTO_CC SRT_ATR_DEPRECATED = (SRT_SOCKOPT)3;
+#define SRTO_CC SRT_DEPRECATED_OPTION(3)
 
 // These two flags were derived from UDT, but they were never used.
 // Probably it didn't make sense anyway. The maximum size of the message
 // in File/Message mode is defined by SRTO_SNDBUF, and the MSGTTL is
 // a parameter used in `srt_sendmsg` and `srt_sendmsg2`.
-static const SRT_SOCKOPT SRTO_MAXMSG SRT_ATR_DEPRECATED = (SRT_SOCKOPT)10;
-static const SRT_SOCKOPT SRTO_MSGTTL SRT_ATR_DEPRECATED = (SRT_SOCKOPT)11;
+#define SRTO_MAXMSG SRT_DEPRECATED_OPTION(10)
+#define SRTO_MSGTTL SRT_DEPRECATED_OPTION(11)
 
 // These flags come from an older experimental implementation of bidirectional
 // encryption support, which were used two different SEKs, KEKs and passphrases
 // per direction. The current implementation uses just one in both directions,
 // so SRTO_PBKEYLEN should be used for both cases.
-static const SRT_SOCKOPT SRTO_SNDPBKEYLEN SRT_ATR_DEPRECATED = (SRT_SOCKOPT)38;
-static const SRT_SOCKOPT SRTO_RCVPBKEYLEN SRT_ATR_DEPRECATED = (SRT_SOCKOPT)39;
+#define SRTO_SNDPBKEYLEN SRT_DEPRECATED_OPTION(38)
+#define SRTO_RCVPBKEYLEN SRT_DEPRECATED_OPTION(39)
 
 // Keeping old name for compatibility (deprecated)
-static const SRT_SOCKOPT SRTO_SMOOTHER SRT_ATR_DEPRECATED = SRTO_CONGESTION;
-static const SRT_SOCKOPT SRTO_STRICTENC SRT_ATR_DEPRECATED = SRTO_ENFORCEDENCRYPTION;
+#define SRTO_SMOOTHER SRT_DEPRECATED_OPTION(47)
+#define SRTO_STRICTENC SRT_DEPRECATED_OPTION(53)
 
 typedef enum SRT_TRANSTYPE
 {
@@ -519,6 +578,7 @@ enum SRT_REJECT_REASON
 #define SRT_LOGFA_TSBPD     4
 #define SRT_LOGFA_REXMIT    5
 #define SRT_LOGFA_HAICRYPT  6
+#define SRT_LOGFA_CONGEST   7
 
 // To make a typical int32_t size, although still use std::bitset.
 // C API will carry it over.
@@ -650,16 +710,16 @@ typedef enum SRT_GROUP_TYPE
 } SRT_GROUP_TYPE;
 
 // library initialization
-SRT_API extern int srt_startup(void);
-SRT_API extern int srt_cleanup(void);
+SRT_API       int srt_startup(void);
+SRT_API       int srt_cleanup(void);
 
 //
 // Socket operations
 //
 // DEPRECATED: srt_socket with 3 arguments. All these arguments are ignored
 // and socket creation doesn't need any arguments. Use srt_create_socket().
-SRT_API SRTSOCKET srt_socket       (int, int, int) SRT_ATR_DEPRECATED;
-SRT_API SRTSOCKET srt_create_socket();
+SRT_ATR_DEPRECATED_PX SRT_API SRTSOCKET srt_socket(int, int, int) SRT_ATR_DEPRECATED;
+SRT_API       SRTSOCKET srt_create_socket();
 
 // Group management
 typedef struct SRT_SocketGroupData_
@@ -677,10 +737,10 @@ SRT_API SRTSOCKET srt_groupof      (SRTSOCKET socket);
 SRT_API       int srt_group_data   (SRTSOCKET socketgroup, SRT_SOCKGROUPDATA* output, size_t* inoutlen);
 
 SRT_API       int srt_bind         (SRTSOCKET u, const struct sockaddr* name, int namelen);
-SRT_API       int srt_bind_acquire (SRTSOCKET u, int sys_udp_sock);
+SRT_API       int srt_bind_acquire (SRTSOCKET u, UDPSOCKET sys_udp_sock);
 // Old name of srt_bind_acquire(), please don't use
-static inline int srt_bind_peerof  (SRTSOCKET u, int sys_udp_sock) SRT_ATR_DEPRECATED;
-static inline int srt_bind_peerof  (SRTSOCKET u, int sys_udp_sock) { return srt_bind_acquire(u, sys_udp_sock); }
+SRT_ATR_DEPRECATED_PX static inline int srt_bind_peerof(SRTSOCKET u, UDPSOCKET sys_udp_sock) SRT_ATR_DEPRECATED;
+static inline int srt_bind_peerof  (SRTSOCKET u, UDPSOCKET sys_udp_sock) { return srt_bind_acquire(u, sys_udp_sock); }
 SRT_API       int srt_listen       (SRTSOCKET u, int backlog);
 SRT_API SRTSOCKET srt_accept       (SRTSOCKET u, struct sockaddr* addr, int* addrlen);
 typedef int srt_listen_callback_fn   (void* opaq, SRTSOCKET ns, int hsversion, const struct sockaddr* peeraddr, const char* streamid);
