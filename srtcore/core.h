@@ -318,7 +318,7 @@ public: // internal API
     // immediately to free the socket
     void notListening()
     {
-        CGuard cg(m_ConnectionLock, "Connection");
+        srt::sync::CGuard cg(m_ConnectionLock, "Connection");
         m_bListening = false;
         m_pRcvQueue->removeListener(this);
     }
