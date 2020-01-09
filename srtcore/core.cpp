@@ -5499,9 +5499,8 @@ int CUDT::receiveBuffer(char *data, int len)
                 const steady_clock::time_point exptime = steady_clock::now() + milliseconds_from(m_iRcvTimeOut);
                 while (stillConnected() && !m_pRcvBuffer->isRcvDataReady())
                 {
-                    rcond.wait_for(milliseconds_from(m_iRcvTimeOut));
-                    if (steady_clock::now() >= exptime)
-                        break;
+                    if (!rcond.wait_until(exptime)) // NOT means "not received a signal"
+                        break; // timeout
                 }
             }
         }
@@ -5748,9 +5747,10 @@ int CUDT::sendmsg2(const char *data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
             {
                 const steady_clock::time_point exptime = steady_clock::now() + milliseconds_from(m_iSndTimeOut);
 
-                while (stillConnected() && sndBuffersLeft() < minlen && m_bPeerHealth && exptime > steady_clock::now())
+                while (stillConnected() && sndBuffersLeft() < minlen && m_bPeerHealth)
                 {
-                    sendcond.wait_for(milliseconds_from(m_iSndTimeOut));
+                    if (!sendcond.wait_until(exptime))
+                        break;
                 }
             }
         }
@@ -6008,7 +6008,12 @@ int CUDT::receiveMessage(char *data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
 
             do
             {
-                if (!recv_cond.wait_for(recv_timeout))
+                // `wait_for(recv_timeout)` wouldn't be correct here. Waiting should be
+                // only until the time that is now + timeout since the first moment
+                // when this started, or sliced-waiting for 1 second, if timtout is
+                // higher than this.
+                const steady_clock::time_point exptime = steady_clock::now() + recv_timeout;
+                if (!recv_cond.wait_until(exptime))
                 {
                     if (!(m_iRcvTimeOut < 0))
                         timeout = true;
