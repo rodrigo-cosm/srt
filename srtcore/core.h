@@ -160,7 +160,7 @@ template <class ExecutorType>
 void SRT_tsbpdLoop(
         ExecutorType* self,
         SRTSOCKET sid,
-        CGuard& lock);
+        srt::sync::CGuard& lock);
 
 #if ENABLE_HEAVY_LOGGING
     const char* const srt_log_grp_state [] = {
@@ -271,7 +271,7 @@ public:
 
     gli_t find(SRTSOCKET id)
     {
-        CGuard g(m_GroupLock, "Group");
+        srt::sync::CGuard g(m_GroupLock, "Group");
         gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f == m_Group.end())
         {
@@ -290,7 +290,7 @@ public:
     bool remove(SRTSOCKET id)
     {
         bool s = false;
-        CGuard g(m_GroupLock, "Group");
+        srt::sync::CGuard g(m_GroupLock, "Group");
         gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f != m_Group.end())
         {
@@ -328,7 +328,7 @@ public:
 
     bool empty()
     {
-        CGuard g(m_GroupLock, "Group");
+        srt::sync::CGuard g(m_GroupLock, "Group");
         return m_Group.empty();
     }
 
@@ -737,7 +737,7 @@ public: // internal API
     // immediately to free the socket
     void notListening()
     {
-        CGuard cg(m_ConnectionLock, "Connection");
+        srt::sync::CGuard cg(m_ConnectionLock, "Connection");
         m_bListening = false;
         m_pRcvQueue->removeListener(this);
     }
