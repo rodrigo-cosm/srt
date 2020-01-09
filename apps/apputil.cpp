@@ -18,12 +18,6 @@
 #include "apputil.hpp"
 #include "netinet_any.h"
 
-#ifdef WIN32
-   #include <iphlpapi.h> // getting local interfaces
-#else
-   #include <ifaddrs.h> // getting local interfaces
-#endif
-
 using namespace std;
 
 
@@ -39,7 +33,7 @@ using namespace std;
 // See:
 //    https://msdn.microsoft.com/en-us/library/windows/desktop/ms742214(v=vs.85).aspx
 //    http://www.winsocketdotnetworkprogramming.com/winsock2programming/winsock2advancedInternet3b.html
-#if defined(__MINGW32__) && !defined(InetPton)
+#if defined(_WIN32) && !defined(HAVE_INET_PTON)
 namespace // Prevent conflict in case when still defined
 {
 int inet_pton(int af, const char * src, void * dst)
@@ -81,7 +75,7 @@ int inet_pton(int af, const char * src, void * dst)
    return 0;
 }
 }
-#endif // __MINGW__
+#endif // _WIN32 && !HAVE_INET_PTON
 
 sockaddr_in CreateAddrInet(const string& name, unsigned short port)
 {
@@ -120,6 +114,38 @@ string Join(const vector<string>& in, string sep)
     for (auto i = in.begin()+1; i != in.end(); ++i)
         os << sep << *i;
     return os.str();
+}
+
+// OPTION LIBRARY
+
+OptionScheme::Args OptionName::DetermineTypeFromHelpText(const std::string& helptext)
+{
+    if (helptext.empty())
+        return OptionScheme::ARG_NONE;
+
+
+    if (helptext[0] == '<')
+    {
+        // If the argument is <one-argument>, then it's ARG_NONE.
+        // If it's <multiple-arguments...>, then it's ARG_VAR.
+        // When closing angle bracket isn't found, fallback to ARG_ONE.
+        size_t pos = helptext.find('>');
+        if (pos == std::string::npos)
+            return OptionScheme::ARG_ONE;
+
+        if (pos >= 4 && helptext.substr(pos-4, 4) == "...>")
+            return OptionScheme::ARG_VAR;
+    }
+
+    if (helptext[0] == '[')
+    {
+        // Argument in [] means it is optional; in this case
+        // you should state that the argument can be given or not.
+        return OptionScheme::ARG_VAR;
+    }
+
+    // Also as fallback
+    return OptionScheme::ARG_NONE;
 }
 
 options_t ProcessOptions(char* const* argv, int argc, std::vector<OptionScheme> scheme)
@@ -176,7 +202,7 @@ options_t ProcessOptions(char* const* argv, int argc, std::vector<OptionScheme> 
             // Find the key in the scheme. If not found, treat it as ARG_NONE.
             for (auto s: scheme)
             {
-                if (s.id.names.count(current_key))
+                if (s.names().count(current_key))
                 {
                     // cout << "*D found '" << current_key << "' in scheme type=" << int(s.type) << endl;
                     if (s.type == OptionScheme::ARG_NONE)
@@ -270,124 +296,6 @@ string OptionHelpItem(const OptionName& o)
     out += " -" + hlp;
     return out;
 }
-
-#ifdef _WIN32
-    #if SRT_ENABLE_CONSELF_CHECK_WIN32
-        #define ENABLE_CONSELF_CHECK 1
-    #endif
-#else
-
-// For non-Windows platofm, enable always.
-#define ENABLE_CONSELF_CHECK 1
-#endif
-
-#if ENABLE_CONSELF_CHECK
-
-static vector<sockaddr_any> GetLocalInterfaces()
-{
-    vector<sockaddr_any> locals;
-#ifdef _WIN32
-	ULONG flags = GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_ALL_INTERFACES;
-	ULONG outBufLen4 = 0, outBufLen6 = 0, outBufLen = 0;
-
-    // This function doesn't allocate memory by itself, you have to do it
-    // yourself, worst case when it's too small, the size will be corrected
-    // and the function will do nothing. So, simply, call the function with
-    // always too little 0 size and make it show the correct one.
-    GetAdaptersAddresses(AF_INET, flags, NULL, NULL, &outBufLen4);
-	GetAdaptersAddresses(AF_INET, flags, NULL, NULL, &outBufLen6);
-    // Ignore errors. Check errors on the real call.
-	// (Have doubts about this "max" here, as VC reports errors when
-	// using std::max, so it will likely resolve to a macro - hope this
-	// won't cause portability problems, this code is Windows only.
-	outBufLen = max(outBufLen4, outBufLen6);
-
-    // Good, now we can allocate memory
-    PIP_ADAPTER_ADDRESSES pAddresses = (PIP_ADAPTER_ADDRESSES)::operator new(outBufLen);
-    ULONG st = GetAdaptersAddresses(AF_INET, flags, NULL, pAddresses, &outBufLen);
-    if (st == ERROR_SUCCESS)
-    {
-        PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pAddresses->FirstUnicastAddress;
-        while (pUnicast)
-        {
-            locals.push_back(pUnicast->Address.lpSockaddr);
-            pUnicast = pUnicast->Next;
-        }
-    }
-	st = GetAdaptersAddresses(AF_INET6, flags, NULL, pAddresses, &outBufLen);
-	if (st == ERROR_SUCCESS)
-	{
-		PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pAddresses->FirstUnicastAddress;
-		while (pUnicast)
-		{
-			locals.push_back(pUnicast->Address.lpSockaddr);
-			pUnicast = pUnicast->Next;
-		}
-	}
-
-    ::operator delete(pAddresses);
-
-#else
-    // Use POSIX method: getifaddrs
-    struct ifaddrs* pif, * pifa;
-    int st = getifaddrs(&pifa);
-    if (st == 0)
-    {
-        for (pif = pifa; pif; pif = pif->ifa_next)
-        {
-            locals.push_back(pif->ifa_addr);
-        }
-    }
-
-    freeifaddrs(pifa);
-#endif
-    return locals;
-}
-
-bool IsTargetAddrSelf(const sockaddr* boundaddr, const sockaddr* targetaddr)
-{
-    sockaddr_any bound = boundaddr;
-    sockaddr_any target = targetaddr;
-
-    if (!bound.isany())
-    {
-        // Bound to a specific local address, so only check if
-        // this isn't the same address as 'target'.
-        if (target.equal_address(bound))
-        {
-            return true;
-        }
-    }
-    else
-    {
-        // Bound to INADDR_ANY, so check matching with any local IP address
-        vector<sockaddr_any> locals = GetLocalInterfaces();
-
-        // If any of the above function fails, it will collect
-        // no local interfaces, so it's impossible to check anything.
-        // OTOH it should also mean that the network isn't working,
-        // so it's unlikely, as well as no address should match the
-        // local address anyway.
-        for (size_t i = 0; i < locals.size(); ++i)
-        {
-            if (locals[i].equal_address(target))
-            {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-#else
-bool IsTargetAddrSelf(const sockaddr* , const sockaddr* )
-{
-    // State that the given address is never "self", so
-    // prevention from connecting to self will not be in force.
-    return false;
-}
-#endif
 
 // Stats module
 

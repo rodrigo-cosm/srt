@@ -258,10 +258,10 @@ void CPacket::setLength(size_t len)
 void CPacket::pack(UDTMessageType pkttype, const int32_t* lparam, void* rparam, int size)
 {
     // Set (bit-0 = 1) and (bit-1~15 = type)
-   setControl(pkttype);
-   HLOGC(mglog.Debug, log << "pack: type=" << MessageTypeStr(pkttype)
-           << " ARG=" << (lparam ? Sprint(*lparam) : std::string("NULL"))
-           << " [ " << (rparam ? Sprint(*(int32_t*)rparam) : std::string()) << " ]");
+    setControl(pkttype);
+    HLOGC(mglog.Debug, log << "pack: type=" << MessageTypeStr(pkttype)
+            << " ARG=" << (lparam ? Sprint(*lparam) : std::string("NULL"))
+            << " [ " << (rparam ? Sprint(*(int32_t*)rparam) : std::string()) << " ]");
 
    // Set additional information and control information field
    switch (pkttype)
@@ -365,6 +365,42 @@ void CPacket::pack(UDTMessageType pkttype, const int32_t* lparam, void* rparam, 
       break;
    }
 }
+
+void CPacket::toNL()
+{
+    // XXX USE HtoNLA!
+    if (isControl())
+    {
+        for (ptrdiff_t i = 0, n = getLength() / 4; i < n; ++i)
+            *((uint32_t*)m_pcData + i) = htonl(*((uint32_t*)m_pcData + i));
+    }
+
+    // convert packet header into network order
+    uint32_t* p = m_nHeader;
+    for (int j = 0; j < 4; ++j)
+    {
+        *p = htonl(*p);
+        ++p;
+    }
+}
+
+void CPacket::toHL()
+{
+    // convert back into local host order
+    uint32_t* p = m_nHeader;
+    for (int k = 0; k < 4; ++k)
+    {
+        *p = ntohl(*p);
+        ++p;
+    }
+
+    if (isControl())
+    {
+        for (ptrdiff_t l = 0, n = getLength() / 4; l < n; ++l)
+            *((uint32_t*) m_pcData + l) = ntohl(*((uint32_t*) m_pcData + l));
+    }
+}
+
 
 IOVector* CPacket::getPacketVector()
 {
@@ -509,8 +545,6 @@ CPacket* CPacket::clone() const
    memcpy(pkt->m_pcData, m_pcData, m_PacketVector[PV_DATA].size());
    pkt->m_PacketVector[PV_DATA].setLength(m_PacketVector[PV_DATA].size());
 
-   pkt->m_DestAddr = m_DestAddr;
-
    return pkt;
 }
 
@@ -542,6 +576,7 @@ inline void SprintSpecialWord(std::ostream& os, int32_t val)
         os << val;
 }
 
+#if ENABLE_LOGGING
 std::string CPacket::Info()
 {
     std::ostringstream os;
@@ -599,3 +634,4 @@ std::string CPacket::Info()
 
     return os.str();
 }
+#endif

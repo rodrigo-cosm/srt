@@ -65,9 +65,10 @@ modified by
    // #include <winsock2.h>
    //#include <windows.h>
 #endif
-#include <pthread.h>
+
 #include "srt.h"
 #include "utilities.h"
+#include "sync.h"
 #include "netinet_any.h"
 #include "logging.h"
 
@@ -85,6 +86,97 @@ modified by
 #else
 #define SRT_ASSERT(cond)
 #endif
+
+#include <exception>
+
+// Class CUDTException exposed for C++ API.
+// This is actually useless, unless you'd use a DIRECT C++ API,
+// however there's no such API so far. The current C++ API for UDT/SRT
+// is predicted to NEVER LET ANY EXCEPTION out of implementation,
+// so it's useless to catch this exception anyway.
+
+class SRT_API CUDTException: public std::exception
+{
+public:
+
+    CUDTException(CodeMajor major = MJ_SUCCESS, CodeMinor minor = MN_NONE, int err = -1);
+    virtual ~CUDTException() ATR_NOTHROW {}
+
+    /// Get the description of the exception.
+    /// @return Text message for the exception description.
+    const char* getErrorMessage() const ATR_NOTHROW;
+
+    virtual const char* what() const ATR_NOTHROW ATR_OVERRIDE
+    {
+        return getErrorMessage();
+    }
+
+    const std::string& getErrorString() const;
+
+    /// Get the system errno for the exception.
+    /// @return errno.
+    int getErrorCode() const;
+
+    /// Get the system network errno for the exception.
+    /// @return errno.
+    int getErrno() const;
+
+    /// Clear the error code.
+    void clear();
+
+private:
+    CodeMajor m_iMajor;        // major exception categories
+    CodeMinor m_iMinor;		// for specific error reasons
+    int m_iErrno;		// errno returned by the system if there is any
+    mutable std::string m_strMsg; // text error message (cache)
+
+    std::string m_strAPI;	// the name of UDT function that returns the error
+    std::string m_strDebug;	// debug information, set to the original place that causes the error
+
+public: // Legacy Error Code
+
+    static const int EUNKNOWN = SRT_EUNKNOWN;
+    static const int SUCCESS = SRT_SUCCESS;
+    static const int ECONNSETUP = SRT_ECONNSETUP;
+    static const int ENOSERVER = SRT_ENOSERVER;
+    static const int ECONNREJ = SRT_ECONNREJ;
+    static const int ESOCKFAIL = SRT_ESOCKFAIL;
+    static const int ESECFAIL = SRT_ESECFAIL;
+    static const int ECONNFAIL = SRT_ECONNFAIL;
+    static const int ECONNLOST = SRT_ECONNLOST;
+    static const int ENOCONN = SRT_ENOCONN;
+    static const int ERESOURCE = SRT_ERESOURCE;
+    static const int ETHREAD = SRT_ETHREAD;
+    static const int ENOBUF = SRT_ENOBUF;
+    static const int EFILE = SRT_EFILE;
+    static const int EINVRDOFF = SRT_EINVRDOFF;
+    static const int ERDPERM = SRT_ERDPERM;
+    static const int EINVWROFF = SRT_EINVWROFF;
+    static const int EWRPERM = SRT_EWRPERM;
+    static const int EINVOP = SRT_EINVOP;
+    static const int EBOUNDSOCK = SRT_EBOUNDSOCK;
+    static const int ECONNSOCK = SRT_ECONNSOCK;
+    static const int EINVPARAM = SRT_EINVPARAM;
+    static const int EINVSOCK = SRT_EINVSOCK;
+    static const int EUNBOUNDSOCK = SRT_EUNBOUNDSOCK;
+    static const int ESTREAMILL = SRT_EINVALMSGAPI;
+    static const int EDGRAMILL = SRT_EINVALBUFFERAPI;
+    static const int ENOLISTEN = SRT_ENOLISTEN;
+    static const int ERDVNOSERV = SRT_ERDVNOSERV;
+    static const int ERDVUNBOUND = SRT_ERDVUNBOUND;
+    static const int EINVALMSGAPI = SRT_EINVALMSGAPI;
+    static const int EINVALBUFFERAPI = SRT_EINVALBUFFERAPI;
+    static const int EDUPLISTEN = SRT_EDUPLISTEN;
+    static const int ELARGEMSG = SRT_ELARGEMSG;
+    static const int EINVPOLLID = SRT_EINVPOLLID;
+    static const int EASYNCFAIL = SRT_EASYNCFAIL;
+    static const int EASYNCSND = SRT_EASYNCSND;
+    static const int EASYNCRCV = SRT_EASYNCRCV;
+    static const int ETIMEOUT = SRT_ETIMEOUT;
+    static const int ECONGEST = SRT_ECONGEST;
+    static const int EPEERERR = SRT_EPEERERR;
+};
+
 
 
 enum UDTSockType
@@ -460,15 +552,10 @@ public:
 
 public:
 
-      /// Sleep for "interval_tk" CCs.
-      /// @param [in] interval_tk CCs to sleep.
-
-   void sleep(uint64_t interval_tk);
-
       /// Seelp until CC "nexttime_tk".
       /// @param [in] nexttime_tk next time the caller is waken up.
 
-   void sleepto(uint64_t nexttime_tk);
+   void sleepto(const srt::sync::steady_clock::time_point &nexttime);
 
       /// Stop the sleep() or sleepto() methods.
 
@@ -479,21 +566,6 @@ public:
    void tick();
 
 public:
-
-      /// Read the CPU clock cycle into x.
-      /// @param [out] x to record cpu clock cycles.
-
-   static void rdtsc(uint64_t &x);
-
-      /// return the CPU frequency.
-      /// @return CPU frequency.
-
-   static uint64_t getCPUFrequency();
-
-      /// check the current time, 64bit, in microseconds.
-      /// @return current time in microseconds.
-
-   static uint64_t getTime();
 
       /// trigger an event such as new connection, close, new data, etc. for "select" call.
 
@@ -522,186 +594,13 @@ public:
    static int condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64_t delay);
 
 private:
-   uint64_t getTimeInMicroSec();
-
-private:
-   uint64_t m_ullSchedTime_tk;             // next schedulled time
+   srt::sync::steady_clock::time_point m_tsSchedTime;             // next schedulled time
 
    pthread_cond_t m_TickCond;
    pthread_mutex_t m_TickLock;
 
    static pthread_cond_t m_EventCond;
    static pthread_mutex_t m_EventLock;
-
-private:
-   static uint64_t s_ullCPUFrequency;	// CPU frequency : clock cycles per microsecond
-   static uint64_t readCPUFrequency();
-   static bool m_bUseMicroSecond;       // No higher resolution timer available, use gettimeofday().
-};
-
-////////////////////////////////////////////////////////////////////////////////
-
-class CGuard
-{
-#if ENABLE_THREAD_LOGGING
-    std::string lockname;
-#endif
-public:
-   /// Constructs CGuard, which locks the given mutex for
-   /// the scope where this object exists.
-   /// @param lock Mutex to lock
-   /// @param if_condition If this is false, CGuard will do completely nothing
-   CGuard(pthread_mutex_t& lock, const char* ln = 0, bool if_condition = true);
-   ~CGuard();
-
-public:
-
-   // The force-Lock/Unlock mechanism can be used to forcefully
-   // change the lock on the CGuard object. This is in order to
-   // temporarily change the lock status on the given mutex, but
-   // still do the right job in the destructor. For example, if
-   // a lock has been forcefully unlocked by forceUnlock, then
-   // the CGuard object will not try to unlock it in the destructor,
-   // but again, if the forceLock() was done again, the destructor
-   // will still unlock the mutex.
-   void forceLock()
-   {
-       if (m_iLocked == 0)
-           return;
-       Lock();
-   }
-
-   // After calling this on a scoped lock wrapper (CGuard),
-   // the mutex will be unlocked right now, and no longer
-   // in destructor
-   void forceUnlock()
-   {
-       if (m_iLocked == 0)
-       {
-           m_iLocked = -1;
-           Unlock();
-       }
-   }
-
-   static int enterCS(pthread_mutex_t& lock, const char* ln = 0, bool block = true);
-   static int leaveCS(pthread_mutex_t& lock, const char* ln = 0);
-
-   static bool isthread(const pthread_t& thrval);
-
-   static bool join(pthread_t& thr, void*& result);
-   static bool join(pthread_t& thr);
-
-   static void createMutex(pthread_mutex_t& lock);
-   static void releaseMutex(pthread_mutex_t& lock);
-
-   static void createCond(pthread_cond_t& cond, pthread_condattr_t* opt_attr = NULL);
-   static void releaseCond(pthread_cond_t& cond);
-
-#if ENABLE_LOGGING
-
-   // Turned explicitly to string because this is exposed only for logging purposes.
-   std::string show_mutex()
-   {
-       return Sprint(&m_Mutex);
-   }
-#endif
-
-private:
-
-   void Lock()
-   {
-       m_iLocked = pthread_mutex_lock(&m_Mutex);
-   }
-
-   void Unlock()
-   {
-        pthread_mutex_unlock(&m_Mutex);
-   }
-
-   pthread_mutex_t& m_Mutex;            // Alias name of the mutex to be protected
-   int m_iLocked;                       // Locking status
-
-   CGuard& operator=(const CGuard&);
-
-   friend class CCondDelegate;
-};
-
-class InvertedGuard
-{
-    pthread_mutex_t* m_pMutex;
-#if ENABLE_THREAD_LOGGING
-    std::string lockid;
-#endif
-public:
-
-    InvertedGuard(pthread_mutex_t* smutex, const char* ln = NULL): m_pMutex(smutex)
-    {
-        if ( !smutex )
-            return;
-#if ENABLE_THREAD_LOGGING
-        if (ln)
-            lockid = ln;
-#endif
-        CGuard::leaveCS(*smutex, ln);
-    }
-
-    ~InvertedGuard()
-    {
-        if ( !m_pMutex )
-            return;
-
-#if ENABLE_THREAD_LOGGING
-        CGuard::enterCS(*m_pMutex, lockid.empty() ? (const char*)0 : lockid.c_str());
-#else
-        CGuard::enterCS(*m_pMutex);
-#endif
-    }
-};
-
-// This class is used for condition variable combined with mutex by different ways.
-// This should provide a cleaner API around locking with debug-logging inside.
-class CCondDelegate
-{
-    pthread_cond_t* m_cond;
-    pthread_mutex_t* m_mutex;
-#if ENABLE_THREAD_LOGGING
-    bool nolock;
-    std::string cvname;
-    std::string lockname;
-#endif
-
-public:
-
-    enum Nolock { NOLOCK };
-
-    // Locked version: must be declared only after the declaration of CGuard,
-    // which has locked the mutex. On this delegate you should call only
-    // signal_locked() and pass the CGuard variable that should remain locked.
-    // Also wait() and wait_until() can be used only with this socket.
-    CCondDelegate(pthread_cond_t& cond, CGuard& g, const char* ln = 0);
-
-    // This is only for one-shot signaling. This doesn't need a CGuard
-    // variable, only the mutex itself. Only lock_signal() can be used.
-    CCondDelegate(pthread_cond_t& cond, pthread_mutex_t& mutex, Nolock, const char* cn = 0, const char* ln = 0);
-
-    // Wait indefinitely, until getting a signal on CV.
-    void wait();
-
-    // Wait only up to given time (microseconds since epoch, the same unit as
-    // for CTimer::getTime()).
-    // Return: true, if interrupted by a signal. False if exit on timeout.
-    bool wait_until(uint64_t timestamp);
-
-    // Wait only for a given time delay (in microseconds). This function
-    // extracts first current time using gettimeofday().
-    bool wait_for(uint64_t delay);
-
-    // You can signal using two methods:
-    // - lock_signal: expect the mutex NOT locked, lock it, signal, then unlock.
-    // - signal: expect the mutex locked, so only issue a signal, but you must pass the CGuard that keeps the lock.
-    void lock_signal();
-    void signal_locked(CGuard& lk);
-    void signal_relaxed();
 };
 
 ////////////////////////////////////////////////////////////////////////////////

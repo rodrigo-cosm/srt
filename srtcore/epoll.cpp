@@ -65,6 +65,7 @@ modified by
 #include "logging.h"
 
 using namespace std;
+using namespace srt::sync;
 
 #if ENABLE_HEAVY_LOGGING
 static void PrintEpollEvent(ostream& os, int events);
@@ -85,7 +86,7 @@ using namespace srt_logging;
 CEPoll::CEPoll():
 m_iIDSeed(0)
 {
-   CGuard::createMutex(m_EPollLock);
+    CGuard::createMutex(m_EPollLock);
 }
 
 CEPoll::~CEPoll()
@@ -463,7 +464,7 @@ int CEPoll::uwait(const int eid, SRT_EPOLL_EVENT* fdsSet, int fdsSize, int64_t m
     if (fdsSize < 0 || (fdsSize > 0 && !fdsSet))
         throw CUDTException(MJ_NOTSUP, MN_INVAL);
 
-    int64_t entertime = CTimer::getTime();
+    steady_clock::time_point entertime = steady_clock::now();
 
     while (true)
     {
@@ -511,7 +512,7 @@ int CEPoll::uwait(const int eid, SRT_EPOLL_EVENT* fdsSet, int fdsSize, int64_t m
                 return total;
         }
 
-        if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
+        if ((msTimeOut >= 0) && (count_microseconds(srt::sync::steady_clock::now() - entertime) >= msTimeOut * int64_t(1000)))
             break; // official wait does: throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
 
         CTimer::waitForEvent();
@@ -534,10 +535,7 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
 
     int total = 0;
 
-    int64_t entertime = CTimer::getTime();
-
-    HLOGC(mglog.Debug, log << "CEPoll::wait: START for eid=" << eid);
-
+    srt::sync::steady_clock::time_point entertime = srt::sync::steady_clock::now();
     while (true)
     {
         {
@@ -546,7 +544,7 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
             map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
             if (p == m_mPolls.end())
             {
-         LOGC(mglog.Error, log << "EID:" << eid << " INVALID.");
+                LOGC(mglog.Error, log << "EID:" << eid << " INVALID.");
                 throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
             }
 
@@ -704,7 +702,7 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
         if (total > 0)
             return total;
 
-        if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
+        if ((msTimeOut >= 0) && (count_microseconds(srt::sync::steady_clock::now() - entertime) >= msTimeOut * int64_t(1000)))
         {
             HLOGC(mglog.Debug, log << "EID:" << eid << ": TIMEOUT.");
             throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
@@ -734,7 +732,7 @@ int CEPoll::swait(CEPollDesc& d, map<SRTSOCKET, int>& st, int64_t msTimeOut, boo
 
     st.clear();
 
-    int64_t entertime = CTimer::getTime();
+    steady_clock::time_point entertime = steady_clock::now();
     while (true)
     {
         {
@@ -785,7 +783,7 @@ int CEPoll::swait(CEPollDesc& d, map<SRTSOCKET, int>& st, int64_t msTimeOut, boo
             // extremely often.
         }
 
-        if ((msTimeOut >= 0) && (int64_t(CTimer::getTime() - entertime) >= msTimeOut * int64_t(1000)))
+        if ((msTimeOut >= 0) && ((steady_clock::now() - entertime) >= microseconds_from(msTimeOut * int64_t(1000))))
         {
             HLOGC(mglog.Debug, log << "EID:" << d.m_iID << ": TIMEOUT.");
             if (report_by_exception)
