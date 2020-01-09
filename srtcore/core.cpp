@@ -4727,8 +4727,8 @@ void* CUDT::tsbpd(void* param)
     THREAD_STATE_INIT("SRT:TsbPd");
 
     CGuard        recv_gl(self->m_RecvLock, "recv");
-    CCondDelegate recvdata_cc(self->m_RecvDataCond, recv_gl, "RecvDataCond");
-    CCondDelegate tsbpd_cc(self->m_RcvTsbPdCond, recv_gl, "RcvTsbPdCond");
+    CSync recvdata_cc(self->m_RecvDataCond, recv_gl, "RecvDataCond");
+    CSync tsbpd_cc(self->m_RcvTsbPdCond, recv_gl, "RcvTsbPdCond");
 
     self->m_bTsbPdAckWakeup = true;
     while (!self->m_bClosing)
@@ -5488,8 +5488,8 @@ int CUDT::receiveBuffer(char* data, int len)
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
     }
 
-    CCondDelegate rcond(m_RecvDataCond, recvguard, "RecvDataCond");
-    CCondDelegate tscond(m_RcvTsbPdCond, recvguard, "RcvTsbPdCond");
+    CSync rcond(m_RecvDataCond, recvguard, "RecvDataCond");
+    CSync tscond(m_RcvTsbPdCond, recvguard, "RcvTsbPdCond");
     if (!m_pRcvBuffer->isRcvDataReady())
     {
         if (!m_bSynRecving)
@@ -5750,7 +5750,7 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         {
             // wait here during a blocking sending
             CGuard        sendblock_lock(m_SendBlockLock, "sendblock");
-            CCondDelegate sendcond(m_SendBlockCond, sendblock_lock, "SendBlockCond");
+            CSync sendcond(m_SendBlockCond, sendblock_lock, "SendBlockCond");
 
             if (m_iSndTimeOut < 0)
             {
@@ -5924,7 +5924,7 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         throw CUDTException(MJ_NOTSUP, MN_INVALMSGAPI, 0);
 
     CGuard        recvguard(m_RecvLock, "recv");
-    CCondDelegate tscond(m_RcvTsbPdCond, recvguard, "RcvTsbPdCond");
+    CSync tscond(m_RcvTsbPdCond, recvguard, "RcvTsbPdCond");
 
     /* XXX DEBUG STUFF - enable when required
        char charbool[2] = {'0', '1'};
@@ -6008,7 +6008,7 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     // Do not block forever, check connection status each 1 sec.
     const steady_clock::duration recv_timeout = m_iRcvTimeOut < 0 ? seconds_from(1) : milliseconds_from(m_iRcvTimeOut);
 
-    CCondDelegate recv_cond(m_RecvDataCond, recvguard);
+    CSync recv_cond(m_RecvDataCond, recvguard);
 
     do
     {
@@ -6167,7 +6167,7 @@ int64_t CUDT::sendfile(fstream& ifs, int64_t& offset, int64_t size, int block)
 
         {
             CGuard        lk(m_SendBlockLock, "sendblock");
-            CCondDelegate sendcond(m_SendBlockCond, lk, "SendBlockCond");
+            CSync sendcond(m_SendBlockCond, lk, "SendBlockCond");
 
             while (stillConnected() && (sndBuffersLeft() <= 0) && m_bPeerHealth)
                 sendcond.wait();
@@ -6299,7 +6299,7 @@ int64_t CUDT::recvfile(fstream& ofs, int64_t& offset, int64_t size, int block)
 
         {
             CGuard        gl(m_RecvDataLock, "recvdata");
-            CCondDelegate rcond(m_RecvDataCond, gl, "RecvDataCond");
+            CSync rcond(m_RecvDataCond, gl, "RecvDataCond");
 
             while (stillConnected() && !m_pRcvBuffer->isRcvDataReady())
                 rcond.wait();
@@ -6699,16 +6699,16 @@ void CUDT::destroySynch()
 void CUDT::releaseSynch()
 {
     // wake up user calls
-    CCondDelegate sndblock(m_SendBlockCond, m_SendBlockLock, CCondDelegate::NOLOCK, "SendBlock", "SendBlock");
+    CSync sndblock(m_SendBlockCond, m_SendBlockLock, CSync::NOLOCK, "SendBlock", "SendBlock");
     sndblock.lock_signal();
 
     CGuard::enterCS(m_SendLock, "send");
     CGuard::leaveCS(m_SendLock, "send");
 
-    CCondDelegate rdcond(m_RecvDataCond, m_RecvDataLock, CCondDelegate::NOLOCK, "RecvData", "RecvData");
+    CSync rdcond(m_RecvDataCond, m_RecvDataLock, CSync::NOLOCK, "RecvData", "RecvData");
     rdcond.lock_signal();
 
-    CCondDelegate tscond(m_RcvTsbPdCond, m_RecvLock, CCondDelegate::NOLOCK, "RcvTsbPd", "Recv");
+    CSync tscond(m_RcvTsbPdCond, m_RecvLock, CSync::NOLOCK, "RcvTsbPd", "Recv");
     tscond.lock_signal();
 
     CGuard::enterCS(m_RecvDataLock, "RecvDataLock");
@@ -6836,7 +6836,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
             {
                 /* Newly acknowledged data, signal TsbPD thread */
                 CGuard        rlock(m_RecvLock, "recv");
-                CCondDelegate cc(m_RcvTsbPdCond, rlock, "RcvTsbPdCond");
+                CSync cc(m_RcvTsbPdCond, rlock, "RcvTsbPdCond");
                 if (m_bTsbPdAckWakeup)
                     cc.signal_locked(rlock);
             }
@@ -6846,7 +6846,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
                 {
                     // signal a waiting "recv" call if there is any data available
                     CGuard        rlock(m_RecvDataLock, "recvdata");
-                    CCondDelegate cc(m_RecvDataCond, rlock, "RecvDataCond");
+                    CSync cc(m_RecvDataCond, rlock, "RecvDataCond");
                     cc.signal_locked(rlock);
                 }
                 // acknowledge any waiting epolls to read
@@ -7095,7 +7095,7 @@ void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
 
     if (m_bSynSending)
     {
-        CCondDelegate cc(m_SendBlockCond, m_SendBlockLock, CCondDelegate::NOLOCK, "SendBlock", "SendBlock");
+        CSync cc(m_SendBlockCond, m_SendBlockLock, CSync::NOLOCK, "SendBlock", "SendBlock");
         cc.lock_signal();
     }
 
@@ -8020,7 +8020,7 @@ void CUDT::processClose()
     if (m_bTsbPd)
     {
         HLOGP(mglog.Debug, "processClose: lock-and-signal TSBPD");
-        CCondDelegate cc(m_RcvTsbPdCond, m_RecvLock, CCondDelegate::NOLOCK, "RcvTsbPd", "Recv");
+        CSync cc(m_RcvTsbPdCond, m_RecvLock, CSync::NOLOCK, "RcvTsbPd", "Recv");
         cc.lock_signal();
     }
 
@@ -8063,19 +8063,6 @@ void CUDT::sendLossReport(const std::vector<std::pair<int32_t, int32_t> >& loss_
         sendCtrl(UMSG_LOSSREPORT, NULL, &seqbuffer[0], seqbuffer.size());
     }
 }
-
-inline void ThreadCheckAffinity(const char* function SRT_ATR_UNUSED, pthread_t thr SRT_ATR_UNUSED)
-{
-#if ENABLE_THREAD_LOGGING
-    if (thr == pthread_self())
-        return;
-
-    LOGC(mglog.Fatal, log << "IPE: '" << function << "' should not be executed in this thread!");
-    throw std::runtime_error("INTERNAL ERROR: incorrect function affinity");
-#endif
-}
-
-#define THREAD_CHECK_AFFINITY(thr) ThreadCheckAffinity(__FUNCTION__, thr)
 
 int CUDT::processData(CUnit* in_unit)
 {
@@ -8478,7 +8465,7 @@ int CUDT::processData(CUnit* in_unit)
         if (m_bTsbPd)
         {
            HLOGC(mglog.Debug, log << "loss: signaling TSBPD cond");
-           CCondDelegate cond(m_RcvTsbPdCond, m_RecvLock, CCondDelegate::NOLOCK);
+           CSync cond(m_RcvTsbPdCond, m_RecvLock, CSync::NOLOCK);
            cond.lock_signal();
         }
     }
@@ -8496,7 +8483,7 @@ int CUDT::processData(CUnit* in_unit)
         if (m_bTsbPd)
         {
             HLOGC(mglog.Debug, log << "loss: signaling TSBPD cond");
-            CCondDelegate cond(m_RcvTsbPdCond, m_RecvLock, CCondDelegate::NOLOCK);
+            CSync cond(m_RcvTsbPdCond, m_RecvLock, CSync::NOLOCK);
             cond.lock_signal();
         }
     }
