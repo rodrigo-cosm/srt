@@ -188,11 +188,11 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
 {
     m_bindsock = srt_create_socket();
     if ( m_bindsock == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_socket");
+        Error("srt_socket");
 
     int stat = ConfigurePre(m_bindsock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePre");
+        Error("ConfigurePre");
 
     sockaddr_in sa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&sa;
@@ -202,7 +202,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
     if ( stat == SRT_ERROR )
     {
         srt_close(m_bindsock);
-        Error(UDT::getlasterror(), "srt_bind");
+        Error("srt_bind");
     }
 
     Verb() << " listen...";
@@ -211,7 +211,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
     if ( stat == SRT_ERROR )
     {
         srt_close(m_bindsock);
-        Error(UDT::getlasterror(), "srt_listen");
+        Error("srt_listen");
     }
 }
 
@@ -241,7 +241,7 @@ bool SrtCommon::AcceptNewClient()
     {
         srt_close(m_bindsock);
         m_bindsock = SRT_INVALID_SOCK;
-        Error(UDT::getlasterror(), "srt_accept");
+        Error("srt_accept");
     }
 
     // we do one client connection at a time,
@@ -255,7 +255,7 @@ bool SrtCommon::AcceptNewClient()
     // are DERIVED by sock. ConfigurePost is done exclusively on sock.
     int stat = ConfigurePost(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePost");
+        Error("ConfigurePost");
 
     return true;
 }
@@ -370,7 +370,7 @@ void SrtCommon::SetupAdapter(const string& host, int port)
     sockaddr* psa = (sockaddr*)&localsa;
     int stat = srt_bind(m_sock, psa, sizeof localsa);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_bind");
+        Error("srt_bind");
 }
 
 void SrtCommon::OpenClient(string host, int port)
@@ -389,11 +389,11 @@ void SrtCommon::PrepareClient()
 {
     m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_socket");
+        Error("srt_socket");
 
     int stat = ConfigurePre(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePre");
+        Error("ConfigurePre");
 }
 
 
@@ -409,21 +409,21 @@ void SrtCommon::ConnectClient(string host, int port)
     if ( stat == SRT_ERROR )
     {
         srt_close(m_sock);
-        Error(UDT::getlasterror(), "UDT::connect");
+        Error("srt_connect");
     }
 
     stat = ConfigurePost(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePost");
+        Error("ConfigurePost");
 }
 
-void SrtCommon::Error(UDT::ERRORINFO& udtError, string src)
+void SrtCommon::Error(string src)
 {
-    int udtResult = udtError.getErrorCode();
-    string message = udtError.getErrorMessage();
-    Verb() << "\nERROR #" << udtResult << ": " << message;
+    int errnov = 0;
+    int result = srt_getlasterror(&errnov);
+    string message = srt_getlasterror_str();
+    Verb() << "\nERROR #" << result << "." << errnov << ": " << message;
 
-    udtError.clear();
     throw TransmissionError("error: " + src + ": " + message);
 }
 
@@ -431,14 +431,14 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 {
     m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_socket");
+        Error("srt_socket");
 
     bool yes = true;
     srt_setsockopt(m_sock, 0, SRTO_RENDEZVOUS, &yes, sizeof yes);
 
     int stat = ConfigurePre(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePre");
+        Error("ConfigurePre");
 
     sockaddr_in localsa = CreateAddrInet(adapter, port);
     sockaddr* plsa = (sockaddr*)&localsa;
@@ -449,7 +449,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
     if ( stat == SRT_ERROR )
     {
         srt_close(m_sock);
-        Error(UDT::getlasterror(), "srt_bind");
+        Error("srt_bind");
     }
 
     sockaddr_in sa = CreateAddrInet(host, port);
@@ -460,12 +460,12 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
     if ( stat == SRT_ERROR )
     {
         srt_close(m_sock);
-        Error(UDT::getlasterror(), "srt_connect");
+        Error("srt_connect");
     }
 
     stat = ConfigurePost(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePost");
+        Error("ConfigurePost");
 }
 
 void SrtCommon::Close()
@@ -640,7 +640,7 @@ void SrtModel::Establish(ref_t<std::string> name)
             int namelen = s.size();
             if ( srt_getsockname(Socket(), &s, &namelen) == SRT_ERROR )
             {
-                Error(UDT::getlasterror(), "srt_getsockname");
+                Error("srt_getsockname");
             }
 
             m_outgoing_port = s.hport();
@@ -832,6 +832,7 @@ protected:
 
             if (attr.count("source"))
             {
+#ifdef IP_ADD_SOURCE_MEMBERSHIP
                 /* this is an ssm.  we need to use the right struct and opt */
                 opt_name = IP_ADD_SOURCE_MEMBERSHIP;
                 mreq_ssm.imr_multiaddr.s_addr = sadr.sin_addr.s_addr;
@@ -839,6 +840,9 @@ protected:
                 inet_pton(AF_INET, attr.at("source").c_str(), &mreq_ssm.imr_sourceaddr);
                 mreq_arg_size = sizeof(mreq_ssm);
                 mreq_arg_ptr = &mreq_ssm;
+#else
+                throw std::runtime_error("UdpCommon: source-filter multicast not supported by OS");
+#endif
             }
             else
             {
@@ -877,8 +881,9 @@ protected:
 
             if ( res == status_error )
             {
-                throw runtime_error("adding to multicast membership failed");
+                Error(errno, "adding to multicast membership failed");
             }
+
             attr.erase("multicast");
             attr.erase("adapter");
         }
@@ -988,6 +993,18 @@ public:
     UdpTarget(string host, int port, const map<string,string>& attr )
     {
         Setup(host, port, attr);
+        if (adapter != "")
+        {
+            sockaddr_in maddr = CreateAddrInet(adapter, 0);
+            in_addr addr = maddr.sin_addr;
+
+            int res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&addr), sizeof(addr));
+            if (res == -1)
+            {
+                Error(SysError(), "setsockopt/IP_MULTICAST_IF: " + adapter);
+            }
+        }
+
     }
 
     int Write(const char* data, size_t len, ostream &SRT_ATR_UNUSED = cout) override

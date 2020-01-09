@@ -53,10 +53,7 @@ modified by
 #define SRT_IMPORT_TIME 1
 #include "platform_sys.h"
 
-#if ENABLE_THREAD_LOGGING
-#include <iostream>
 // #undef ENABLE_THREAD_ASSERT 1
-#endif
 
 #include <string>
 #include <sstream>
@@ -73,16 +70,14 @@ modified by
 #include <srt_compat.h> // SysStrError
 
 using namespace std;
+using namespace srt::sync;
 
-
-bool CTimer::m_bUseMicroSecond = false;
-uint64_t CTimer::s_ullCPUFrequency = CTimer::readCPUFrequency();
 
 pthread_mutex_t CTimer::m_EventLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t CTimer::m_EventCond = PTHREAD_COND_INITIALIZER;
 
 CTimer::CTimer():
-m_ullSchedTime_tk(),
+m_tsSchedTime(),
 m_TickCond(),
 m_TickLock()
 {
@@ -104,98 +99,12 @@ CTimer::~CTimer()
     pthread_cond_destroy(&m_TickCond);
 }
 
-void CTimer::rdtsc(uint64_t &x)
+void CTimer::sleepto(const srt::sync::steady_clock::time_point &nexttime)
 {
-   if (m_bUseMicroSecond)
-   {
-      x = getTime();
-      return;
-   }
+   // Use class member such that the method can be interrupted by others
+   m_tsSchedTime = nexttime;
 
-   #ifdef IA32
-      uint32_t lval, hval;
-      //asm volatile ("push %eax; push %ebx; push %ecx; push %edx");
-      //asm volatile ("xor %eax, %eax; cpuid");
-      asm volatile ("rdtsc" : "=a" (lval), "=d" (hval));
-      //asm volatile ("pop %edx; pop %ecx; pop %ebx; pop %eax");
-      x = hval;
-      x = (x << 32) | lval;
-   #elif defined(IA64)
-      asm ("mov %0=ar.itc" : "=r"(x) :: "memory");
-   #elif defined(AMD64)
-      uint32_t lval, hval;
-      asm ("rdtsc" : "=a" (lval), "=d" (hval));
-      x = hval;
-      x = (x << 32) | lval;
-   #elif defined(_WIN32)
-      // This function should not fail, because we checked the QPC
-      // when calling to QueryPerformanceFrequency. If it failed,
-      // the m_bUseMicroSecond was set to true.
-      QueryPerformanceCounter((LARGE_INTEGER *)&x);
-   #elif defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
-      x = mach_absolute_time();
-   #else
-      // use system call to read time clock for other archs
-      x = getTime();
-   #endif
-}
-
-uint64_t CTimer::readCPUFrequency()
-{
-   uint64_t frequency = 1;  // 1 tick per microsecond.
-
-#if defined(IA32) || defined(IA64) || defined(AMD64)
-    uint64_t t1, t2;
-
-    rdtsc(t1);
-    timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = 100000000;
-    nanosleep(&ts, NULL);
-    rdtsc(t2);
-
-    // CPU clocks per microsecond
-    frequency = (t2 - t1) / 100000;
-#elif defined(_WIN32)
-    LARGE_INTEGER counts_per_sec;
-    if (QueryPerformanceFrequency(&counts_per_sec))
-        frequency = counts_per_sec.QuadPart / 1000000;
-#elif defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
-    mach_timebase_info_data_t info;
-    mach_timebase_info(&info);
-    frequency = info.denom * uint64_t(1000) / info.numer;
-#endif
-
-   // Fall back to microsecond if the resolution is not high enough.
-   if (frequency < 10)
-   {
-      frequency = 1;
-      m_bUseMicroSecond = true;
-   }
-   return frequency;
-}
-
-uint64_t CTimer::getCPUFrequency()
-{
-   return s_ullCPUFrequency;
-}
-
-void CTimer::sleep(uint64_t interval_tk)
-{
-   uint64_t t;
-   rdtsc(t);
-
-   // sleep next "interval" time
-   sleepto(t + interval_tk);
-}
-
-void CTimer::sleepto(uint64_t nexttime_tk)
-{
-    // Use class member such that the method can be interrupted by others
-    m_ullSchedTime_tk = nexttime_tk;
-
-    uint64_t t;
-    rdtsc(t);
+   steady_clock::time_point t = steady_clock::now();
 
 #if USE_BUSY_WAITING
 #if defined(_WIN32)
@@ -203,20 +112,20 @@ void CTimer::sleepto(uint64_t nexttime_tk)
 #else
     const uint64_t threshold_us = 1000;    // 1 ms on non-Windows platforms
 #endif
-#endif
+#endif // USE_BUSY_WAITING
 
-    while (t < m_ullSchedTime_tk)
+    while (t < m_tsSchedTime)
     {
 #if USE_BUSY_WAITING
-        uint64_t wait_us = (m_ullSchedTime_tk - t) / s_ullCPUFrequency;
+        uint64_t wait_us = count_microseconds(m_tsSchedTime - t);
         if (wait_us <= 2 * threshold_us)
             break;
         wait_us -= threshold_us;
 #else
-        const uint64_t wait_us = (m_ullSchedTime_tk - t) / s_ullCPUFrequency;
+        const uint64_t wait_us = count_microseconds(m_tsSchedTime - t);
         if (wait_us == 0)
             break;
-#endif
+#endif // USE_BUSY_WAITING
 
         timespec timeout;
 #if ENABLE_MONOTONIC_CLOCK
@@ -230,7 +139,7 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         const uint64_t time_us = now.tv_sec * uint64_t(1000000) + now.tv_usec + wait_us;
         timeout.tv_sec = time_us / 1000000;
         timeout.tv_nsec = (time_us % 1000000) * 1000;
-#endif
+#endif // ENABLE_MONOTONIC_CLOCK
 
         THREAD_PAUSED();
         pthread_mutex_lock(&m_TickLock);
@@ -238,11 +147,11 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         pthread_mutex_unlock(&m_TickLock);
         THREAD_RESUMED();
 
-        rdtsc(t);
+        t = steady_clock::now();
     }
 
 #if USE_BUSY_WAITING
-    while (t < m_ullSchedTime_tk)
+    while (t < m_tsSchedTime)
     {
 #ifdef IA32
         __asm__ volatile ("pause; rep; nop; nop; nop; nop; nop;");
@@ -258,15 +167,15 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         __nop();
 #endif
 
-        rdtsc(t);
+       t = steady_clock::now();
     }
-#endif
+#endif // USE_BUSY_WAITING
 }
 
 void CTimer::interrupt()
 {
    // schedule the sleepto time to the current CCs, so that it will stop
-   rdtsc(m_ullSchedTime_tk);
+   m_tsSchedTime = steady_clock::now();
    tick();
 }
 
@@ -275,28 +184,6 @@ void CTimer::tick()
     pthread_cond_signal(&m_TickCond);
 }
 
-uint64_t CTimer::getTime()
-{
-    // XXX Do further study on that. Currently Cygwin is also using gettimeofday,
-    // however Cygwin platform is supported only for testing purposes.
-
-    //For other systems without microsecond level resolution, add to this conditional compile
-#if defined(OSX) || (TARGET_OS_IOS == 1) || (TARGET_OS_TV == 1)
-    // Otherwise we will have an infinite recursive functions calls
-    if (m_bUseMicroSecond == false)
-    {
-        uint64_t x;
-        rdtsc(x);
-        return x / s_ullCPUFrequency;
-    }
-    // Specific fix may be necessary if rdtsc is not available either.
-    // Going further on Apple platforms might cause issue, fixed with PR #301.
-    // But it is very unlikely for the latest platforms.
-#endif
-    timeval t;
-    gettimeofday(&t, 0);
-    return t.tv_sec * uint64_t(1000000) + t.tv_usec;
-}
 
 void CTimer::triggerEvent()
 {
@@ -345,318 +232,6 @@ int CTimer::condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64
     return pthread_cond_timedwait(cond, mutex, &timeout);
 }
 
-#ifdef ENABLE_THREAD_LOGGING
-struct CGuardLogMutex
-{
-    pthread_mutex_t mx;
-    CGuardLogMutex()
-    {
-        pthread_mutex_init(&mx, NULL);
-    }
-
-    ~CGuardLogMutex()
-    {
-        pthread_mutex_destroy(&mx);
-    }
-
-    void lock() { pthread_mutex_lock(&mx); }
-    void unlock() { pthread_mutex_unlock(&mx); }
-} g_gmtx;
-#endif
-
-// Automatically lock in constructor
-CGuard::CGuard(pthread_mutex_t& lock, const char* ln SRT_ATR_UNUSED, bool shouldwork):
-    m_Mutex(lock),
-    m_iLocked(-1)
-{
-#if ENABLE_THREAD_LOGGING
-    std::ostringstream cv;
-    cv << &m_Mutex;
-    if (ln)
-    {
-        cv << "(" << ln << ")";
-    }
-    lockname = cv.str();
-    char errbuf[256];
-#endif
-    if (shouldwork)
-    {
-        LOGS(cerr, log << "CGuard: { LOCK:" << lockname << " ...");
-        Lock();
-
-#if ENABLE_THREAD_ASSERT
-        if (m_iLocked != 0)
-            abort();
-#endif
-        LOGS(cerr, log << "... " << lockname << " lock state:" <<
-                (m_iLocked == 0 ? "locked successfully" : SysStrError(m_iLocked, errbuf, 256)));
-    }
-    else
-    {
-        LOGS(cerr, log << "CGuard: LOCK NOT DONE (not required):" << lockname);
-    }
-}
-
-// Automatically unlock in destructor
-CGuard::~CGuard()
-{
-    if (m_iLocked == 0)
-    {
-        LOGS(cerr, log << "CGuard: } UNLOCK:" << lockname);
-        Unlock();
-    }
-    else
-    {
-        LOGS(cerr, log << "CGuard: UNLOCK NOT DONE (not locked):" << lockname);
-    }
-}
-
-int CGuard::enterCS(pthread_mutex_t& lock, const char* ln SRT_ATR_UNUSED, bool block)
-{
-#if ENABLE_THREAD_LOGGING
-    std::ostringstream cv;
-    cv << &lock;
-    if (ln)
-    {
-        cv << "(" << ln << ")";
-    }
-    string lockname = cv.str();
-#endif
-    int retval;
-    if (block)
-    {
-        LOGS(cerr, log << "enterCS(block) {  LOCK: " << lockname << " ...");
-        retval = pthread_mutex_lock(&lock);
-        LOGS(cerr, log << "... " << lockname << " locked.");
-    }
-    else
-    {
-        retval = pthread_mutex_trylock(&lock);
-        LOGS(cerr, log << "enterCS(try) {  LOCK: " << lockname << " "
-                << (retval == 0 ? " LOCKED." : " FAILED }"));
-    }
-    return retval;
-}
-
-int CGuard::leaveCS(pthread_mutex_t& lock, const char* ln SRT_ATR_UNUSED)
-{
-#if ENABLE_THREAD_LOGGING
-    std::ostringstream cv;
-    cv << &lock;
-    if (ln)
-    {
-        cv << "(" << ln << ")";
-    }
-    string lockname = cv.str();
-#endif
-    LOGS(cerr, log << "leaveCS: } UNLOCK: " << lockname);
-    return pthread_mutex_unlock(&lock);
-}
-
-/// This function checks if the given thread id
-/// is a thread id, stating that a thread id variable
-/// that doesn't hold a running thread, is equal to
-/// a null thread (pthread_t()).
-bool CGuard::isthread(const pthread_t& thr)
-{
-    return pthread_equal(thr, pthread_t()) == 0; // NOT equal to a null thread
-}
-
-bool CGuard::join(pthread_t& thr)
-{
-    LOGS(cerr, log << "JOIN: " << thr << " ---> " << pthread_self());
-    int ret = pthread_join(thr, NULL);
-    thr = pthread_t(); // prevent dangling
-    return ret == 0;
-}
-
-bool CGuard::join(pthread_t& thr, void*& result)
-{
-    LOGS(cerr, log << "JOIN: " << thr << " ---> " << pthread_self());
-    int ret = pthread_join(thr, &result);
-    thr = pthread_t();
-    return ret == 0;
-}
-
-void CGuard::createMutex(pthread_mutex_t& lock)
-{
-    pthread_mutexattr_t* pattr = NULL;
-#if ENABLE_THREAD_LOGGING
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-    pattr = &attr;
-#endif
-    pthread_mutex_init(&lock, pattr);
-}
-
-void CGuard::releaseMutex(pthread_mutex_t& lock)
-{
-    pthread_mutex_destroy(&lock);
-}
-
-void CGuard::createCond(pthread_cond_t& cond, pthread_condattr_t* attr)
-{
-    pthread_cond_init(&cond, attr);
-}
-
-void CGuard::releaseCond(pthread_cond_t& cond)
-{
-    pthread_cond_destroy(&cond);
-}
-
-CCondDelegate::CCondDelegate(pthread_cond_t& cond, CGuard& g, const char* ln SRT_ATR_UNUSED)
-    : m_cond(&cond), m_mutex(&g.m_Mutex)
-#if ENABLE_THREAD_LOGGING
-      , nolock(false)
-#endif
-{
-#if ENABLE_THREAD_LOGGING
-    // This constructor expects that the mutex is locked, and 'g' should designate
-    // the CGuard variable that holds the mutex. Test in debug mode whether the
-    // mutex is locked
-    std::ostringstream cv;
-    cv << &cond;
-    if (ln)
-    {
-        cv << "(" << ln << ")";
-    }
-    cvname = cv.str();
-    lockname = g.lockname;
-
-    int lockst = pthread_mutex_trylock(m_mutex);
-    if (lockst == 0)
-    {
-        pthread_mutex_unlock(m_mutex);
-        LOGS(std::cerr, log << "CCond: IPE: Mutex " << g.lockname << " in CGuard IS NOT LOCKED.");
-        return;
-    }
-#endif
-    // XXX it would be nice to check whether the owner is also current thread
-    // but this can't be done portable way.
-
-    // When constructed by this constructor, the user is expected
-    // to only call signal_locked() function. You should pass the same guard
-    // variable that you have used for construction as its argument.
-}
-
-CCondDelegate::CCondDelegate(pthread_cond_t& cond, pthread_mutex_t& mutex, Nolock,
-        const char* cn SRT_ATR_UNUSED, const char* ln SRT_ATR_UNUSED)
-    : m_cond(&cond), m_mutex(&mutex)
-#if ENABLE_THREAD_LOGGING
-      , nolock(true)
-#endif
-{
-#if ENABLE_THREAD_LOGGING
-    std::ostringstream cv;
-    cv << &m_cond;
-    if (cn)
-    {
-        cv << "(" << cn << ")";
-    }
-    cvname = cv.str();
-    std::ostringstream lv;
-    lv << &mutex;
-    if (ln)
-    {
-        lv << "(" << ln << ")";
-    }
-    lockname = lv.str();
-#endif
-    // We expect that the mutex is NOT locked at this moment by the current thread,
-    // but it is perfectly ok, if the mutex is locked by another thread. We'll just wait.
-
-    // When constructed by this constructor, the user is expected
-    // to only call lock_signal() function.
-}
-
-void CCondDelegate::wait()
-{
-    LOGS(cerr, log << "Cond: WAIT:" << cvname << " UNLOCK:" << lockname);
-    THREAD_PAUSED();
-    pthread_cond_wait(m_cond, m_mutex);
-    THREAD_RESUMED();
-    LOGS(cerr, log << "Cond: CAUGHT:" << cvname << " LOCKED:" << lockname);
-}
-
-/// Block the call until either @a timestamp time achieved
-/// or the conditional is signaled.
-/// @param [in] timestamp Absolute time (since epoch [us]) to wait up to
-/// @retval true Resumed due to getting a CV signal
-/// @retval false Resumed due to being past @a timestamp
-bool CCondDelegate::wait_until(uint64_t timestamp)
-{
-    timespec locktime;
-    locktime.tv_sec = timestamp / 1000000;
-    locktime.tv_nsec = (timestamp % 1000000) * 1000;
-    LOGS(cerr, log << "Cond: WAIT:" << cvname << " UNLOCK:" << lockname << " - until TS=" << srt_logging::FormatTime(timestamp));
-    THREAD_PAUSED();
-    bool signaled = pthread_cond_timedwait(m_cond, m_mutex, &locktime) != ETIMEDOUT;
-    THREAD_RESUMED();
-    LOGS(cerr, log << "Cond: CAUGHT:" << cvname << " LOCKED:" << lockname << " REASON:" << (signaled ? "SIGNAL" : "TIMEOUT"));
-    return signaled;
-}
-
-/// Block the call until either @a timestamp time achieved
-/// or the conditional is signaled.
-/// @param [in] delay Maximum time to wait since the moment of the call
-/// @retval true Resumed due to getting a CV signal
-/// @retval false Resumed due to being past @a timestamp
-bool CCondDelegate::wait_for(uint64_t delay)
-{
-    timeval now;
-    gettimeofday(&now, 0); //  CTimer::getTime ???
-    uint64_t time_us = now.tv_sec * uint64_t(1000000) + now.tv_usec + delay;
-    return wait_until(time_us);
-}
-
-void CCondDelegate::lock_signal()
-{
-    // We expect nolock == true.
-#if ENABLE_THREAD_LOGGING
-    if (!nolock)
-    {
-        LOGS(cerr, log << "Cond: IPE: lock_signal done on LOCKED Cond.");
-    }
-#endif
-    LOGS(cerr, log << "Cond: SIGNAL:" << cvname << " { LOCKING: " << lockname << "...");
-
-    // Not using CGuard here because it would be logged
-    // and this will result in unnecessary excessive logging.
-    pthread_mutex_lock(m_mutex);
-    LOGS(cerr, log << "Cond: ... locked: " << lockname << " - SIGNAL!");
-    pthread_cond_signal(m_cond);
-    pthread_mutex_unlock(m_mutex);
-
-    LOGS(cerr, log << "Cond: } UNLOCK:" << lockname);
-}
-
-void CCondDelegate::signal_locked(CGuard& lk SRT_ATR_UNUSED)
-{
-    // We expect nolock == false.
-#if ENABLE_THREAD_LOGGING
-    if (nolock)
-    {
-        LOGS(cerr, log << "Cond: IPE: signal done on no-lock-checked Cond.");
-    }
-
-    if (&lk.m_Mutex != m_mutex)
-    {
-        LOGS(cerr, log << "Cond: IPE: signal declares CGuard.mutex=" << lk.lockname << " but Cond.mutex=" << lockname);
-    }
-    LOGS(cerr, log << "Cond: SIGNAL:" << cvname << " (with locked:" << lockname << ")");
-#endif
-
-    pthread_cond_signal(m_cond);
-}
-
-void CCondDelegate::signal_relaxed()
-{
-    LOGS(cerr, log << "Cond: SIGNAL:" << cvname << " (NOT locking " << lockname << ")");
-    pthread_cond_signal(m_cond);
-}
-
-//
 CUDTException::CUDTException(CodeMajor major, CodeMinor minor, int err):
 m_iMajor(major),
 m_iMinor(minor)
@@ -667,24 +242,12 @@ m_iMinor(minor)
       m_iErrno = err;
 }
 
-CUDTException::CUDTException(const CUDTException& e):
-m_iMajor(e.m_iMajor),
-m_iMinor(e.m_iMinor),
-m_iErrno(e.m_iErrno),
-m_strMsg()
-{
-}
-
-CUDTException::~CUDTException()
-{
-}
-
-const char* CUDTException::getErrorMessage()
+const char* CUDTException::getErrorMessage() const ATR_NOTHROW
 {
     return getErrorString().c_str();
 }
 
-const string& CUDTException::getErrorString()
+const string& CUDTException::getErrorString() const
 {
    // translate "Major:Minor" code into text message.
 
