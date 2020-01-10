@@ -1076,4 +1076,5 @@ inline ValueType avg_iir(ValueType old_value, ValueType new_value)
 #define SRTU_PROPERTY_RW_CHAIN(otype, type, name, field) SRTU_PROPERTY_RO(type, name, field); SRTU_PROPERTY_WO_CHAIN(otype, type, name, field)
 #define SRTU_PROPERTY_RRW_CHAIN(otype, type, name, field) SRTU_PROPERTY_RR(type, name, field); SRTU_PROPERTY_WO_CHAIN(otype, type, name, field)
 
+
 #endif

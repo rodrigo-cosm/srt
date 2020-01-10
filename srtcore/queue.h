@@ -177,7 +177,7 @@ public:
       /// @param [out] pkt the next packet to be sent
       /// @return 1 if successfully retrieved, -1 if no packet found.
 
-   int pop(ref_t<sockaddr_any> addr, ref_t<CPacket> pkt);
+   int pop(sockaddr_any& addr, CPacket& pkt);
 
       /// Remove UDT instance from the list.
       /// @param [in] u pointer to the UDT instance
@@ -342,7 +342,7 @@ private:
    {
       SRTSOCKET m_iID;        // UDT socket ID (self)
       CUDT* m_pUDT;           // UDT instance
-      sockaddr_any m_PeerAddr;		// UDT sonnection peer address
+      sockaddr_any m_PeerAddr;// UDT sonnection peer address
       srt::sync::steady_clock::time_point m_tsTTL;    // the time that this request expires
    };
    std::list<CRL> m_lRendezvousID;    // The sockets currently in rendezvous mode
@@ -479,7 +479,7 @@ private:
    static void* worker(void* param);
    pthread_t m_WorkerThread;
    // Subroutines of worker
-   EReadStatus worker_RetrieveUnit(ref_t<int32_t> id, ref_t<CUnit*> unit, ref_t<sockaddr_any> sa);
+   EReadStatus worker_RetrieveUnit(ref_t<int32_t> id, ref_t<CUnit*> unit, sockaddr_any& sa);
    EConnectStatus worker_ProcessConnectionRequest(CUnit* unit, const sockaddr_any& sa);
    EConnectStatus worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, const sockaddr_any& sa);
    EConnectStatus worker_ProcessAddressedPacket(int32_t id, CUnit* unit, const sockaddr_any& sa);
@@ -534,7 +534,7 @@ struct CMultiplexer
    CTimer* m_pTimer;        // The timer
 
    int m_iPort;         // The UDP port number of this multiplexer
-   int m_iFamily;       // Address family (AF_INET or AF_INET6)
+   int m_iIPversion;    // Address family (AF_INET or AF_INET6)
 #ifdef SRT_ENABLE_IPOPTS
    int m_iIpTTL;
    int m_iIpToS;
