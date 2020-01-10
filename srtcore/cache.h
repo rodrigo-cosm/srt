@@ -99,7 +99,7 @@ public:
 
    int lookup(T* data)
    {
-      srt::sync::CGuard cacheguard(m_Lock, "cache");
+      srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)
@@ -127,7 +127,7 @@ public:
 
    int update(T* data)
    {
-      srt::sync::CGuard cacheguard(m_Lock, "cache");
+      srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)
@@ -236,7 +236,7 @@ class CInfoBlock
 {
 public:
    uint32_t m_piIP[4];		// IP address, machine read only, not human readable format
-   int m_iFamily;   		// IP version
+   int m_iIPversion;   		// Address family: AF_INET or AF_INET6
    uint64_t m_ullTimeStamp;	// last update time
    int m_iRTT;			// RTT
    int m_iBandwidth;		// estimated bandwidth

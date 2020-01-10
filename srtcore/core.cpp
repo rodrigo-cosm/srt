@@ -3555,7 +3555,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
         throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
 
     // record peer/server address
-    m_PeerAddr = sockaddr_any(serv_addr);
+    m_PeerAddr = serv_addr;
 
     // register this socket in the rendezvous queue
     // RendezevousQueue is used to temporarily store incoming handshake, non-rendezvous connections also require this
@@ -3625,7 +3625,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
     m_ConnReq.m_iMSS            = m_iMSS;
     m_ConnReq.m_iFlightFlagSize = (m_iRcvBufSize < m_iFlightFlagSize) ? m_iRcvBufSize : m_iFlightFlagSize;
     m_ConnReq.m_iID             = m_SocketID;
-    CIPAddress::ntop(serv_addr, m_ConnReq.m_piPeerIP);
+    CIPAddress::ntop(serv_addr, (m_ConnReq.m_piPeerIP));
 
     if (forced_isn == 0)
     {
@@ -4684,7 +4684,7 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
     }
 
     CInfoBlock ib;
-    ib.m_iFamily = m_PeerAddr.family();
+    ib.m_iIPversion = m_PeerAddr.family();
     CInfoBlock::convert(m_PeerAddr, ib.m_piIP);
     if (m_pCache->lookup(&ib) >= 0)
     {
@@ -4746,8 +4746,8 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
     // the local port must be correctly assigned BEFORE CUDT::startConnect(),
     // otherwise if startConnect() fails, the multiplexer cannot be located
     // by garbage collection and will cause leak
-    s->m_pUDT->m_pSndQueue->m_pChannel->getSockAddr(Ref(s->m_SelfAddr));
-    CIPAddress::pton(Ref(s->m_SelfAddr), s->m_pUDT->m_piSelfIP, s->m_SelfAddr.family());
+    s->m_pUDT->m_pSndQueue->m_pChannel->getSockAddr((s->m_SelfAddr));
+    CIPAddress::pton((s->m_SelfAddr), s->m_pUDT->m_piSelfIP, s->m_SelfAddr.family());
 
     s->m_Status = SRTS_CONNECTED;
 
@@ -5494,7 +5494,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
     // Since now you can use m_pCryptoControl
 
     CInfoBlock ib;
-    ib.m_iFamily = peer.family();
+    ib.m_iIPversion = peer.family();
     CInfoBlock::convert(peer, ib.m_piIP);
     if (m_pCache->lookup(&ib) >= 0)
     {
@@ -5882,7 +5882,7 @@ bool CUDT::close()
 
         // Store current connection information.
         CInfoBlock ib;
-        ib.m_iFamily = m_PeerAddr.family();
+        ib.m_iIPversion = m_PeerAddr.family();
         CInfoBlock::convert(m_PeerAddr, ib.m_piIP);
         ib.m_iRTT       = m_iRTT;
         ib.m_iBandwidth = m_iBandwidth;
@@ -5905,14 +5905,14 @@ bool CUDT::close()
     HLOGC(mglog.Debug, log << "CLOSING, joining send/receive threads");
 
     // waiting all send and recv calls to stop
-    CGuard sendguard(m_SendLock, "send");
-    CGuard recvguard(m_RecvLock, "recv");
+    CGuard sendguard(m_SendLock);
+    CGuard recvguard(m_RecvLock);
 
     // Locking m_RcvBufferLock to protect calling to m_pCryptoControl->decrypt(Ref(packet))
     // from the processData(...) function while resetting Crypto Control.
-    CGuard::enterCS(m_RcvBufferLock, "RcvBuffer");
+    CGuard::enterCS(m_RcvBufferLock);
     m_pCryptoControl.reset();
-    CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
+    CGuard::leaveCS(m_RcvBufferLock);
 
     m_lSrtVersion            = SRT_DEF_VERSION;
     m_lPeerSrtVersion        = SRT_VERSION_UNK;
@@ -5935,7 +5935,7 @@ int CUDT::receiveBuffer(char* data, int len)
         throw CUDTException(MJ_NOTSUP, MN_INVALBUFFERAPI, 0);
     }
 
-    CGuard recvguard(m_RecvLock, "recv");
+    CGuard recvguard(m_RecvLock);
 
     if ((m_bBroken || m_bClosing) && !m_pRcvBuffer->isRcvDataReady())
     {
@@ -6746,7 +6746,7 @@ int64_t CUDT::sendfile(fstream& ifs, int64_t& offset, int64_t size, int block)
             if (sndBuffersLeft() <= 0)
             {
                 // write is not available any more
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, false);
+                s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, false);
             }
         }
 
@@ -7391,7 +7391,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
         if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
         {
             ackDataUpTo(ack);
-            CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
+            CGuard::leaveCS(m_RcvBufferLock);
             IF_HEAVY_LOGGING(int32_t oldack = m_iRcvLastSkipAck);
 
             // If TSBPD is enabled, then INSTEAD OF signaling m_RecvDataCond,
@@ -7437,7 +7437,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, in
         }
         else
         {
-            // Not possible (m_iRcvCurrSeqNo+1 < m_iRcvLastAck ?)
+            // Not possible (m_iRcvCurrSeqNo+1 <% m_iRcvLastAck ?)
             LOGC(mglog.Error, log << "sendCtrl(UMSG_ACK): IPE: curr %" << m_iRcvLastAck
                   << " <% last %" << m_iRcvLastAck);
             CGuard::leaveCS(m_RcvBufferLock, "RcvBuffer");
@@ -7666,7 +7666,7 @@ void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
         m_pSndBuffer->ackData(offset);
 
         // acknowledde any waiting epolls to write
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, true);
+        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, true);
     }
 
     // insert this socket to snd list if it is not on the list yet
@@ -8028,22 +8028,22 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
                 {
                     if (CSeqNo::seqcmp(losslist[i], m_iSndCurrSeqNo) > 0)
                     {
-                        LOGC(mglog.Error, log << CONID() << "rcv LOSSREPORT pkt " << losslist[i]
-                                << " with last sent " << m_iSndCurrSeqNo << " - DISCARDING");
+                        LOGC(mglog.Error, log << CONID() << "rcv LOSSREPORT pkt %" << losslist[i]
+                                << " with last sent %" << m_iSndCurrSeqNo << " - DISCARDING");
                         // seq_a must not be greater than the most recent sent seq
                         secure     = false;
                         wrong_loss = losslist[i];
                         break;
                     }
 
-                    HLOGC(mglog.Debug, log << CONID() << "received UMSG_LOSSREPORT: "
+                    HLOGC(mglog.Debug, log << CONID() << "rcv LOSSREPORT: %"
                             << losslist[i] << " (1 packet)");
                     int num = m_pSndLossList->insert(losslist[i], losslist[i]);
 
-                    CGuard::enterCS(m_StatsLock, "Stats");
+                    CGuard::enterCS(m_StatsLock);
                     m_stats.traceSndLoss += num;
                     m_stats.sndLossTotal += num;
-                    CGuard::leaveCS(m_StatsLock, "Stats");
+                    CGuard::leaveCS(m_StatsLock);
                 }
             }
         }
@@ -8830,7 +8830,6 @@ void CUDT::sendLossReport(const std::vector<std::pair<int32_t, int32_t> >& loss_
 }
 
 
-
 bool CUDT::overrideSndSeqNo(int32_t seq)
 {
     // This function is predicted to be called from the socket
@@ -8900,7 +8899,6 @@ static std::string DisplayLossArray(const vector<int32_t>& a)
 #else
 inline static std::string DisplayLossArray(const vector<int32_t>&) { return std::string(); }
 #endif
-
 int CUDT::processData(CUnit* in_unit)
 {
     THREAD_CHECK_AFFINITY(m_pRcvQueue->threadId());
@@ -9741,7 +9739,7 @@ int32_t CUDT::bake(const sockaddr_any& addr, int32_t current_cookie, int correct
         // SYN cookie
         char clienthost[NI_MAXHOST];
         char clientport[NI_MAXSERV];
-        getnameinfo(&addr,
+        getnameinfo(addr.get(),
                 addr.size(),
                 clienthost,
                 sizeof(clienthost),
@@ -10043,7 +10041,7 @@ SRT_REJECT_REASON CUDT::processConnectRequest(const sockaddr_any& addr, CPacket&
         else
         {
             // a new connection has been created, enable epoll for write
-           s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, true);
+            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, true);
         }
     }
     LOGC(mglog.Note, log << "listen ret: " << hs.m_iReqType << " - " << RequestTypeStr(hs.m_iReqType));
