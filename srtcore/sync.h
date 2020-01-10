@@ -174,6 +174,9 @@ Duration<steady_clock> seconds_from(int64_t t_s);
 
 inline bool is_zero(const TimePoint<steady_clock>& t) { return t.is_zero(); }
 
+timespec us_to_timespec(const uint64_t time_us);
+
+
 ///////////////////////////////////////////////////////////////////////////////
 //
 // Common pthread/chrono section
@@ -183,31 +186,66 @@ inline bool is_zero(const TimePoint<steady_clock>& t) { return t.is_zero(); }
 class SyncEvent
 {
 public:
-    /// Atomically releases lock, blocks the current executing thread,
-    /// and adds it to the list of threads waiting on* this.
-    /// The thread will be unblocked when notify_all() or notify_one() is executed,
-    /// or when the relative timeout rel_time expires.
-    /// It may also be unblocked spuriously.
-    /// When unblocked, regardless of the reason, lock is reacquiredand wait_for() exits.
-    ///
-    /// @return result of pthread_cond_wait(...) function call
-    ///
-    static int wait_for(pthread_cond_t* cond, pthread_mutex_t* mutex, const steady_clock::duration& rel_time);
-
-    static int wait_for_monotonic(pthread_cond_t* cond, pthread_mutex_t* mutex, const steady_clock::duration& rel_time);
 };
+
+#if ENABLE_THREAD_LOGGING
+struct CMutexWrapper
+{
+    typedef pthread_mutex_t sysobj_t;
+    pthread_mutex_t in_sysobj;
+    std::string lockname;
+
+    //pthread_mutex_t* operator& () { return &in_sysobj; }
+
+   // Turned explicitly to string because this is exposed only for logging purposes.
+   std::string show()
+   {
+       std::ostringstream os;
+       os << (&in_sysobj);
+       return os.str();
+   }
+
+};
+
+typedef CMutexWrapper CMutex;
+
+struct CConditionWrapper
+{
+    typedef pthread_cond_t sysobj_t;
+    pthread_cond_t in_sysobj;
+    std::string cvname;
+
+};
+
+typedef CConditionWrapper CCondition;
+
+template<class SysObj>
+inline typename SysObj::sysobj_t* RawAddr(SysObj& obj)
+{
+    return &obj.in_sysobj;
+}
+
+#else
+typedef ::pthread_mutex_t CMutex;
+typedef ::pthread_cond_t CCondition;
+
+// Note: This cannot be defined as overloaded for
+// two different types because on some platforms
+// the pthread_cond_t and pthread_mutex_t are distinct
+// types, while on others they resolve to the same type.
+template <class SysObj>
+inline SysObj* RawAddr(SysObj& m) { return &m; }
+#endif
+
 
 class CGuard
 {
-#if ENABLE_THREAD_LOGGING
-    std::string lockname;
-#endif
 public:
    /// Constructs CGuard, which locks the given mutex for
    /// the scope where this object exists.
    /// @param lock Mutex to lock
    /// @param if_condition If this is false, CGuard will do completely nothing
-   CGuard(pthread_mutex_t& lock, const char* ln = 0, bool if_condition = true);
+   CGuard(CMutex& lock, explicit_t<bool> if_condition = true);
    ~CGuard();
 
 public:
@@ -239,68 +277,57 @@ public:
        }
    }
 
-   static int enterCS(pthread_mutex_t& lock, const char* ln = 0, bool block = true);
-   static int leaveCS(pthread_mutex_t& lock, const char* ln = 0);
+   static int enterCS(CMutex& lock, explicit_t<bool> block = true);
+   static int leaveCS(CMutex& lock);
 
-   static bool isthread(const pthread_t& thrval);
-
-   static bool join(pthread_t& thr, void*& result);
-   static bool join(pthread_t& thr);
-
-   static void createMutex(pthread_mutex_t& lock);
-   static void releaseMutex(pthread_mutex_t& lock);
-
-   static void createCond(pthread_cond_t& cond, pthread_condattr_t* opt_attr = NULL);
-   static void releaseCond(pthread_cond_t& cond);
-
-#if ENABLE_LOGGING
-
-   // Turned explicitly to string because this is exposed only for logging purposes.
-   std::string show_mutex()
-   {
-       std::ostringstream os;
-       os << (&m_Mutex);
-       return os.str();
-   }
-#endif
+   // This is for a special case when one class keeps a pointer
+   // to another mutex/cond in another object. Required because
+   // the operator& has been defined to return the internal pointer
+   // so that the most used syntax matches directly the raw mutex/cond types.
 
 private:
+   friend class CSync;
 
    void Lock()
    {
-       m_iLocked = pthread_mutex_lock(&m_Mutex);
+       m_iLocked = pthread_mutex_lock(RawAddr(m_Mutex));
    }
 
    void Unlock()
    {
-        pthread_mutex_unlock(&m_Mutex);
+        pthread_mutex_unlock(RawAddr(m_Mutex));
    }
 
-   pthread_mutex_t& m_Mutex;            // Alias name of the mutex to be protected
+   CMutex& m_Mutex;            // Alias name of the mutex to be protected
    int m_iLocked;                       // Locking status
 
    CGuard& operator=(const CGuard&);
-
-   friend class CSync;
 };
+
+bool isthread(const pthread_t& thrval);
+
+bool jointhread(pthread_t& thr, void*& result);
+bool jointhread(pthread_t& thr);
+
+void createMutex(CMutex& lock, const char* name);
+void releaseMutex(CMutex& lock);
+
+void createCond(CCondition& cond, const char* name);
+void createCond_monotonic(CCondition& cond, const char* name);
+void releaseCond(CCondition& cond);
+
 
 class InvertedGuard
 {
-    pthread_mutex_t* m_pMutex;
-#if ENABLE_THREAD_LOGGING
-    std::string lockid;
-#endif
+    CMutex* m_pMutex;
 public:
 
-    InvertedGuard(pthread_mutex_t* smutex, const char* ln = NULL): m_pMutex(smutex)
+    InvertedGuard(CMutex& smutex, bool shouldlock = true): m_pMutex()
     {
-        if ( !smutex )
+        if ( !shouldlock)
             return;
-#if ENABLE_THREAD_LOGGING
-        if (ln)
-            lockid = ln;
-#endif
-        CGuard::leaveCS(*smutex, ln);
+        m_pMutex = AddressOf(smutex);
+        CGuard::leaveCS(smutex);
     }
 
     ~InvertedGuard()
@@ -308,58 +335,92 @@ public:
         if ( !m_pMutex )
             return;
 
-#if ENABLE_THREAD_LOGGING
-        CGuard::enterCS(*m_pMutex, lockid.empty() ? (const char*)0 : lockid.c_str());
-#else
         CGuard::enterCS(*m_pMutex);
-#endif
     }
 };
 
+////////////////////////////////////////////////////////////////////////////////
+
+/// Atomically releases lock, blocks the current executing thread,
+/// and adds it to the list of threads waiting on* this.
+/// The thread will be unblocked when notify_all() or notify_one() is executed,
+/// or when the relative timeout rel_time expires.
+/// It may also be unblocked spuriously.
+/// When unblocked, regardless of the reason, lock is reacquiredand wait_for() exits.
+///
+/// @return result of pthread_cond_wait(...) function call
+///
+int CondWaitFor(pthread_cond_t* cond, pthread_mutex_t* mutex, const steady_clock::duration& rel_time);
+int CondWaitFor_monotonic(pthread_cond_t* cond, pthread_mutex_t* mutex, const steady_clock::duration& rel_time);
+
+#if ENABLE_THREAD_LOGGING
+inline int CondWaitFor(CConditionWrapper* cond, CMutexWrapper* mutex, const steady_clock::duration& rel_time)
+{
+    return CondWaitFor(&cond->in_sysobj, &mutex->in_sysobj, rel_time);
+}
+inline int CondWaitFor_monotonic(CConditionWrapper* cond, CMutexWrapper* mutex, const steady_clock::duration& rel_time)
+{
+    return CondWaitFor_monotonic(&cond->in_sysobj, &mutex->in_sysobj, rel_time);
+}
+#endif
 // This class is used for condition variable combined with mutex by different ways.
 // This should provide a cleaner API around locking with debug-logging inside.
 class CSync
 {
-    pthread_cond_t* m_cond;
-    pthread_mutex_t* m_mutex;
+    CCondition* m_cond;
+    CMutex* m_mutex;
 #if ENABLE_THREAD_LOGGING
-    bool nolock;
-    std::string cvname;
-    std::string lockname;
+    bool m_nolock;
 #endif
 
-public:
 
+public:
     enum Nolock { NOLOCK };
 
     // Locked version: must be declared only after the declaration of CGuard,
     // which has locked the mutex. On this delegate you should call only
     // signal_locked() and pass the CGuard variable that should remain locked.
-    // Also wait() and wait_until() can be used only with this socket.
-    CSync(pthread_cond_t& cond, CGuard& g, const char* ln = 0);
+    // Also wait() and wait_for() can be used only with this socket.
+    CSync(CCondition& cond, CGuard& g);
 
     // This is only for one-shot signaling. This doesn't need a CGuard
     // variable, only the mutex itself. Only lock_signal() can be used.
-    CSync(pthread_cond_t& cond, pthread_mutex_t& mutex, Nolock, const char* cn = 0, const char* ln = 0);
+    CSync(CCondition& cond, CMutex& mutex, Nolock);
+
+    // An alternative method
+    static CSync nolock(CCondition& cond, CMutex& m)
+    {
+        return CSync(cond, m, NOLOCK);
+    }
+
+    // COPY CONSTRUCTOR: DEFAULT!
 
     // Wait indefinitely, until getting a signal on CV.
     void wait();
 
-    // Wait only up to given time (microseconds since epoch, the same unit as
-    // for CTimer::getTime()).
-    // Return: true, if interrupted by a signal. False if exit on timeout.
-    bool wait_until(const srt::sync::steady_clock::time_point& timestamp);
-
     // Wait only for a given time delay (in microseconds). This function
-    // extracts first current time using gettimeofday().
-    bool wait_for(const srt::sync::steady_clock::duration& delay);
+    // extracts first current time using steady_clock::now().
+    bool wait_for(const steady_clock::duration& delay);
+    bool wait_for_monotonic(const steady_clock::duration& delay);
+
+    // Wait until the given time is achieved. This actually
+    // refers to wait_for for the time remaining to achieve
+    // given time.
+    bool wait_until(const steady_clock::time_point& exptime);
 
     // You can signal using two methods:
     // - lock_signal: expect the mutex NOT locked, lock it, signal, then unlock.
     // - signal: expect the mutex locked, so only issue a signal, but you must pass the CGuard that keeps the lock.
     void lock_signal();
+
+    // Static ad-hoc version
+    static void lock_signal(CCondition& cond, CMutex& m);
+    static void lock_broadcast(CCondition& cond, CMutex& m);
+
     void signal_locked(CGuard& lk);
     void signal_relaxed();
+    static void signal_relaxed(CCondition& cond);
+    static void broadcast_relaxed(CCondition& cond);
 };
 
 
