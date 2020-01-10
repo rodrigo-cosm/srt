@@ -153,57 +153,6 @@ bool CUDTSocket::broken()
     return m_pUDT->m_bBroken || !m_pUDT->m_bConnected;
 }
 
-
-SRT_SOCKSTATUS CUDTSocket::getStatus()
-{
-    // TTL in CRendezvousQueue::updateConnStatus() will set m_bConnecting to false.
-    // Although m_Status is still SRTS_CONNECTING, the connection is in fact to be closed due to TTL expiry.
-    // In this case m_bConnected is also false. Both checks are required to avoid hitting
-    // a regular state transition from CONNECTING to CONNECTED.
-
-    if (m_pUDT->m_bBroken)
-        return SRTS_BROKEN;
-
-    // Connecting timed out
-    if ((m_Status == SRTS_CONNECTING) && !m_pUDT->m_bConnecting && !m_pUDT->m_bConnected)
-        return SRTS_BROKEN;
-
-    return m_Status;
-}
-
-void CUDTSocket::makeClosed()
-{
-    HLOGC(mglog.Debug, log << "@" << m_SocketID << " CLOSING AS SOCKET");
-    m_pUDT->m_bBroken = true;
-    m_pUDT->close();
-    m_Status = SRTS_CLOSED;
-    m_tsClosureTimeStamp = steady_clock::now();
-}
-
-bool CUDTSocket::readReady()
-{
-    if (m_pUDT->m_bConnected && m_pUDT->m_pRcvBuffer->isRcvDataReady())
-        return true;
-    if (m_pUDT->m_bListening)
-    {
-        return m_pQueuedSockets->size() > 0;
-    }
-
-    return broken();
-}
-
-bool CUDTSocket::writeReady()
-{
-    return (m_pUDT->m_bConnected
-                && (m_pUDT->m_pSndBuffer->getCurrBufSize() < m_pUDT->m_iSndBufSize))
-        || broken();
-}
-
-bool CUDTSocket::broken()
-{
-    return m_pUDT->m_bBroken || !m_pUDT->m_bConnected;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 
 CUDTUnited::CUDTUnited():

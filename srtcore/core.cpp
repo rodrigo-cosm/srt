@@ -387,9 +387,6 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
     HLOGC(mglog.Debug,
           log << CONID() << "OPTION: #" << optName << " value:" << FormatBinaryString((uint8_t*)optval, optlen));
 
-    HLOGC(mglog.Debug,
-          log << CONID() << "OPTION: #" << optName << " value:" << FormatBinaryString((uint8_t*)optval, optlen));
-
     switch (optName)
     {
     case SRTO_MSS:
@@ -6752,29 +6749,6 @@ void CUDT::ackDataUpTo(int32_t ack)
     }
 }
 
-void CUDT::ackDataUpTo(int32_t ack)
-{
-    int acksize = CSeqNo::seqoff(m_iRcvLastSkipAck, ack);
-
-    HLOGC(mglog.Debug, log << "ackDataUpTo: %" << ack << " vs. current %" << m_iRcvLastSkipAck
-            << " (signing off " << acksize << " packets)");
-
-    m_iRcvLastAck = ack;
-    m_iRcvLastSkipAck = ack;
-
-    // NOTE: This is new towards UDT and prevents spurious
-    // wakeup of select/epoll functions when no new packets
-    // were signed off for extraction.
-    if (acksize > 0)
-    {
-        m_pRcvBuffer->ackData(acksize);
-
-        // Signal threads waiting in CTimer::waitForEvent(),
-        // which are select(), selectEx() and epoll_wait().
-        CTimer::triggerEvent();
-    }
-}
-
 #if ENABLE_HEAVY_LOGGING
 static void DebugAck(string hdr, int prev, int ack)
 {
@@ -6809,7 +6783,7 @@ static inline void DebugAck(string, int, int) {}
 
 void CUDT::sendCtrl(UDTMessageType pkttype, const void* lparam, void* rparam, int size)
 {
-    CPacket  ctrlpkt;
+    CPacket ctrlpkt;
     setPacketTS(ctrlpkt, steady_clock::now());
 
     int nbsent        = 0;
@@ -7523,14 +7497,15 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
                         break;
                     }
 
-                HLOGC(mglog.Debug, log << CONID() << "rcv LOSSREPORT: %"
-                        << losslist[i] << " (1 packet)");
+                    HLOGC(mglog.Debug, log << CONID() << "rcv LOSSREPORT: %"
+                            << losslist[i] << " (1 packet)");
                     int num = m_pSndLossList->insert(losslist[i], losslist[i]);
 
-                CGuard::enterCS(m_StatsLock);
-                m_stats.traceSndLoss += num;
-                m_stats.sndLossTotal += num;
-                CGuard::leaveCS(m_StatsLock);
+                    CGuard::enterCS(m_StatsLock);
+                    m_stats.traceSndLoss += num;
+                    m_stats.sndLossTotal += num;
+                    CGuard::leaveCS(m_StatsLock);
+                }
             }
         }
 
@@ -8233,19 +8208,6 @@ void CUDT::sendLossReport(const std::vector<std::pair<int32_t, int32_t> >& loss_
         sendCtrl(UMSG_LOSSREPORT, NULL, &seqbuffer[0], seqbuffer.size());
     }
 }
-
-inline void ThreadCheckAffinity(const char* function SRT_ATR_UNUSED, pthread_t thr SRT_ATR_UNUSED)
-{
-#if ENABLE_THREAD_LOGGING
-    if (thr == pthread_self())
-        return;
-
-    LOGC(mglog.Fatal, log << "IPE: '" << function << "' should not be executed in this thread!");
-    throw std::runtime_error("INTERNAL ERROR: incorrect function affinity");
-#endif
-}
-
-#define THREAD_CHECK_AFFINITY(thr) ThreadCheckAffinity(__FUNCTION__, thr)
 
 int CUDT::processData(CUnit* in_unit)
 {
@@ -9028,7 +8990,7 @@ int32_t CUDT::bake(const sockaddr_any& addr, int32_t current_cookie, int correct
         char clienthost[NI_MAXHOST];
         char clientport[NI_MAXSERV];
         getnameinfo(addr.get(),
-                    addr.size(),
+                addr.size(),
                 clienthost,
                 sizeof(clienthost),
                 clientport,

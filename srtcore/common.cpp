@@ -61,7 +61,6 @@ modified by
 #include <iostream>
 #include <iomanip>
 #include "udt.h"
-#include "udt.h"
 #include "md5.h"
 #include "common.h"
 #include "netinet_any.h"
@@ -527,7 +526,6 @@ void CIPAddress::ntop(const sockaddr_any& addr, uint32_t ip[4])
 // XXX This has void return and the first argument is passed by reference.
 // Consider simply returning sockaddr_any by value.
 void CIPAddress::pton(sockaddr_any& w_addr, const uint32_t ip[4], int ver)
-
 {
    if (AF_INET == ver)
    {

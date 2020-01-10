@@ -105,7 +105,6 @@ int main( int argc, char** argv )
         return 1;
     }
 
-
     string loglevel = Option<OutString>(params, "error", o_loglevel);
     srt_logging::LogLevel::type lev = SrtParseLogLevel(loglevel);
     UDT::setloglevel(lev);

@@ -296,7 +296,7 @@ void CSndUList::update(const CUDT* u, EReschedule reschedule)
     insert_(steady_clock::now(), u);
 }
 
-int CSndUList::pop(sockaddr_any& addr, CPacket &pkt)
+int CSndUList::pop(sockaddr_any& w_addr, CPacket& w_pkt)
 {
     CGuard listguard(m_ListLock);
 
@@ -322,12 +322,12 @@ int CSndUList::pop(sockaddr_any& addr, CPacket &pkt)
         return -1;
 
     // pack a packet from the socket
-    const std::pair<int, steady_clock::time_point> res_time = u->packData(*r_pkt);
+    const std::pair<int, steady_clock::time_point> res_time = u->packData((w_pkt));
 
     if (res_time.first <= 0)
         return -1;
 
-    addr = u->m_PeerAddr;
+    w_addr = u->m_PeerAddr;
 
     // insert a new entry, ts is the next processing time
     const steady_clock::time_point send_time = res_time.second;

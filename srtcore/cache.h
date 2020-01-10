@@ -99,7 +99,7 @@ public:
 
    int lookup(T* data)
    {
-      CGuard cacheguard(m_Lock);
+      srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)
@@ -127,7 +127,7 @@ public:
 
    int update(T* data)
    {
-      CGuard cacheguard(m_Lock);
+      srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)

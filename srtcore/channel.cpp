@@ -511,7 +511,6 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
 EReadStatus CChannel::recvfrom(sockaddr_any& w_addr, CPacket& packet) const
 {
     EReadStatus status = RST_OK;
-    sockaddr* addr = &r_addr.get();
     int msg_flags = 0;
     int recv_size = -1;
 
