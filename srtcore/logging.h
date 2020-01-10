@@ -30,6 +30,7 @@ written by
 #endif
 
 #include "srt.h"
+#include "common.h"
 #include "utilities.h"
 #include "threadname.h"
 #include "logging_api.h"
@@ -89,9 +90,10 @@ written by
 #else
 
 // Note: can't use CGuard here because CGuard uses LOGS in itself and will cause infinite recursion.
+// also: LOGS can be only and exclusively used in sync.cpp, where g_gmtx is defined.
 #define LOGS(stream, args) if (::srt_logger_config.max_level == srt_logging::LogLevel::debug) { \
     char tn[512]; g_gmtx.lock(); ThreadName::get(tn); std::ostringstream log; \
-    log << srt_logging::FormatTime(CTimer::getTime()) << "/" << tn << "##: "; \
+    log << FormatTime(steady_clock::now()) << "/" << tn << "##: "; \
     args; \
     log << std::endl; stream << log.str(); \
     g_gmtx.unlock(); \
