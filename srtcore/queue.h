@@ -347,7 +347,7 @@ private:
    };
    std::list<CRL> m_lRendezvousID;    // The sockets currently in rendezvous mode
 
-   pthread_mutex_t m_RIDVectorLock;
+   srt::sync::CMutex m_RIDVectorLock;
 };
 
 class CSndQueue

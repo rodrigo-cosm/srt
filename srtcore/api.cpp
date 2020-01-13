@@ -846,7 +846,7 @@ int CUDTUnited::connect(const SRTSOCKET u, const sockaddr* name, int namelen, in
    {
        // InvertedGuard unlocks in the constructor, then locks in the
        // destructor, no matter if an exception has fired.
-       InvertedGuard l_unlocker(s->m_ControlLock, s->m_pUDT->m_bSynRecving);
+       InvertedGuard l_unlocker (s->m_ControlLock, s->m_pUDT->m_bSynRecving);
        s->m_pUDT->startConnect(target_addr, forced_isn);
    }
    catch (CUDTException& e) // Interceptor, just to change the state.

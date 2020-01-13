@@ -6014,11 +6014,6 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
                 // when this started, or sliced-waiting for 1 second, if timtout is
                 // higher than this.
                 const steady_clock::time_point exptime = steady_clock::now() + recv_timeout;
-
-                HLOGC(tslog.Debug,
-                      log << "receiveMessage: fall asleep up to TS=" << FormatTime(exptime) << " lock=" << (&m_RecvLock)
-                          << " cond=" << (&m_RecvDataCond));
-
                 if (!recv_cond.wait_until(exptime))
                 {
                     if (!(m_iRcvTimeOut < 0))
