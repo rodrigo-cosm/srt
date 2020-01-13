@@ -591,8 +591,6 @@ public:
       /// @retval 0 Wait was successfull
       /// @retval ETIMEDOUT The wait timed out
 
-   static int condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64_t delay);
-
 private:
    srt::sync::steady_clock::time_point m_tsSchedTime;             // next schedulled time
 
@@ -899,7 +897,7 @@ struct CIPAddress
 {
    static bool ipcmp(const struct sockaddr* addr1, const struct sockaddr* addr2, int ver = AF_INET);
    static void ntop(const struct sockaddr_any& addr, uint32_t ip[4]);
-   static void pton(ref_t<sockaddr_any> addr, const uint32_t ip[4], int sa_family);
+   static void pton(sockaddr_any& addr, const uint32_t ip[4], int sa_family);
    static std::string show(const struct sockaddr* adr);
 };
 

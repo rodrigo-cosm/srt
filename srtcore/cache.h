@@ -44,7 +44,7 @@ written by
 #include <list>
 #include <vector>
 
-#include "common.h"
+#include "sync.h"
 #include "netinet_any.h"
 #include "udt.h"
 
@@ -83,13 +83,13 @@ public:
    m_iCurrSize(0)
    {
       m_vHashPtr.resize(m_iHashSize);
-      srt::sync::CGuard::createMutex(m_Lock);
+      srt::sync::createMutex(m_Lock, "Cache");
    }
 
    ~CCache()
    {
       clear();
-      srt::sync::CGuard::releaseMutex(m_Lock);
+      srt::sync::releaseMutex(m_Lock);
    }
 
 public:
@@ -99,7 +99,7 @@ public:
 
    int lookup(T* data)
    {
-      srt::sync::CGuard cacheguard(m_Lock, "cache");
+      srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)
@@ -127,7 +127,7 @@ public:
 
    int update(T* data)
    {
-      srt::sync::CGuard cacheguard(m_Lock, "cache");
+      srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)
@@ -224,7 +224,7 @@ private:
    int m_iHashSize;
    int m_iCurrSize;
 
-   pthread_mutex_t m_Lock;
+   srt::sync::CMutex m_Lock;
 
 private:
    CCache(const CCache&);
@@ -236,7 +236,7 @@ class CInfoBlock
 {
 public:
    uint32_t m_piIP[4];		// IP address, machine read only, not human readable format
-   int m_iFamily;   		// IP version
+   int m_iIPversion;   		// Address family: AF_INET or AF_INET6
    uint64_t m_ullTimeStamp;	// last update time
    int m_iRTT;			// RTT
    int m_iBandwidth;		// estimated bandwidth
