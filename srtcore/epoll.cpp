@@ -86,17 +86,17 @@ using namespace srt_logging;
 CEPoll::CEPoll():
 m_iIDSeed(0)
 {
-    CGuard::createMutex(m_EPollLock);
+   createMutex(m_EPollLock, "EPoll");
 }
 
 CEPoll::~CEPoll()
 {
-   CGuard::releaseMutex(m_EPollLock);
+   releaseMutex(m_EPollLock);
 }
 
 int CEPoll::create()
 {
-   CGuard pg(m_EPollLock, "EPoll");
+   CGuard pg (m_EPollLock);
 
    if (++ m_iIDSeed >= 0x7FFFFFFF)
       m_iIDSeed = 0;
@@ -134,7 +134,7 @@ ENOMEM: There was insufficient memory to create the kernel object.
 
 int CEPoll::add_ssock(const int eid, const SYSSOCKET& s, const int* events)
 {
-   CGuard pg(m_EPollLock, "EPoll");
+   CGuard pg (m_EPollLock);
 
    map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
    if (p == m_mPolls.end())
@@ -202,7 +202,7 @@ int CEPoll::add_ssock(const int eid, const SYSSOCKET& s, const int* events)
 
 int CEPoll::remove_ssock(const int eid, const SYSSOCKET& s)
 {
-   CGuard pg(m_EPollLock, "EPoll");
+   CGuard pg (m_EPollLock);
 
    map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
    if (p == m_mPolls.end())
@@ -233,7 +233,7 @@ int CEPoll::remove_ssock(const int eid, const SYSSOCKET& s)
 // Need this to atomically modify polled events (ex: remove write/keep read)
 int CEPoll::update_usock(const int eid, const SRTSOCKET& u, const int* events)
 {
-    CGuard pg(m_EPollLock, "EPoll");
+    CGuard pg (m_EPollLock);
 
     map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
     if (p == m_mPolls.end())
@@ -294,7 +294,7 @@ int CEPoll::update_usock(const int eid, const SRTSOCKET& u, const int* events)
 
 int CEPoll::update_ssock(const int eid, const SYSSOCKET& s, const int* events)
 {
-   CGuard pg(m_EPollLock, "EPoll");
+   CGuard pg (m_EPollLock);
 
    map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
    if (p == m_mPolls.end())
@@ -359,7 +359,7 @@ int CEPoll::update_ssock(const int eid, const SYSSOCKET& s, const int* events)
 
 int CEPoll::setflags(const int eid, int32_t flags)
 {
-    CGuard pg(m_EPollLock, "EPoll");
+    CGuard pg (m_EPollLock);
     map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
     if (p == m_mPolls.end())
         throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
@@ -395,7 +395,7 @@ int CEPoll::uwait(const int eid, SRT_EPOLL_EVENT* fdsSet, int fdsSize, int64_t m
     while (true)
     {
         {
-            CGuard pg(m_EPollLock, "EPoll");
+            CGuard pg (m_EPollLock);
             map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
             if (p == m_mPolls.end())
                 throw CUDTException(MJ_NOTSUP, MN_EIDINVAL);
@@ -465,7 +465,7 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
     while (true)
     {
         {
-            CGuard epollock(m_EPollLock, "EPoll");
+            CGuard epollock (m_EPollLock);
 
             map<int, CEPollDesc>::iterator p = m_mPolls.find(eid);
             if (p == m_mPolls.end())
@@ -641,7 +641,7 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
 
 int CEPoll::release(const int eid)
 {
-   CGuard pg(m_EPollLock, "EPoll");
+   CGuard pg (m_EPollLock);
 
    map<int, CEPollDesc>::iterator i = m_mPolls.find(eid);
    if (i == m_mPolls.end())
@@ -664,7 +664,7 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
 {
     vector<int> lost;
 
-    CGuard pg(m_EPollLock, "EPoll");
+    CGuard pg (m_EPollLock);
     for (set<int>::iterator i = eids.begin(); i != eids.end(); ++ i)
     {
         map<int, CEPollDesc>::iterator p = m_mPolls.find(*i);
