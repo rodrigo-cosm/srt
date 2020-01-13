@@ -188,7 +188,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
 {
     m_bindsock = srt_create_socket();
     if ( m_bindsock == SRT_ERROR )
-        Error("srt_socket");
+        Error("srt_create_socket");
 
     int stat = ConfigurePre(m_bindsock);
     if ( stat == SRT_ERROR )
@@ -389,7 +389,7 @@ void SrtCommon::PrepareClient()
 {
     m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
-        Error("srt_socket");
+        Error("srt_create_socket");
 
     int stat = ConfigurePre(m_sock);
     if ( stat == SRT_ERROR )
@@ -431,7 +431,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 {
     m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
-        Error("srt_socket");
+        Error("srt_create_socket");
 
     bool yes = true;
     srt_setsockopt(m_sock, 0, SRTO_RENDEZVOUS, &yes, sizeof yes);
@@ -638,7 +638,7 @@ void SrtModel::Establish(ref_t<std::string> name)
             // so that it will be reused next time.
             sockaddr_any s(AF_INET);
             int namelen = s.size();
-            if ( srt_getsockname(Socket(), &s, &namelen) == SRT_ERROR )
+            if ( srt_getsockname(Socket(), s.get(), &namelen) == SRT_ERROR )
             {
                 Error("srt_getsockname");
             }
