@@ -286,7 +286,7 @@ public:
 
     gli_t find(SRTSOCKET id)
     {
-        srt::sync::CGuard g(m_GroupLock, "Group");
+        srt::sync::CGuard g (m_GroupLock);
         gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f == m_Group.end())
         {
@@ -305,7 +305,7 @@ public:
     bool remove(SRTSOCKET id)
     {
         bool s = false;
-        srt::sync::CGuard g(m_GroupLock, "Group");
+        srt::sync::CGuard g (m_GroupLock);
         gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f != m_Group.end())
         {
@@ -343,7 +343,7 @@ public:
 
     bool empty()
     {
-        srt::sync::CGuard g(m_GroupLock, "Group");
+        srt::sync::CGuard g (m_GroupLock);
         return m_Group.empty();
     }
 
@@ -887,7 +887,7 @@ public: // internal API
     // immediately to free the socket
     void notListening()
     {
-        srt::sync::CGuard cg(m_ConnectionLock, "Connection");
+        srt::sync::CGuard cg(m_ConnectionLock);
         m_bListening = false;
         m_pRcvQueue->removeListener(this);
     }
@@ -1388,7 +1388,7 @@ private: // Receiving related data
     bool m_bGroupTsbPd;                          // TSBPD should be used for GROUP RECEIVER instead.
 
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
-    pthread_cond_t m_RcvTsbPdCond;
+    srt::sync::CCondition m_RcvTsbPdCond;
     bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
 
     CallbackHolder<srt_listen_callback_fn> m_cbAcceptHook;
@@ -1404,26 +1404,26 @@ private:
 
 
 private: // synchronization: mutexes and conditions
-    pthread_mutex_t m_ConnectionLock;            // used to synchronize connection operation
+    srt::sync::CMutex m_ConnectionLock;            // used to synchronize connection operation
 
-    pthread_cond_t m_SendBlockCond;              // used to block "send" call
-    pthread_mutex_t m_SendBlockLock;             // lock associated to m_SendBlockCond
+    srt::sync::CCondition m_SendBlockCond;              // used to block "send" call
+    srt::sync::CMutex m_SendBlockLock;             // lock associated to m_SendBlockCond
 
-    pthread_mutex_t m_RcvBufferLock;             // Protects the state of the m_pRcvBuffer
+    srt::sync::CMutex m_RcvBufferLock;             // Protects the state of the m_pRcvBuffer
 
     // Protects access to m_iSndCurrSeqNo, m_iSndLastAck
-    pthread_mutex_t m_RecvAckLock;               // Protects the state changes while processing incomming ACK (UDT_EPOLL_OUT)
+    srt::sync::CMutex m_RecvAckLock;               // Protects the state changes while processing incomming ACK (UDT_EPOLL_OUT)
 
 
-    pthread_cond_t m_RecvDataCond;               // used to block "recv" when there is no data
-    pthread_mutex_t m_RecvDataLock;              // lock associated to m_RecvDataCond
+    srt::sync::CCondition m_RecvDataCond;               // used to block "recv" when there is no data
+    srt::sync::CMutex m_RecvDataLock;              // lock associated to m_RecvDataCond
 
-    pthread_mutex_t m_SendLock;                  // used to synchronize "send" call
-    pthread_mutex_t m_RecvLock;                  // used to synchronize "recv" call
+    srt::sync::CMutex m_SendLock;                  // used to synchronize "send" call
+    srt::sync::CMutex m_RecvLock;                  // used to synchronize "recv" call
 
-    pthread_mutex_t m_RcvLossLock;               // Protects the receiver loss list (access: CRcvQueue::worker, CUDT::tsbpd)
+    srt::sync::CMutex m_RcvLossLock;               // Protects the receiver loss list (access: CRcvQueue::worker, CUDT::tsbpd)
 
-    pthread_mutex_t m_StatsLock;                 // used to synchronize access to trace statistics
+    srt::sync::CMutex m_StatsLock;                 // used to synchronize access to trace statistics
 
     void initSynch();
     void destroySynch();
