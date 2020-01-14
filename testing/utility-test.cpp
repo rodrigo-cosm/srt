@@ -87,7 +87,7 @@ void ShowCircularBuffer(const CircularBuffer<Val>& buf)
     for (int i = 0; i < buf.size(); ++i)
     {
         Double v;
-        if (buf.get(i, Ref(v)))
+        if (buf.get(i, (v)))
             cout << "[" << i << "] = " << v << endl;
         else
             cout << "[" << i << "] EMPTY!\n";

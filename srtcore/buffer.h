@@ -102,7 +102,7 @@ public:
       /// @param [in] data pointer to the user data block.
       /// @param [in] len size of the block.
       /// @param [inout] r_mctrl Message control data
-   void addBuffer(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl);
+   void addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl);
 
       /// Read a block of data from file and insert it into the sending list.
       /// @param [in] ifs input file stream.
@@ -118,7 +118,7 @@ public:
       /// @param [in] kflags Odd|Even crypto key flag
       /// @return Actual length of data read.
 
-   int readData(ref_t<CPacket> r_packet, ref_t<srt::sync::steady_clock::time_point> origintime, int kflgs);
+   int readData(CPacket& w_packet, srt::sync::steady_clock::time_point& w_origintime, int kflgs);
 
       /// Find data position to pack a DATA packet for a retransmission.
       /// @param [out] data the pointer to the data position.
@@ -128,7 +128,7 @@ public:
       /// @param [out] msglen length of the message
       /// @return Actual length of data read.
 
-   int readData(const int offset, ref_t<CPacket> r_packet, ref_t<srt::sync::steady_clock::time_point> origintime, ref_t<int> msglen);
+   int readData(const int offset, CPacket& w_packet, srt::sync::steady_clock::time_point& w_origintime, int& w_msglen);
 
       /// Update the ACK point and may release/unmap/return the user data according to the flag.
       /// @param [in] offset number of packets acknowledged.
@@ -146,9 +146,9 @@ public:
 
 #ifdef SRT_ENABLE_SNDBUFSZ_MAVG
    void updAvgBufSize(const srt::sync::steady_clock::time_point& time);
-   int getAvgBufSize(ref_t<int> bytes, ref_t<int> timespan);
+   int getAvgBufSize(int& bytes, int& timespan);
 #endif /* SRT_ENABLE_SNDBUFSZ_MAVG */
-   int getCurrBufSize(ref_t<int> bytes, ref_t<int> timespan);
+   int getCurrBufSize(int& bytes, int& timespan);
 
    uint64_t getInRatePeriod() const { return m_InRatePeriod; }
 
@@ -368,7 +368,7 @@ public:
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
       /// @return actuall size of data read.
 
-   int readMsg(char* data, int len, ref_t<SRT_MSGCTRL> mctrl, int upto);
+   int readMsg(char* data, int len, SRT_MSGCTRL& mctrl, int upto);
       /// Query if data is ready to read (tsbpdtime <= now if TsbPD is active).
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
       ///                        of next packet in recv buffer, ready or not.
@@ -403,7 +403,7 @@ public:
       /// @param [ref] lock Mutex that should be locked for the operation
 
    bool addRcvTsbPdDriftSample(uint32_t timestamp, srt::sync::CMutex& mutex_to_lock,
-           ref_t<duration> r_udrift, ref_t<time_point> r_newtimebase);
+           duration& w_udrift, time_point& w_newtimebase);
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
    void printDriftHistogram(int64_t iDrift);
@@ -485,7 +485,7 @@ public:
    int32_t getTopMsgno();
 
    // @return Wrap check value
-   bool getInternalTimeBase(ref_t<time_point> tb, ref_t<duration> r_udrift);
+   bool getInternalTimeBase(time_point& w_tb, duration& w_udrift);
 
    void applyGroupTime(const time_point& timebase, bool wrapcheck, uint32_t delay, const duration& udrift);
    void applyGroupDrift(const time_point& timebase, bool wrapcheck, const duration& udrift);
@@ -505,7 +505,7 @@ public:
 private:
 
    int extractData(char *data, int len, int p, int q, bool passack);
-   bool accessMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> r_passack, ref_t<uint64_t> r_playtime, int upto);
+   bool accessMsg(int& w_p, int& w_q, bool& w_passack, uint64_t& w_playtime, int upto);
    
    /// thread safe bytes counter of the Recv & Ack buffer
    /// @param [in] pkts  acked or removed pkts from rcv buffer (used with acked = true)
@@ -515,7 +515,7 @@ private:
    void countBytes(int pkts, int bytes, bool acked = false);
 
 private:
-   bool scanMsg(ref_t<int> start, ref_t<int> end, ref_t<bool> passack);
+   bool scanMsg(int& w_start, int& w_end, bool& w_passack);
 
    int shift(int basepos, int shift) const
    {
