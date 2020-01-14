@@ -466,12 +466,12 @@ SRTSOCKET CUDTUnited::newSocket(CUDTSocket** pps)
    return ns->m_SocketID;
 }
 
-int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt,
-        ref_t<SRT_REJECT_REASON> r_error)
+int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, const CPacket& hspkt,
+        CHandShake& w_hs, SRT_REJECT_REASON& w_error)
 {
    CUDTSocket* ns = NULL;
 
-   *r_error = SRT_REJ_IPE;
+   w_error = SRT_REJ_IPE;
 
    // Can't manage this error through an exception because this is
    // running in the listener loop.
@@ -485,7 +485,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     HLOGC(mglog.Debug, log << "newConnection: creating new socket after listener @" << listen << " contacted with backlog=" << ls->m_uiBackLog);
 
    // if this connection has already been processed
-   if ((ns = locatePeer(peer, hs->m_iID, hs->m_iISN)) != NULL)
+   if ((ns = locatePeer(peer, w_hs.m_iID, w_hs.m_iISN)) != NULL)
    {
       if (ns->m_pUDT->m_bBroken)
       {
@@ -503,13 +503,13 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
         // respond with existing HS information
          HLOGC(mglog.Debug, log
                << "newConnection: located a WORKING peer @"
-               << hs->m_iID << " - ADAPTING.");
+               << w_hs.m_iID << " - ADAPTING.");
 
-         hs->m_iISN = ns->m_pUDT->m_iISN;
-         hs->m_iMSS = ns->m_pUDT->m_iMSS;
-         hs->m_iFlightFlagSize = ns->m_pUDT->m_iFlightFlagSize;
-         hs->m_iReqType = URQ_CONCLUSION;
-         hs->m_iID = ns->m_SocketID;
+         w_hs.m_iISN = ns->m_pUDT->m_iISN;
+         w_hs.m_iMSS = ns->m_pUDT->m_iMSS;
+         w_hs.m_iFlightFlagSize = ns->m_pUDT->m_iFlightFlagSize;
+         w_hs.m_iReqType = URQ_CONCLUSION;
+         w_hs.m_iID = ns->m_SocketID;
 
          return 0;
 
@@ -518,13 +518,13 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    }
    else
    {
-       HLOGC(mglog.Debug, log << "newConnection: NOT located any peer @" << hs->m_iID << " - resuming with initial connection.");
+       HLOGC(mglog.Debug, log << "newConnection: NOT located any peer @" << w_hs.m_iID << " - resuming with initial connection.");
    }
 
    // exceeding backlog, refuse the connection request
    if (ls->m_pQueuedSockets->size() >= ls->m_uiBackLog)
    {
-       *r_error = SRT_REJ_BACKLOG;
+       w_error = SRT_REJ_BACKLOG;
        LOGC(mglog.Error, log << "newConnection: listen backlog=" << ls->m_uiBackLog << " EXCEEDED");
        return -1;
    }
@@ -538,7 +538,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    }
    catch (...)
    {
-      *r_error = SRT_REJ_RESOURCE;
+      w_error = SRT_REJ_RESOURCE;
       delete ns;
       LOGC(mglog.Error, log << "IPE: newConnection: unexpected exception (probably std::bad_alloc)");
       return -1;
@@ -562,8 +562,8 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
    ns->m_ListenSocket = listen;
    ns->m_pUDT->m_SocketID = ns->m_SocketID;
-   ns->m_PeerID = hs->m_iID;
-   ns->m_iISN = hs->m_iISN;
+   ns->m_PeerID = w_hs.m_iID;
+   ns->m_iISN = w_hs.m_iISN;
 
    HLOGC(mglog.Debug, log << "newConnection: DATA: lsnid=" << listen
             << " id=" << ns->m_pUDT->m_SocketID
@@ -575,7 +575,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
    // Set the error code for all prospective problems below.
    // It won't be interpreted when result was successful.
-   *r_error = SRT_REJ_RESOURCE;
+   w_error = SRT_REJ_RESOURCE;
 
    // These can throw exception only when the memory allocation failed.
    // CUDT::connect() translates exception into CUDTException.
@@ -588,7 +588,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
        // this call causes sending the SRT Handshake through this socket.
        // Without this mapping the socket cannot be found and therefore
        // the SRT Handshake message would fail.
-       HLOGF(mglog.Debug, 
+       HLOGF(mglog.Debug,
                "newConnection: incoming %s, mapping socket %d",
                SockaddrToString(peer).c_str(), ns->m_SocketID);
        {
@@ -601,18 +601,18 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
        updateListenerMux(ns, ls);
        if (ls->m_pUDT->m_cbAcceptHook)
        {
-           if (!ls->m_pUDT->runAcceptHook(ns->m_pUDT, peer.get(), hs, hspkt))
+           if (!ls->m_pUDT->runAcceptHook(ns->m_pUDT, peer.get(), w_hs, hspkt))
            {
                error = 1;
                goto ERR_ROLLBACK;
            }
        }
-       ns->m_pUDT->acceptAndRespond(peer, hs, hspkt);
+       ns->m_pUDT->acceptAndRespond(peer, hspkt, (w_hs));
    }
    catch (...)
    {
        // Extract the error that was set in this new failed entity.
-       *r_error = ns->m_pUDT->m_RejectReason;
+       w_error = ns->m_pUDT->m_RejectReason;
        error = 1;
        goto ERR_ROLLBACK;
    }
@@ -1497,7 +1497,7 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
     {
         // InvertedGuard unlocks in the constructor, then locks in the
         // destructor, no matter if an exception has fired.
-        InvertedGuard l_unlocker(s->m_ControlLock, s->m_pUDT->m_bSynRecving);
+        InvertedGuard l_unlocker (s->m_ControlLock, s->m_pUDT->m_bSynRecving);
         s->m_pUDT->startConnect(target_addr, forced_isn);
     }
     catch (CUDTException& e) // Interceptor, just to change the state.
@@ -1686,9 +1686,9 @@ int CUDTUnited::close(CUDTSocket* s)
    return 0;
 }
 
-void CUDTUnited::getpeername(const SRTSOCKET u, sockaddr* name, int* namelen)
+void CUDTUnited::getpeername(const SRTSOCKET u, sockaddr* pw_name, int* pw_namelen)
 {
-   if (!name || !namelen)
+   if (!pw_name || !pw_namelen)
        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 
    if (getStatus(u) != SRTS_CONNECTED)
@@ -1703,11 +1703,11 @@ void CUDTUnited::getpeername(const SRTSOCKET u, sockaddr* name, int* namelen)
       throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
 
    const int len = s->m_PeerAddr.size();
-   if (*namelen < len)
+   if (*pw_namelen < len)
        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 
-   memcpy(name, &s->m_PeerAddr.sa, len);
-   *namelen = len;
+   memcpy((pw_name), &s->m_PeerAddr.sa, len);
+   *pw_namelen = len;
 }
 
 void CUDTUnited::getsockname(const SRTSOCKET u, sockaddr* pw_name, int* pw_namelen)
@@ -2765,7 +2765,7 @@ int CUDT::bind(SRTSOCKET u, const sockaddr* name, int namelen)
    try
    {
        sockaddr_any sa (name, namelen);
-       if ( sa.len == 0 )
+       if (sa.len == 0)
        {
            // This happens if the namelen check proved it to be
            // too small for particular family, or that family is
@@ -3035,9 +3035,9 @@ int CUDT::getsockname(SRTSOCKET u, sockaddr* name, int* namelen)
 }
 
 int CUDT::getsockopt(
-   SRTSOCKET u, int, SRT_SOCKOPT optname, void* optval, int* optlen)
+   SRTSOCKET u, int, SRT_SOCKOPT optname, void* pw_optval, int* pw_optlen)
 {
-    if (!optval || !optlen)
+    if (!pw_optval || !pw_optlen)
     {
         return setError(MJ_NOTSUP, MN_INVAL, 0);
     }
@@ -3047,12 +3047,12 @@ int CUDT::getsockopt(
         if (u & SRTGROUP_MASK)
         {
             CUDTGroup* g = s_UDTUnited.locateGroup(u, s_UDTUnited.ERH_THROW);
-            g->getOpt(optname, optval, Ref(*optlen));
+            g->getOpt(optname, (pw_optval), (*pw_optlen));
             return 0;
         }
 
         CUDT* udt = s_UDTUnited.locateSocket(u, s_UDTUnited.ERH_THROW)->m_pUDT;
-        udt->getOpt(optname, optval, Ref(*optlen));
+        udt->getOpt(optname, (pw_optval), (*pw_optlen));
         return 0;
     }
     catch (const CUDTException& e)
@@ -3106,7 +3106,7 @@ int CUDT::setsockopt(SRTSOCKET u, int, SRT_SOCKOPT optname, const void* optval, 
 int CUDT::send(SRTSOCKET u, const char* buf, int len, int)
 {
     SRT_MSGCTRL mctrl = srt_msgctrl_default;
-    return sendmsg2(u, buf, len, Ref(mctrl));
+    return sendmsg2(u, buf, len, (mctrl));
 }
 
 int CUDT::sendmsg(SRTSOCKET u, const char* buf, int len, int ttl, bool inorder, uint64_t srctime)
@@ -3115,19 +3115,19 @@ int CUDT::sendmsg(SRTSOCKET u, const char* buf, int len, int ttl, bool inorder, 
     mctrl.msgttl = ttl;
     mctrl.inorder = inorder;
     mctrl.srctime = srctime;
-    return sendmsg2(u, buf, len, Ref(mctrl));
+    return sendmsg2(u, buf, len, (mctrl));
 }
 
-int CUDT::sendmsg2( SRTSOCKET u, const char* buf, int len, ref_t<SRT_MSGCTRL> r_m)
+int CUDT::sendmsg2( SRTSOCKET u, const char* buf, int len, SRT_MSGCTRL& w_m)
 {
     try
     {
         if (u & SRTGROUP_MASK)
         {
-            return s_UDTUnited.locateGroup(u, CUDTUnited::ERH_THROW)->send(buf, len, r_m);
+            return s_UDTUnited.locateGroup(u, CUDTUnited::ERH_THROW)->send(buf, len, (w_m));
         }
 
-        return s_UDTUnited.locateSocket(u, CUDTUnited::ERH_THROW)->core().sendmsg2(buf, len, r_m);
+        return s_UDTUnited.locateSocket(u, CUDTUnited::ERH_THROW)->core().sendmsg2(buf, len, (w_m));
     }
     catch (const CUDTException& e)
     {
@@ -3152,28 +3152,28 @@ int CUDT::sendmsg2( SRTSOCKET u, const char* buf, int len, ref_t<SRT_MSGCTRL> r_
 int CUDT::recv(SRTSOCKET u, char* buf, int len, int)
 {
     SRT_MSGCTRL mctrl = srt_msgctrl_default;
-    int ret = recvmsg2(u, buf, len, Ref(mctrl));
+    int ret = recvmsg2(u, buf, len, (mctrl));
     return ret;
 }
 
 int CUDT::recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime)
 {
     SRT_MSGCTRL mctrl = srt_msgctrl_default;
-    int ret = recvmsg2(u, buf, len, Ref(mctrl));
+    int ret = recvmsg2(u, buf, len, (mctrl));
     srctime = mctrl.srctime;
     return ret;
 }
 
-int CUDT::recvmsg2(SRTSOCKET u, char* buf, int len, ref_t<SRT_MSGCTRL> r_m)
+int CUDT::recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL& w_m)
 {
     try
     {
         if (u & SRTGROUP_MASK)
         {
-            return s_UDTUnited.locateGroup(u, CUDTUnited::ERH_THROW)->recv(buf, len, r_m);
+            return s_UDTUnited.locateGroup(u, CUDTUnited::ERH_THROW)->recv(buf, len, (w_m));
         }
 
-        return s_UDTUnited.locateSocket(u, CUDTUnited::ERH_THROW)->core().recvmsg2(buf, len, r_m);
+        return s_UDTUnited.locateSocket(u, CUDTUnited::ERH_THROW)->core().recvmsg2(buf, len, (w_m));
     }
     catch (const CUDTException& e)
     {
