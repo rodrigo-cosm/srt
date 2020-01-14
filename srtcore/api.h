@@ -155,8 +155,8 @@ public:
       /// @param [in,out] hs handshake information from peer side (in), negotiated value (out);
       /// @return If the new connection is successfully created: 1 success, 0 already exist, -1 error.
 
-   int newConnection(const SRTSOCKET listen, const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt,
-           ref_t<SRT_REJECT_REASON> r_error);
+   int newConnection(const SRTSOCKET listen, const sockaddr_any& peer, const CPacket& hspkt,
+           CHandShake& w_hs, SRT_REJECT_REASON& w_error);
 
    int installAcceptHook(const SRTSOCKET lsn, srt_listen_callback_fn* hook, void* opaq);
 
@@ -226,7 +226,7 @@ private:
 private:
    CUDTSocket* locateSocket(const SRTSOCKET u);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
-   void updateMux(CUDTSocket* s, const sockaddr_any& addr, const int* udp_sockets = NULL);
+   void updateMux(CUDTSocket* s, const sockaddr_any& addr, const UDPSOCKET* = NULL);
    void updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
 
 private:
@@ -263,15 +263,7 @@ private:
 // Debug support
 inline std::string SockaddrToString(const sockaddr_any& sadr)
 {
-    void* addr =
-        sadr.family() == AF_INET ?
-            (void*)&sadr.sin.sin_addr
-        : sadr.family() == AF_INET6 ?
-            (void*)&sadr.sin6.sin6_addr
-        : 0;
-    // (cast to (void*) is required because otherwise the 2-3 arguments
-    // of ?: operator would have different types, which isn't allowed in C++.
-    if ( !addr )
+    if (sadr.family() != AF_INET && sadr.family() != AF_INET6)
         return "unknown:0";
 
     std::ostringstream output;

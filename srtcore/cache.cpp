@@ -50,7 +50,7 @@ using namespace std;
 CInfoBlock& CInfoBlock::operator=(const CInfoBlock& obj)
 {
    std::copy(obj.m_piIP, obj.m_piIP + 4, m_piIP);
-   m_iFamily = obj.m_iFamily;
+   m_iIPversion = obj.m_iIPversion;
    m_ullTimeStamp = obj.m_ullTimeStamp;
    m_iRTT = obj.m_iRTT;
    m_iBandwidth = obj.m_iBandwidth;
@@ -64,10 +64,10 @@ CInfoBlock& CInfoBlock::operator=(const CInfoBlock& obj)
 
 bool CInfoBlock::operator==(const CInfoBlock& obj)
 {
-   if (m_iFamily != obj.m_iFamily)
+   if (m_iIPversion != obj.m_iIPversion)
       return false;
 
-   else if (m_iFamily == AF_INET)
+   else if (m_iIPversion == AF_INET)
       return (m_piIP[0] == obj.m_piIP[0]);
 
    for (int i = 0; i < 4; ++ i)
@@ -84,7 +84,7 @@ CInfoBlock* CInfoBlock::clone()
    CInfoBlock* obj = new CInfoBlock;
 
    std::copy(m_piIP, m_piIP + 4, obj->m_piIP);
-   obj->m_iFamily = m_iFamily;
+   obj->m_iIPversion = m_iIPversion;
    obj->m_ullTimeStamp = m_ullTimeStamp;
    obj->m_iRTT = m_iRTT;
    obj->m_iBandwidth = m_iBandwidth;
@@ -98,21 +98,21 @@ CInfoBlock* CInfoBlock::clone()
 
 int CInfoBlock::getKey()
 {
-   if (m_iFamily == AF_INET)
+   if (m_iIPversion == AF_INET)
       return m_piIP[0];
 
    return m_piIP[0] + m_piIP[1] + m_piIP[2] + m_piIP[3];
 }
 
-void CInfoBlock::convert(const sockaddr_any& addr, uint32_t ip[4])
+void CInfoBlock::convert(const sockaddr_any& addr, uint32_t aw_ip[4])
 {
-    if (addr.family() == AF_INET)
-    {
-        ip[0] = addr.sin.sin_addr.s_addr;
-        ip[1] = ip[2] = ip[3] = 0;
+   if (addr.family() == AF_INET)
+   {
+      aw_ip[0] = addr.sin.sin_addr.s_addr;
+      aw_ip[1] = aw_ip[2] = aw_ip[3] = 0;
    }
    else
    {
-       memcpy(ip, addr.sin6.sin6_addr.s6_addr, 16);
+      memcpy((aw_ip), addr.sin6.sin6_addr.s6_addr, sizeof addr.sin6.sin6_addr.s6_addr);
    }
 }

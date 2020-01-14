@@ -83,7 +83,6 @@ m_iIpV6Only(-1)
 {
 }
 
-
 CChannel::~CChannel()
 {
 }
@@ -93,17 +92,17 @@ void CChannel::createSocket(int family)
     // construct an socket
     m_iSocket = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
 
-   #ifdef _WIN32
-    int invalid = INVALID_SOCKET;
+#ifdef _WIN32
+    const int invalid = INVALID_SOCKET;
 #else
-    int invalid = -1;
+    const int invalid = -1;
 #endif
 
     if (m_iSocket == invalid)
         throw CUDTException(MJ_SETUP, MN_NONE, NET_ERROR);
 
-   if ((m_iIpV6Only != -1) && (family == AF_INET6)) // (not an error if it fails)
-      ::setsockopt(m_iSocket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)(&m_iIpV6Only), sizeof(m_iIpV6Only));
+    if ((m_iIpV6Only != -1) && (family == AF_INET6)) // (not an error if it fails)
+        ::setsockopt(m_iSocket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)(&m_iIpV6Only), sizeof(m_iIpV6Only));
 
 }
 
@@ -135,7 +134,7 @@ void CChannel::open(int family)
     hints.ai_family = family;
     hints.ai_socktype = SOCK_DGRAM;
 
-    int eai = ::getaddrinfo(NULL, "0", &hints, &res);
+    const int eai = ::getaddrinfo(NULL, "0", &hints, &res);
     if (eai != 0)
     {
         // Controversial a little bit because this function occasionally
@@ -148,22 +147,22 @@ void CChannel::open(int family)
         throw CUDTException(MJ_SETUP, MN_NORES, eai);
     }
 
-      // On Windows ai_addrlen has type size_t (unsigned), while bind takes int.
-      if (0 != ::bind(m_iSocket, res->ai_addr, (socklen_t)res->ai_addrlen))
-      {
-          ::freeaddrinfo(res);
-          throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
-      }
+    // On Windows ai_addrlen has type size_t (unsigned), while bind takes int.
+    if (0 != ::bind(m_iSocket, res->ai_addr, (socklen_t)res->ai_addrlen))
+    {
+        ::freeaddrinfo(res);
+        throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
+    }
     m_BindAddr = sockaddr_any(res->ai_addr, res->ai_addrlen);
 
     ::freeaddrinfo(res);
 
     HLOGC(mglog.Debug, log << "CHANNEL: Bound to local address: " << SockaddrToString(m_BindAddr));
 
-   setUDPSockOpt();
+    setUDPSockOpt();
 }
 
-void CChannel::attach(int udpsock, const sockaddr_any& udpsocks_addr)
+void CChannel::attach(UDPSOCKET udpsock, const sockaddr_any& udpsocks_addr)
 {
     // The getsockname() call is done before calling it and the
     // result is placed into udpsocks_addr.
@@ -333,7 +332,8 @@ int CChannel::getIpTTL() const
    else
    {
        // If family is unspecified, the socket probably doesn't exist.
-       return -1;
+       LOGC(mglog.Error, log << "IPE: CChannel::getIpTTL called with unset family");
+       throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
    }
    return m_iIpTTL;
 }
@@ -354,7 +354,8 @@ int CChannel::getIpToS() const
    else
    {
        // If family is unspecified, the socket probably doesn't exist.
-       return -1;
+       LOGC(mglog.Error, log << "IPE: CChannel::getIpToS called with unset family");
+       throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
    }
    return m_iIpToS;
 }
@@ -394,20 +395,22 @@ int CChannel::sockoptQuery(int level SRT_ATR_UNUSED, int option SRT_ATR_UNUSED) 
     return -1;
 }
 
-void CChannel::getSockAddr(ref_t<sockaddr_any> addr) const
+void CChannel::getSockAddr(sockaddr_any& w_addr) const
 {
     // The getsockname function requires only to have enough target
     // space to copy the socket name, it doesn't have to be corelated
     // with the address family. So the maximum space for any name,
     // regardless of the family, does the job.
-    socklen_t namelen = sizeof(addr.get());
-    ::getsockname(m_iSocket, &addr.get(), &namelen);
+    socklen_t namelen = w_addr.storage_size();
+    ::getsockname(m_iSocket, (w_addr.get()), (&namelen));
+    w_addr.len = namelen;
 }
 
-void CChannel::getPeerAddr(ref_t<sockaddr_any> addr) const
+void CChannel::getPeerAddr(sockaddr_any& w_addr) const
 {
-    socklen_t namelen = sizeof(addr.get());
-    ::getpeername(m_iSocket, &addr.get(), &namelen);
+    socklen_t namelen = w_addr.storage_size();
+    ::getpeername(m_iSocket, (w_addr.get()), (&namelen));
+    w_addr.len = namelen;
 }
 
 
@@ -514,8 +517,8 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
       const int res = ::sendmsg(m_iSocket, &mh, 0);
    #else
       DWORD size = (DWORD) (CPacket::HDR_SIZE + packet.getLength());
-      int addrsize = m_iSockAddrSize;
-      int res = ::WSASendTo(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, 0, addr, addrsize, NULL, NULL);
+      int addrsize = addr.size();
+      int res = ::WSASendTo(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, 0, addr.get(), addrsize, NULL, NULL);
       res = (0 == res) ? size : -1;
    #endif
 
@@ -524,10 +527,9 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
    return res;
 }
 
-EReadStatus CChannel::recvfrom(ref_t<sockaddr_any> r_addr, CPacket& packet) const
+EReadStatus CChannel::recvfrom(sockaddr_any& w_addr, CPacket& w_packet) const
 {
     EReadStatus status = RST_OK;
-    sockaddr* addr = &r_addr.get();
     int msg_flags = 0;
     int recv_size = -1;
 
@@ -545,7 +547,7 @@ EReadStatus CChannel::recvfrom(ref_t<sockaddr_any> r_addr, CPacket& packet) cons
 
     if (select_ret == 0)   // timeout
     {
-        packet.setLength(-1);
+        w_packet.setLength(-1);
         return RST_AGAIN;
     }
 
@@ -553,15 +555,15 @@ EReadStatus CChannel::recvfrom(ref_t<sockaddr_any> r_addr, CPacket& packet) cons
     if (select_ret > 0)
     {
         msghdr mh;
-        mh.msg_name = addr;
-        mh.msg_namelen = r_addr.get().size();
-        mh.msg_iov = packet.m_PacketVector;
+        mh.msg_name = (w_addr.get());
+        mh.msg_namelen = w_addr.size();
+        mh.msg_iov = (w_packet.m_PacketVector);
         mh.msg_iovlen = 2;
         mh.msg_control = NULL;
         mh.msg_controllen = 0;
         mh.msg_flags = 0;
 
-        recv_size = ::recvmsg(m_iSocket, &mh, 0);
+        recv_size = ::recvmsg(m_iSocket, (&mh), 0);
         msg_flags = mh.msg_flags;
     }
 
@@ -625,10 +627,11 @@ EReadStatus CChannel::recvfrom(ref_t<sockaddr_any> r_addr, CPacket& packet) cons
 
     if (select_ret > 0)     // the total number of socket handles that are ready
     {
-        DWORD size = (DWORD) (CPacket::HDR_SIZE + packet.getLength());
-        int addrsize = m_iSockAddrSize;
+        DWORD size = (DWORD) (CPacket::HDR_SIZE + w_packet.getLength());
+        int addrsize = w_addr.size();
 
-        recv_ret = ::WSARecvFrom(m_iSocket, (LPWSABUF)packet.m_PacketVector, 2, &size, &flag, addr, &addrsize, NULL, NULL);
+        recv_ret = ::WSARecvFrom(m_iSocket, ((LPWSABUF)w_packet.m_PacketVector), 2,
+                (&size), (&flag), (w_addr.get()), (&addrsize), NULL, NULL);
         if (recv_ret == 0)
             recv_size = size;
     }
@@ -705,14 +708,14 @@ EReadStatus CChannel::recvfrom(ref_t<sockaddr_any> r_addr, CPacket& packet) cons
         goto Return_error;
     }
 
-    packet.setLength(recv_size - CPacket::HDR_SIZE);
+    w_packet.setLength(recv_size - CPacket::HDR_SIZE);
 
     // convert back into local host order
     // XXX use NtoHLA().
     //for (int i = 0; i < 4; ++ i)
-    //   packet.m_nHeader[i] = ntohl(packet.m_nHeader[i]);
+    //   w_packet.m_nHeader[i] = ntohl(w_packet.m_nHeader[i]);
     {
-        uint32_t* p = packet.m_nHeader;
+        uint32_t* p = w_packet.m_nHeader;
         for (size_t i = 0; i < SRT_PH__SIZE; ++ i)
         {
             *p = ntohl(*p);
@@ -720,15 +723,15 @@ EReadStatus CChannel::recvfrom(ref_t<sockaddr_any> r_addr, CPacket& packet) cons
         }
     }
 
-    if (packet.isControl())
+    if (w_packet.isControl())
     {
-        for (size_t j = 0, n = packet.getLength() / sizeof (uint32_t); j < n; ++ j)
-            *((uint32_t *)packet.m_pcData + j) = ntohl(*((uint32_t *)packet.m_pcData + j));
+        for (size_t j = 0, n = w_packet.getLength() / sizeof (uint32_t); j < n; ++ j)
+            *((uint32_t *)w_packet.m_pcData + j) = ntohl(*((uint32_t *)w_packet.m_pcData + j));
     }
 
     return RST_OK;
 
 Return_error:
-    packet.setLength(-1);
+    w_packet.setLength(-1);
     return status;
 }
