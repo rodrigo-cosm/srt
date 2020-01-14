@@ -293,17 +293,17 @@ public:
 
     static gli_t gli_NULL() { return s_NoGroup.end(); }
 
-    int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
-    int recv(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int send(const char* buf, int len, SRT_MSGCTRL& w_mc);
+    int recv(char* buf, int len, SRT_MSGCTRL& w_mc);
 
     void close();
 
     void setOpt(SRT_SOCKOPT optname, const void* optval, int optlen);
-    void getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> optlen);
+    void getOpt(SRT_SOCKOPT optName, void* optval, int& w_optlen);
 
     SRT_SOCKSTATUS getStatus();
 
-    bool getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> r_mpeer, ref_t<srt::sync::steady_clock::time_point> r_st);
+    bool getMasterData(SRTSOCKET slave, SRTSOCKET& w_mpeer, srt::sync::steady_clock::time_point& w_st);
 
     bool isGroupReceiver()
     {
@@ -327,8 +327,8 @@ public:
 private:
     // Check if there's at least one connected socket.
     // If so, grab the status of all member sockets.
-    void getGroupCount(ref_t<size_t> r_size, ref_t<bool> r_still_alive);
-    void getMemberStatus(ref_t< std::vector<SRT_SOCKGROUPDATA> > r_gd, SRTSOCKET wasread, int result, bool again);
+    void getGroupCount(size_t& w_size, bool& w_still_alive);
+    void getMemberStatus(std::vector<SRT_SOCKGROUPDATA>& w_gd, SRTSOCKET wasread, int result, bool again);
 
     class CUDTUnited* m_pGlobal;
     pthread_mutex_t m_GroupLock;
@@ -421,14 +421,14 @@ public:
         m_RcvBaseSeqNo = -1;
     }
 
-    bool applyGroupTime(ref_t<uint64_t> r_start_time, ref_t<uint64_t> r_peer_start_time)
+    bool applyGroupTime(uint64_t& w_start_time, uint64_t& w_peer_start_time)
     {
         using srt_logging::mglog;
         if (m_StartTime == 0)
         {
             // The first socket, defines the group time for the whole group.
-            m_StartTime = *r_start_time;
-            m_RcvPeerStartTime = *r_peer_start_time;
+            m_StartTime = w_start_time;
+            m_RcvPeerStartTime = w_peer_start_time;
             return true;
         }
 
@@ -437,19 +437,19 @@ public:
         {
             LOGC(mglog.Error, log << "IPE: only StartTime is set, RcvPeerStartTime still 0!");
             // Kinda fallback, but that's not too safe.
-            m_RcvPeerStartTime = *r_peer_start_time;
+            m_RcvPeerStartTime = w_peer_start_time;
         }
 
         // The redundant connection, derive the times
-        *r_start_time = m_StartTime;
-        *r_peer_start_time = m_RcvPeerStartTime;
+        w_start_time = m_StartTime;
+        w_peer_start_time = m_RcvPeerStartTime;
 
         return false;
     }
 
-    bool getBufferTimeBase(CUDT* forthesakeof, ref_t<uint64_t> tb, ref_t<bool> wp);
+    bool getBufferTimeBase(CUDT* forthesakeof, uint64_t& w_tb, bool& w_wp);
 
-    bool applyGroupSequences(SRTSOCKET, ref_t<int32_t> r_snd_isn, ref_t<int32_t> r_rcv_isn);
+    bool applyGroupSequences(SRTSOCKET, int32_t& w_snd_isn, int32_t& w_rcv_isn);
 
     // Property accessors
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);
@@ -527,8 +527,8 @@ public: //API
     static int recv(SRTSOCKET u, char* buf, int len, int flags);
     static int sendmsg(SRTSOCKET u, const char* buf, int len, int ttl = -1, bool inorder = false, uint64_t srctime = 0);
     static int recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime);
-    static int sendmsg2(SRTSOCKET u, const char* buf, int len, ref_t<SRT_MSGCTRL> mctrl);
-    static int recvmsg2(SRTSOCKET u, char* buf, int len, ref_t<SRT_MSGCTRL> mctrl);
+    static int sendmsg2(SRTSOCKET u, const char* buf, int len, SRT_MSGCTRL& mctrl);
+    static int recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL& w_mctrl);
     static int64_t sendfile(SRTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_SENDFILE_BLOCK);
     static int64_t recvfile(SRTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_RECVFILE_BLOCK);
     static int select(int nfds, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout);
@@ -721,7 +721,7 @@ private:
     // - rsptype: handshake message type that should be sent back to the peer (nothing if URQ_DONE)
     // - needs_extension: the HSREQ/KMREQ or HSRSP/KMRSP extensions should be attached to the handshake message.
     // - RETURNED VALUE: if true, it means a URQ_CONCLUSION message was received with HSRSP/KMRSP extensions and needs HSRSP/KMRSP.
-    void rendezvousSwitchState(ref_t<UDTRequestType> rsptype, ref_t<bool> needs_extension, ref_t<bool> needs_hsrsp);
+    void rendezvousSwitchState(UDTRequestType& rsptype, bool& needs_extension, bool& needs_hsrsp);
     void cookieContest();
 
     /// Interpret the incoming handshake packet in order to perform appropriate
@@ -732,7 +732,8 @@ private:
     /// @param serv_addr incoming packet's address
     /// @param synchro True when this function was called in blocking mode
     /// @param rst Current read status to know if the HS packet was freshly received from the peer, or this is only a periodic update (RST_AGAIN)
-    SRT_ATR_NODISCARD EConnectStatus processRendezvous(ref_t<CPacket> reqpkt, const CPacket &response, const sockaddr_any& serv_addr, bool synchro, EReadStatus);
+    SRT_ATR_NODISCARD EConnectStatus processRendezvous(const CPacket &response, const sockaddr_any& serv_addr, bool synchro, EReadStatus,
+            CPacket& reqpkt);
     SRT_ATR_NODISCARD bool prepareConnectionObjects(const CHandShake &hs, HandshakeSide hsd, CUDTException *eout);
     SRT_ATR_NODISCARD EConnectStatus postConnect(const CPacket& response, bool rendezvous, CUDTException* eout, bool synchro);
     void applyResponseSettings();
@@ -745,8 +746,8 @@ private:
     SRT_ATR_NODISCARD size_t fillSrtHandshake_HSRSP(uint32_t* srtdata, size_t srtlen, int hs_version);
     SRT_ATR_NODISCARD size_t fillSrtHandshake(uint32_t* srtdata, size_t srtlen, int msgtype, int hs_version);
 
-    SRT_ATR_NODISCARD bool createSrtHandshake(ref_t<CPacket> reqpkt, ref_t<CHandShake> hs,
-            int srths_cmd, int srtkm_cmd, const uint32_t* data, size_t datalen);
+    SRT_ATR_NODISCARD bool createSrtHandshake(int srths_cmd, int srtkm_cmd, const uint32_t* data, size_t datalen,
+            CPacket& w_reqpkt, CHandShake& w_hs);
 
     SRT_ATR_NODISCARD size_t prepareSrtHsMsg(int cmd, uint32_t* srtdata, size_t size);
 
@@ -768,14 +769,14 @@ private:
     void updateSrtRcvSettings();
     void updateSrtSndSettings();
 
-    void checkNeedDrop(ref_t<bool> bCongestion);
+    void checkNeedDrop(bool& bCongestion);
 
     /// Connect to a UDT entity listening at address "peer", which has sent "hs" request.
     /// @param peer [in] The address of the listening UDT entity.
     /// @param hs [in/out] The handshake information sent by the peer side (in), negotiated value (out).
 
-    void acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt);
-    bool runAcceptHook(CUDT* acore, const sockaddr* peer, const CHandShake* hs, const CPacket& hspkt);
+    void acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHandShake& hs);
+    bool runAcceptHook(CUDT* acore, const sockaddr* peer, const CHandShake& hs, const CPacket& hspkt);
 
     /// Close the opened UDT entity.
 
@@ -812,11 +813,11 @@ private:
     /// @param len [in] size of the buffer.
     /// @return Actual size of data received.
 
-    SRT_ATR_NODISCARD int sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> m);
+    SRT_ATR_NODISCARD int sendmsg2(const char* data, int len, SRT_MSGCTRL& w_m);
 
     SRT_ATR_NODISCARD int recvmsg(char* data, int len, uint64_t& srctime);
-    SRT_ATR_NODISCARD int recvmsg2(char* data, int len, ref_t<SRT_MSGCTRL> m);
-    SRT_ATR_NODISCARD int receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> m);
+    SRT_ATR_NODISCARD int recvmsg2(char* data, int len, SRT_MSGCTRL& w_m);
+    SRT_ATR_NODISCARD int receiveMessage(char* data, int len, SRT_MSGCTRL& w_m);
     SRT_ATR_NODISCARD int receiveBuffer(char* data, int len);
 
     /// Request UDT to send out a file described as "fd", starting from "offset", with size of "size".
@@ -849,7 +850,7 @@ private:
     /// @param optval [in] The value to be returned.
     /// @param optlen [out] size of "optval".
 
-    void getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> optlen);
+    void getOpt(SRT_SOCKOPT optName, void* optval, int& w_optlen);
 
     /// read the performance data with bytes counters since bstats() 
     ///  
@@ -1211,7 +1212,7 @@ private: // Common connection Congestion Control setup
 private: // Generation and processing of packets
     void sendCtrl(UDTMessageType pkttype, const void* lparam = NULL, void* rparam = NULL, int size = 0);
 
-    void processCtrl(CPacket& ctrlpkt);
+    void processCtrl(const CPacket& ctrlpkt);
     void sendLossReport(const std::vector< std::pair<int32_t, int32_t> >& losslist);
     void processCtrlAck(const CPacket& ctrlpkt, const srt::sync::steady_clock::time_point &currtime);
 
@@ -1225,7 +1226,7 @@ private: // Generation and processing of packets
     /// @param origintime [in, out] origin timestamp of the packet
     ///
     /// @return payload size on success, <=0 on failure
-    int packLostData(ref_t<CPacket> r_packet, ref_t<srt::sync::steady_clock::time_point> r_origintime);
+    int packLostData(CPacket& w_packet, srt::sync::steady_clock::time_point& w_origintime);
 
     /// Pack in CPacket the next data to be send.
     ///

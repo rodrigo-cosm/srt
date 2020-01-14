@@ -94,7 +94,7 @@ public:
       /// @param [in] ttl time to live in milliseconds
       /// @param [in] order if the block should be delivered in order, for DGRAM only
 
-   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_seqno, ref_t<int32_t> r_msgno);
+   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, int32_t& w_seqno, int32_t& w_msgno);
 
       /// Read a block of data from file and insert it into the sending list.
       /// @param [in] ifs input file stream.
@@ -110,7 +110,7 @@ public:
       /// @param [in] kflags Odd|Even crypto key flag
       /// @return Actual length of data read.
 
-   int readData(ref_t<CPacket> r_packet, ref_t<srt::sync::steady_clock::time_point> origintime, int kflgs);
+   int readData(CPacket& w_packet, srt::sync::steady_clock::time_point& w_origintime, int kflgs);
 
 
       /// Find data position to pack a DATA packet for a retransmission.
@@ -121,7 +121,7 @@ public:
       /// @param [out] msglen length of the message
       /// @return Actual length of data read.
 
-   int readData(const int offset, ref_t<CPacket> r_packet, ref_t<srt::sync::steady_clock::time_point> origintime, ref_t<int> msglen);
+   int readData(const int offset, CPacket& w_packet, srt::sync::steady_clock::time_point& w_origintime, int& w_msglen);
 
       /// Update the ACK point and may release/unmap/return the user data according to the flag.
       /// @param [in] offset number of packets acknowledged.
@@ -137,9 +137,9 @@ public:
 
 #ifdef SRT_ENABLE_SNDBUFSZ_MAVG
    void updAvgBufSize(const srt::sync::steady_clock::time_point& time);
-   int getAvgBufSize(ref_t<int> bytes, ref_t<int> timespan);
+   int getAvgBufSize(int& bytes, int& timespan);
 #endif /* SRT_ENABLE_SNDBUFSZ_MAVG */
-   int getCurrBufSize(ref_t<int> bytes, ref_t<int> timespan);
+   int getCurrBufSize(int& bytes, int& timespan);
 
    uint64_t getInRatePeriod() const { return m_InRatePeriod; }
 
@@ -356,7 +356,7 @@ public:
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
       /// @return actuall size of data read.
 
-   int readMsg(char* data, int len, ref_t<SRT_MSGCTRL> mctrl);
+   int readMsg(char* data, int len, SRT_MSGCTRL& w_mctrl);
 
       /// Query if data is ready to read (tsbpdtime <= now if TsbPD is active).
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
@@ -489,7 +489,7 @@ private:
    void countBytes(int pkts, int bytes, bool acked = false);
 
 private:
-   bool scanMsg(ref_t<int> start, ref_t<int> end, ref_t<bool> passack);
+   bool scanMsg(int& w_start, int& w_end, bool& w_passack);
 
    int shift(int basepos, int shift) const
    {

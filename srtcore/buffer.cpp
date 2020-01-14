@@ -138,11 +138,8 @@ CSndBuffer::~CSndBuffer()
    releaseMutex(m_BufLock);
 }
 
-void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_seqno, ref_t<int32_t> r_msgno)
+void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, int32_t& w_seqno, int32_t& w_msgno)
 {
-    int32_t& msgno = *r_msgno;
-    int32_t& seqno = *r_seqno;
-
     int size = len / m_iMSS;
     if ((len % m_iMSS) != 0)
         size ++;
@@ -169,19 +166,19 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
     // and then return the accordingly modified sequence number in the reference.
 
     Block* s = m_pLastBlock;
-    msgno = m_iNextMsgNo;
+    w_msgno = m_iNextMsgNo;
     for (int i = 0; i < size; ++ i)
     {
         int pktlen = len - i * m_iMSS;
         if (pktlen > m_iMSS)
             pktlen = m_iMSS;
 
-        HLOGC(dlog.Debug, log << "addBuffer: seq=" << seqno << " spreading from=" << (i*m_iMSS) << " size=" << pktlen << " TO BUFFER:" << (void*)s->m_pcData);
-        memcpy(s->m_pcData, data + i * m_iMSS, pktlen);
+        HLOGC(dlog.Debug, log << "addBuffer: seq=" << w_seqno << " spreading from=" << (i*m_iMSS) << " size=" << pktlen << " TO BUFFER:" << (void*)s->m_pcData);
+        memcpy((s->m_pcData), data + i * m_iMSS, pktlen);
         s->m_iLength = pktlen;
 
-        s->m_iSeqNo = seqno;
-        seqno = CSeqNo::incseq(seqno);
+        s->m_iSeqNo = w_seqno;
+        w_seqno = CSeqNo::incseq(w_seqno);
 
         s->m_iMsgNoBitset = m_iNextMsgNo | inorder;
         if (i == 0)
@@ -338,17 +335,17 @@ int CSndBuffer::addBufferFromFile(fstream& ifs, int len)
    return total;
 }
 
-int CSndBuffer::readData(ref_t<CPacket> r_packet, ref_t<steady_clock::time_point> srctime, int kflgs)
+int CSndBuffer::readData(CPacket& w_packet, steady_clock::time_point& w_srctime, int kflgs)
 {
    // No data to read
    if (m_pCurrBlock == m_pLastBlock)
       return 0;
 
    // Make the packet REFLECT the data stored in the buffer.
-   r_packet.get().m_pcData = m_pCurrBlock->m_pcData;
+   w_packet.m_pcData = m_pCurrBlock->m_pcData;
    int readlen = m_pCurrBlock->m_iLength;
-   r_packet.get().setLength(readlen);
-   r_packet.get().m_iSeqNo = m_pCurrBlock->m_iSeqNo;
+   w_packet.setLength(readlen);
+   w_packet.m_iSeqNo = m_pCurrBlock->m_iSeqNo;
 
    // XXX This is probably done because the encryption should happen
    // just once, and so this sets the encryption flags to both msgno bitset
@@ -383,10 +380,10 @@ int CSndBuffer::readData(ref_t<CPacket> r_packet, ref_t<steady_clock::time_point
    {
        m_pCurrBlock->m_iMsgNoBitset |= MSGNO_ENCKEYSPEC::wrap(kflgs);
    }
-   r_packet.get().m_iMsgNo = m_pCurrBlock->m_iMsgNoBitset;
+   w_packet.m_iMsgNo = m_pCurrBlock->m_iMsgNoBitset;
 
    // TODO: FR #930. Use source time if it is provided.
-   *srctime = m_pCurrBlock->m_tsOriginTime;
+   w_srctime = m_pCurrBlock->m_tsOriginTime;
    /* *srctime =
       m_pCurrBlock->m_ullSourceTime_us ? m_pCurrBlock->m_ullSourceTime_us :
       m_pCurrBlock->m_tsOriginTime;*/
@@ -398,11 +395,9 @@ int CSndBuffer::readData(ref_t<CPacket> r_packet, ref_t<steady_clock::time_point
    return readlen;
 }
 
-int CSndBuffer::readData(const int offset, ref_t<CPacket> r_packet, ref_t<steady_clock::time_point> r_srctime, ref_t<int> r_msglen)
+int CSndBuffer::readData(const int offset, CPacket& w_packet, steady_clock::time_point& w_srctime, int& w_msglen)
 {
-   int32_t& msgno_bitset = r_packet.get().m_iMsgNo;
-   steady_clock::time_point& srctime = *r_srctime;
-   int& msglen = *r_msglen;
+   int32_t& msgno_bitset = w_packet.m_iMsgNo;
 
    CGuard bufferguard(m_BufLock);
 
@@ -430,7 +425,7 @@ int CSndBuffer::readData(const int offset, ref_t<CPacket> r_packet, ref_t<steady
    if ((p->m_iTTL >= 0) && (count_milliseconds(steady_clock::now() - p->m_tsOriginTime) > p->m_iTTL))
    {
       int32_t msgno = p->getMsgSeq();
-      msglen = 1;
+      w_msglen = 1;
       p = p->m_pNext;
       bool move = false;
       while (msgno == p->getMsgSeq())
@@ -440,10 +435,10 @@ int CSndBuffer::readData(const int offset, ref_t<CPacket> r_packet, ref_t<steady
          p = p->m_pNext;
          if (move)
             m_pCurrBlock = p;
-         msglen ++;
+         w_msglen++;
       }
 
-      HLOGC(dlog.Debug, log << "CSndBuffer::readData: due to TTL exceeded, " << msglen << " messages to drop, up to " << msgno);
+      HLOGC(dlog.Debug, log << "CSndBuffer::readData: due to TTL exceeded, " << w_msglen << " messages to drop, up to " << msgno);
 
       // If readData returns -1, then msgno_bitset is understood as a Message ID to drop.
       // This means that in this case it should be written by the message sequence value only
@@ -452,9 +447,9 @@ int CSndBuffer::readData(const int offset, ref_t<CPacket> r_packet, ref_t<steady
       return -1;
    }
 
-   r_packet.get().m_pcData = p->m_pcData;
+   w_packet.m_pcData = p->m_pcData;
    int readlen = p->m_iLength;
-   r_packet.get().setLength(readlen);
+   w_packet.setLength(readlen);
 
    // XXX Here the value predicted to be applied to PH_MSGNO field is extracted.
    // As this function is predicted to extract the data to send as a rexmited packet,
@@ -462,11 +457,11 @@ int CSndBuffer::readData(const int offset, ref_t<CPacket> r_packet, ref_t<steady
    // encrypted, and with all ENC flags already set. So, the first call to send
    // the packet originally (the other overload of this function) must set these
    // flags.
-   r_packet.get().m_iMsgNo = p->m_iMsgNoBitset;
+   w_packet.m_iMsgNo = p->m_iMsgNoBitset;
 
    // TODO: FR #930. Use source time if it is provided.
-   srctime = m_pCurrBlock->m_tsOriginTime;
-   /*srctime =
+   w_srctime = m_pCurrBlock->m_tsOriginTime;
+   /*w_srctime =
       m_pCurrBlock->m_ullSourceTime_us ? m_pCurrBlock->m_ullSourceTime_us :
       m_pCurrBlock->m_tsOriginTime;*/
 
@@ -506,17 +501,15 @@ int CSndBuffer::getCurrBufSize() const
 
 #ifdef SRT_ENABLE_SNDBUFSZ_MAVG
 
-int CSndBuffer::getAvgBufSize(ref_t<int> r_bytes, ref_t<int> r_tsp)
+int CSndBuffer::getAvgBufSize(int& w_bytes, int& w_tsp)
 {
-    int& bytes = *r_bytes;
-    int& timespan = *r_tsp;
-    CGuard bufferguard(m_BufLock); /* Consistency of pkts vs. bytes vs. spantime */
+    CGuard bufferguard(m_BufLock); /* Consistency of pkts vs. w_bytes vs. spantime */
 
     /* update stats in case there was no add/ack activity lately */
     updAvgBufSize(steady_clock::now());
 
-    bytes = m_iBytesCountMAvg;
-    timespan = m_TimespanMAvg;
+    w_bytes = m_iBytesCountMAvg;
+    w_tsp = m_TimespanMAvg;
     return(m_iCountMAvg);
 }
 
@@ -530,9 +523,9 @@ void CSndBuffer::updAvgBufSize(const steady_clock::time_point& now)
    if (1000 < elapsed_ms)
    {
       /* No sampling in last 1 sec, initialize average */
-      m_iCountMAvg = getCurrBufSize(Ref(m_iBytesCountMAvg), Ref(m_TimespanMAvg));
+      m_iCountMAvg = getCurrBufSize((m_iBytesCountMAvg), (m_TimespanMAvg));
       m_tsLastSamplingTime = now;
-   } 
+   }
    else //((1000000 / SRT_MAVG_SAMPLING_RATE) / 1000 <= elapsed_ms)
    {
       /*
@@ -544,7 +537,7 @@ void CSndBuffer::updAvgBufSize(const steady_clock::time_point& now)
       */
       int instspan;
       int bytescount;
-      int count = getCurrBufSize(Ref(bytescount), Ref(instspan));
+      int count = getCurrBufSize((bytescount), (instspan));
 
       HLOGC(dlog.Debug, log << "updAvgBufSize: " << elapsed_ms
               << ": " << count << " " << bytescount
@@ -559,15 +552,15 @@ void CSndBuffer::updAvgBufSize(const steady_clock::time_point& now)
 
 #endif /* SRT_ENABLE_SNDBUFSZ_MAVG */
 
-int CSndBuffer::getCurrBufSize(ref_t<int> bytes, ref_t<int> timespan)
+int CSndBuffer::getCurrBufSize(int& w_bytes, int& w_timespan)
 {
-   *bytes = m_iBytesCount;
+   w_bytes = m_iBytesCount;
    /* 
    * Timespan can be less then 1000 us (1 ms) if few packets. 
    * Also, if there is only one pkt in buffer, the time difference will be 0.
    * Therefore, always add 1 ms if not empty.
    */
-   *timespan = 0 < m_iCount ? count_milliseconds(m_tsLastOriginTime - m_pFirstBlock->m_tsOriginTime) + 1 : 0;
+   w_timespan = 0 < m_iCount ? count_milliseconds(m_tsLastOriginTime - m_pFirstBlock->m_tsOriginTime) + 1 : 0;
 
    return m_iCount;
 }
@@ -835,7 +828,7 @@ int CRcvBuffer::readBuffer(char* data, int len)
 
         HLOGC(dlog.Debug, log << CONID() << "readBuffer: copying buffer #" << p
                 << " targetpos=" << int(data-begin) << " sourcepos=" << m_iNotch << " size=" << unitsize << " left=" << (unitsize-rs));
-        memcpy(data, m_pUnit[p]->m_Packet.m_pcData + m_iNotch, unitsize);
+        memcpy((data), m_pUnit[p]->m_Packet.m_pcData + m_iNotch, unitsize);
         data += unitsize;
 
         if ((rs > unitsize) || (rs == int(m_pUnit[p]->m_Packet.getLength()) - m_iNotch))
@@ -945,8 +938,8 @@ bool CRcvBuffer::getRcvFirstMsg(steady_clock::time_point& w_tsbpdtime,
     // tsbpdtime will be retrieved by the below call
     // Returned values:
     // - tsbpdtime: real time when the packet is ready to play (whether ready to play or not)
-    // - passack: false (the report concerns a packet with an exactly next sequence)
-    // - skipseqno == -1: no packets to skip towards the first RTP
+    // - w_passack: false (the report concerns a packet with an exactly next sequence)
+    // - w_skipseqno == -1: no packets to skip towards the first RTP
     // - curpktseq: sequence number for reported packet (for debug purposes)
     // - @return: whether the reported packet is ready to play
 
@@ -970,9 +963,9 @@ bool CRcvBuffer::getRcvFirstMsg(steady_clock::time_point& w_tsbpdtime,
 
     // Below this line we have only two options:
     // - m_iMaxPos == 0, which means that no more packets are in the buffer
-    //    - returned: tsbpdtime=0, passack=true, skipseqno=-1, curpktseq=0, @return false
+    //    - returned: tsbpdtime=0, w_passack=true, w_skipseqno=-1, w_curpktseq=0, @return false
     // - m_iMaxPos > 0, which means that there are packets arrived after a lost packet:
-    //    - returned: tsbpdtime=PKT.TS, passack=true, skipseqno=PKT.SEQ, ppkt=PKT, @return LOCAL(PKT.TS) <= NOW
+    //    - returned: tsbpdtime=PKT.TS, w_passack=true, w_skipseqno=PKT.SEQ, ppkt=PKT, @return LOCAL(PKT.TS) <= NOW
 
     /* 
      * No acked packets ready but caller want to know next packet to wait for
@@ -1634,7 +1627,7 @@ void CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp_us, CMutex& mutex_to_
 int CRcvBuffer::readMsg(char* data, int len)
 {
     SRT_MSGCTRL dummy = srt_msgctrl_default;
-    return readMsg(data, len, Ref(dummy));
+    return readMsg(data, len, (dummy));
 }
 
 
@@ -1653,13 +1646,12 @@ void CRcvBuffer::debugTraceJitter(uint64_t rplaytime)
 }
 #endif   /* SRT_DEBUG_TSBPD_OUTJITTER */
 
-int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
+int CRcvBuffer::readMsg(char* data, int len, SRT_MSGCTRL& w_msgctl)
 {
-    SRT_MSGCTRL& msgctl = *r_msgctl;
     int p, q;
     bool passack;
     bool empty = true;
-    uint64_t& rplaytime = msgctl.srctime;
+    uint64_t& w_playtime = w_msgctl.srctime;
 
 #ifdef ENABLE_HEAVY_LOGGING
     reportBufferStats();
@@ -1671,8 +1663,8 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
         int seq = 0;
 
         steady_clock::time_point play_time;
-        const bool isReady = getRcvReadyMsg(play_time, (seq));
-        rplaytime = count_microseconds(play_time.time_since_epoch());
+        const bool isReady = getRcvReadyMsg((play_time), (seq));
+        w_playtime = count_microseconds(play_time.time_since_epoch());
 
         if (isReady)
         {
@@ -1682,13 +1674,13 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
             // so in one "unit".
             p = q = m_iStartPos;
 
-            debugTraceJitter(rplaytime);
+            debugTraceJitter(w_playtime);
         }
     }
     else
     {
-        rplaytime = 0;
-        if (scanMsg(Ref(p), Ref(q), Ref(passack)))
+        w_playtime = 0;
+        if (scanMsg((p), (q), (passack)))
             empty = false;
 
     }
@@ -1702,8 +1694,8 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
 
     // This returns the sequence number and message number to
     // the API caller.
-    msgctl.pktseq = pkt1.getSeqNo();
-    msgctl.msgno = pkt1.getMsgSeq();
+    w_msgctl.pktseq = pkt1.getSeqNo();
+    w_msgctl.msgno = pkt1.getMsgSeq();
 
     SRT_ASSERT(len > 0);
     int rs = len > 0 ? len : 0;
@@ -1722,7 +1714,7 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
 
         if (unitsize > 0)
         {
-            memcpy(data, m_pUnit[p]->m_Packet.m_pcData, unitsize);
+            memcpy((data), m_pUnit[p]->m_Packet.m_pcData, unitsize);
             data += unitsize;
             rs -= unitsize;
             IF_HEAVY_LOGGING(readMsgHeavyLogging(p));
@@ -1797,10 +1789,8 @@ void CRcvBuffer::readMsgHeavyLogging(int p)
 }
 #endif
 
-bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
+bool CRcvBuffer::scanMsg(int& w_p, int& w_q, bool& w_passack)
 {
-    int& p = *r_p;
-    int& q = *r_q;
 
     // empty buffer
     if ((m_iStartPos == m_iLastAckPos) && (m_iMaxPos <= 0))
@@ -1880,9 +1870,9 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
     //   in which case it returns with m_iStartPos <% m_iLastAckPos (earlier)
     // Also all units that lied before m_iStartPos are removed.
 
-    p = -1;                  // message head
-    q = m_iStartPos;         // message tail
-    *passack = m_iStartPos == m_iLastAckPos;
+    w_p = -1;                  // message head
+    w_q = m_iStartPos;         // message tail
+    w_passack = m_iStartPos == m_iLastAckPos;
     bool found = false;
 
     // looking for the first message
@@ -1918,31 +1908,31 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
 
     for (int i = 0, n = m_iMaxPos + getRcvDataSize(); i < n; ++ i)
     {
-        if (m_pUnit[q] && m_pUnit[q]->m_iFlag == CUnit::GOOD)
+        if (m_pUnit[w_q] && m_pUnit[w_q]->m_iFlag == CUnit::GOOD)
         {
             // Equivalent pseudocode:
-            // PacketBoundary bound = m_pUnit[q]->m_Packet.getMsgBoundary();
+            // PacketBoundary bound = m_pUnit[w_q]->m_Packet.getMsgBoundary();
             // if ( IsSet(bound, PB_FIRST) )
-            //     p = q;
-            // if ( IsSet(bound, PB_LAST) && p != -1 ) 
+            //     w_p = w_q;
+            // if ( IsSet(bound, PB_LAST) && w_p != -1 ) 
             //     found = true;
             //
-            // Not implemented this way because it uselessly check p for -1
+            // Not implemented this way because it uselessly check w_p for -1
             // also after setting it explicitly.
 
-            switch (m_pUnit[q]->m_Packet.getMsgBoundary())
+            switch (m_pUnit[w_q]->m_Packet.getMsgBoundary())
             {
             case PB_SOLO: // 11
-                p = q;
+                w_p = w_q;
                 found = true;
                 break;
 
             case PB_FIRST: // 10
-                p = q;
+                w_p = w_q;
                 break;
 
             case PB_LAST: // 01
-                if (p != -1)
+                if (w_p != -1)
                     found = true;
                 break;
 
@@ -1953,7 +1943,7 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
         else
         {
             // a hole in this message, not valid, restart search
-            p = -1;
+            w_p = -1;
         }
 
         // 'found' is set when the current iteration hit a message with PB_LAST
@@ -1961,7 +1951,7 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
         if (found)
         {
             // the msg has to be ack'ed or it is allowed to read out of order, and was not read before
-            if (!*passack || !m_pUnit[q]->m_Packet.getMsgOrderFlag())
+            if (!w_passack || !m_pUnit[w_q]->m_Packet.getMsgOrderFlag())
             {
                 HLOGC(mglog.Debug, log << "scanMsg: found next-to-broken message, delivering OUT OF ORDER.");
                 break;
@@ -1970,11 +1960,11 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
             found = false;
         }
 
-        if (++ q == m_iSize)
-            q = 0;
+        if (++ w_q == m_iSize)
+            w_q = 0;
 
-        if (q == m_iLastAckPos)
-            *passack = true;
+        if (w_q == m_iLastAckPos)
+            w_passack = true;
     }
 
     // no msg found
@@ -1982,24 +1972,24 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
     {
         // NOTE:
         // This situation may only happen if:
-        // - Found a packet with PB_FIRST, so p = q at the moment when it was found
-        // - Possibly found following components of that message up to shifted q
+        // - Found a packet with PB_FIRST, so w_p = w_q at the moment when it was found
+        // - Possibly found following components of that message up to shifted w_q
         // - Found no terminal packet (PB_LAST) for that message.
 
         // if the message is larger than the receiver buffer, return part of the message
-        if ((p != -1) && (shiftFwd(q) == p))
+        if ((w_p != -1) && (shiftFwd(w_q) == w_p))
         {
             HLOGC(mglog.Debug, log << "scanMsg: BUFFER FULL and message is INCOMPLETE. Returning PARTIAL MESSAGE.");
             found = true;
         }
         else
         {
-            HLOGC(mglog.Debug, log << "scanMsg: PARTIAL or NO MESSAGE found: p=" << p << " q=" << q);
+            HLOGC(mglog.Debug, log << "scanMsg: PARTIAL or NO MESSAGE found: p=" << w_p << " q=" << w_q);
         }
     }
     else
     {
-        HLOGC(mglog.Debug, log << "scanMsg: extracted message p=" << p << " q=" << q << " (" << ((q-p+m_iSize+1)%m_iSize) << " packets)");
+        HLOGC(mglog.Debug, log << "scanMsg: extracted message p=" << w_p << " q=" << w_q << " (" << ((w_q-w_p+m_iSize+1)%m_iSize) << " packets)");
     }
 
     return found;

@@ -183,13 +183,11 @@ struct BandwidthGuard
     }
 };
 
-bool CheckMediaSpec(const string& prefix, const vector<string>& spec, ref_t<string> r_outspec)
+bool CheckMediaSpec(const string& prefix, const vector<string>& spec, string& w_outspec)
 {
     // This function prints error messages by itself then returns false.
     // Otherwise nothing is printed and true is returned.
     // r_outspec is for a case when a redundancy specification should be translated.
-
-    string& outspec = *r_outspec;
 
     if (spec.empty())
     {
@@ -200,7 +198,7 @@ bool CheckMediaSpec(const string& prefix, const vector<string>& spec, ref_t<stri
     if (spec.size() == 1)
     {
         // Then, whatever.
-        outspec = spec[0];
+        w_outspec = spec[0];
         return true;
     }
 
@@ -245,20 +243,20 @@ bool CheckMediaSpec(const string& prefix, const vector<string>& spec, ref_t<stri
         }
     }
 
-    outspec = "srt:////group?";
+    w_outspec = "srt:////group?";
     if (map_getp(uriparam, "type") == nullptr)
         uriparam["type"] = "redundancy";
 
     for (auto& name_value: uriparam)
     {
         string name, value; tie(name, value) = name_value;
-        outspec += name + "=" + value + "&";
+        w_outspec += name + "=" + value + "&";
     }
-    outspec += "nodes=";
+    w_outspec += "nodes=";
     for (string& a: adrs)
-        outspec += a + ",";
+        w_outspec += a + ",";
 
-    Verb() << "NOTE: " << prefix << " specification set as: " << (*r_outspec);
+    Verb() << "NOTE: " << prefix << " specification set as: " << (w_outspec);
 
     return true;
 }
@@ -447,9 +445,9 @@ int main( int argc, char** argv )
         // Redundancy is then simply recognized by the fact that there are
         // multiple specified inputs or outputs, for SRT caller only. Check
         // every URI in advance.
-        if (!CheckMediaSpec("INPUT", source_items, Ref(source_spec)))
+        if (!CheckMediaSpec("INPUT", source_items, (source_spec)))
             need_help = true;
-        if (!CheckMediaSpec("OUTPUT", target_items, Ref(target_spec)))
+        if (!CheckMediaSpec("OUTPUT", target_items, (target_spec)))
             need_help = true;
     }
 
