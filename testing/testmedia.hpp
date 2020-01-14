@@ -239,7 +239,7 @@ public:
 
 
     SrtModel(string host, int port, map<string,string> par);
-    void Establish(ref_t<std::string> name);
+    void Establish(std::string& w_name);
 
     void Close()
     {

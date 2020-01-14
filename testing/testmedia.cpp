@@ -2014,7 +2014,7 @@ SrtModel::SrtModel(string host, int port, map<string,string> par)
     m_port = port;
 }
 
-void SrtModel::Establish(ref_t<std::string> name)
+void SrtModel::Establish(std::string& w_name)
 {
     // This does connect or accept.
     // When this returned true, the caller should create
@@ -2034,10 +2034,10 @@ void SrtModel::Establish(ref_t<std::string> name)
 
         PrepareClient();
 
-        if (name.get() != "")
+        if (w_name != "")
         {
-            Verb() << "Connect with requesting stream [" << name.get() << "]";
-            UDT::setstreamid(m_sock, *name);
+            Verb() << "Connect with requesting stream [" << w_name << "]";
+            UDT::setstreamid(m_sock, w_name);
         }
         else
         {
@@ -2080,8 +2080,8 @@ void SrtModel::Establish(ref_t<std::string> name)
         Verb() << "Accepting a client...";
         AcceptNewClient();
         // This rewrites m_sock with a new SRT socket ("accepted" socket)
-        *name = UDT::getstreamid(m_sock);
-        Verb() << "... GOT CLIENT for stream [" << name.get() << "]";
+        w_name = UDT::getstreamid(m_sock);
+        Verb() << "... GOT CLIENT for stream [" << w_name << "]";
     }
 }
 

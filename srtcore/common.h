@@ -1033,7 +1033,7 @@ public:
         return pos;
     }
 
-    bool access(int position, ref_t<Value*> r_v)
+    bool access(int position, Value*& w_v)
     {
         // This version doesn't require the boolean value to report
         // whether the element is newly added because it never adds
@@ -1045,21 +1045,21 @@ public:
         if (ipos >= vend) // exceeds
             return false;
 
-        INT_access(ipos, false, r_v); // never exceeds
+        INT_access(ipos, false, (w_v)); // never exceeds
         return true;
     }
 
     // Ok, now it's the real deal.
-    bool access(int position, ref_t<Value*> r_v, ref_t<bool> r_isnew)
+    bool access(int position, Value*& w_v, bool& w_isnew)
     {
         int ipos, vend;
 
         if (!INT_checkAccess(position, ipos, vend))
             return false;
         bool exceeds = (ipos >= vend);
-        *r_isnew = exceeds;
+        w_isnew = exceeds;
 
-        INT_access(ipos, exceeds, r_v);
+        INT_access(ipos, exceeds, (w_v));
         return true;
     }
 
@@ -1080,7 +1080,7 @@ private:
         return true;
     }
 
-    void INT_access(int ipos, bool exceeds, ref_t<Value*> r_v)
+    void INT_access(int ipos, bool exceeds, Value*& w_v)
     {
         if (ipos >= m_iSize)
             ipos -= m_iSize; // wrap around
@@ -1113,7 +1113,7 @@ private:
             m_xEnd = nend;
         }
 
-        *r_v = &m_aStorage[ipos];
+        w_v = &m_aStorage[ipos];
     }
 
 public:
@@ -1122,7 +1122,7 @@ public:
     {
         Value* pval = 0;
         bool isnew = false;
-        if (!access(position, Ref(pval), Ref(isnew)))
+        if (!access(position, (pval), (isnew)))
             return false;
 
         if (isnew || overwrite)
@@ -1135,7 +1135,7 @@ public:
     {
         Value* pval = 0;
         bool isnew = false;
-        if (!access(position, Ref(pval), Ref(isnew)))
+        if (!access(position, (pval), (isnew)))
             return false;
 
         updater(*pval, isnew);
@@ -1159,7 +1159,7 @@ public:
         return ipos;
     }
 
-    bool get(int position, ref_t<Value> out) const
+    bool get(int position, Value& w_out) const
     {
         // Check if that position is occupied
         if (position > m_iSize || position < 0)
@@ -1169,7 +1169,7 @@ public:
         if (ipos == -1)
             return false;
 
-        *out = m_aStorage[ipos];
+        w_out = m_aStorage[ipos];
         return true;
     }
 
