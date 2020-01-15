@@ -937,93 +937,93 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
     }
 }
 
-void CUDT::getOpt(SRT_SOCKOPT optName, void* optval, int& optlen)
+void CUDT::getOpt(SRT_SOCKOPT optName, void* pw_optval, int& w_optlen)
 {
     CGuard cg (m_ConnectionLock);
 
     switch (optName)
     {
     case SRTO_MSS:
-        *(int*)optval = m_iMSS;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iMSS;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_SNDSYN:
-        *(bool*)optval = m_bSynSending;
-        optlen         = sizeof(bool);
+        *(bool*)pw_optval = m_bSynSending;
+        w_optlen         = sizeof(bool);
         break;
 
     case SRTO_RCVSYN:
-        *(bool*)optval = m_bSynRecving;
-        optlen         = sizeof(bool);
+        *(bool*)pw_optval = m_bSynRecving;
+        w_optlen         = sizeof(bool);
         break;
 
     case SRTO_ISN:
-        *(int*)optval = m_iISN;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iISN;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_FC:
-        *(int*)optval = m_iFlightFlagSize;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iFlightFlagSize;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_SNDBUF:
-        *(int*)optval = m_iSndBufSize * (m_iMSS - CPacket::UDP_HDR_SIZE);
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iSndBufSize * (m_iMSS - CPacket::UDP_HDR_SIZE);
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_RCVBUF:
-        *(int*)optval = m_iRcvBufSize * (m_iMSS - CPacket::UDP_HDR_SIZE);
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iRcvBufSize * (m_iMSS - CPacket::UDP_HDR_SIZE);
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_LINGER:
-        if (optlen < (int)(sizeof(linger)))
+        if (w_optlen < (int)(sizeof(linger)))
             throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 
-        *(linger*)optval = m_Linger;
-        optlen           = sizeof(linger);
+        *(linger*)pw_optval = m_Linger;
+        w_optlen           = sizeof(linger);
         break;
 
     case SRTO_UDP_SNDBUF:
-        *(int*)optval = m_iUDPSndBufSize;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iUDPSndBufSize;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_UDP_RCVBUF:
-        *(int*)optval = m_iUDPRcvBufSize;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iUDPRcvBufSize;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_RENDEZVOUS:
-        *(bool*)optval = m_bRendezvous;
-        optlen         = sizeof(bool);
+        *(bool*)pw_optval = m_bRendezvous;
+        w_optlen         = sizeof(bool);
         break;
 
     case SRTO_SNDTIMEO:
-        *(int*)optval = m_iSndTimeOut;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iSndTimeOut;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_RCVTIMEO:
-        *(int*)optval = m_iRcvTimeOut;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iRcvTimeOut;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_REUSEADDR:
-        *(bool*)optval = m_bReuseAddr;
-        optlen         = sizeof(bool);
+        *(bool*)pw_optval = m_bReuseAddr;
+        w_optlen         = sizeof(bool);
         break;
 
     case SRTO_MAXBW:
-        *(int64_t*)optval = m_llMaxBW;
-        optlen            = sizeof(int64_t);
+        *(int64_t*)pw_optval = m_llMaxBW;
+        w_optlen            = sizeof(int64_t);
         break;
 
     case SRTO_STATE:
-        *(int32_t*)optval = s_UDTUnited.getStatus(m_SocketID);
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = s_UDTUnited.getStatus(m_SocketID);
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_EVENT:
@@ -1040,193 +1040,193 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void* optval, int& optlen)
             if (m_pSndBuffer && (m_iSndBufSize > m_pSndBuffer->getCurrBufSize()))
                 event |= SRT_EPOLL_OUT;
         }
-        *(int32_t*)optval = event;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = event;
+        w_optlen            = sizeof(int32_t);
         break;
     }
 
     case SRTO_SNDDATA:
         if (m_pSndBuffer)
-            *(int32_t*)optval = m_pSndBuffer->getCurrBufSize();
+            *(int32_t*)pw_optval = m_pSndBuffer->getCurrBufSize();
         else
-            *(int32_t*)optval = 0;
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = 0;
+        w_optlen = sizeof(int32_t);
         break;
 
     case SRTO_RCVDATA:
         if (m_pRcvBuffer)
         {
             CGuard::enterCS(m_RecvLock);
-            *(int32_t*)optval = m_pRcvBuffer->getRcvDataSize();
+            *(int32_t*)pw_optval = m_pRcvBuffer->getRcvDataSize();
             CGuard::leaveCS(m_RecvLock);
         }
         else
-            *(int32_t*)optval = 0;
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = 0;
+        w_optlen = sizeof(int32_t);
         break;
 
 #ifdef SRT_ENABLE_IPOPTS
     case SRTO_IPTTL:
         if (m_bOpened)
-            *(int32_t*)optval = m_pSndQueue->getIpTTL();
+            *(int32_t*)pw_optval = m_pSndQueue->getIpTTL();
         else
-            *(int32_t*)optval = m_iIpTTL;
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = m_iIpTTL;
+        w_optlen = sizeof(int32_t);
         break;
 
     case SRTO_IPTOS:
         if (m_bOpened)
-            *(int32_t*)optval = m_pSndQueue->getIpToS();
+            *(int32_t*)pw_optval = m_pSndQueue->getIpToS();
         else
-            *(int32_t*)optval = m_iIpToS;
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = m_iIpToS;
+        w_optlen = sizeof(int32_t);
         break;
 #endif
 
     case SRTO_SENDER:
-        *(int32_t*)optval = m_bDataSender;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_bDataSender;
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_TSBPDMODE:
-        *(int32_t*)optval = m_bOPT_TsbPd;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_bOPT_TsbPd;
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_LATENCY:
     case SRTO_RCVLATENCY:
-        *(int32_t*)optval = m_iTsbPdDelay_ms;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_iTsbPdDelay_ms;
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_PEERLATENCY:
-        *(int32_t*)optval = m_iPeerTsbPdDelay_ms;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_iPeerTsbPdDelay_ms;
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_TLPKTDROP:
-        *(int32_t*)optval = m_bTLPktDrop;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_bTLPktDrop;
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_SNDDROPDELAY:
-        *(int32_t*)optval = m_iOPT_SndDropDelay;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_iOPT_SndDropDelay;
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_PBKEYLEN:
         if (m_pCryptoControl)
-            *(int32_t*)optval = m_pCryptoControl->KeyLen(); // Running Key length.
+            *(int32_t*)pw_optval = m_pCryptoControl->KeyLen(); // Running Key length.
         else
-            *(int32_t*)optval = m_iSndCryptoKeyLen; // May be 0.
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = m_iSndCryptoKeyLen; // May be 0.
+        w_optlen = sizeof(int32_t);
         break;
 
     case SRTO_KMSTATE:
         if (!m_pCryptoControl)
-            *(int32_t*)optval = SRT_KM_S_UNSECURED;
+            *(int32_t*)pw_optval = SRT_KM_S_UNSECURED;
         else if (m_bDataSender)
-            *(int32_t*)optval = m_pCryptoControl->m_SndKmState;
+            *(int32_t*)pw_optval = m_pCryptoControl->m_SndKmState;
         else
-            *(int32_t*)optval = m_pCryptoControl->m_RcvKmState;
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = m_pCryptoControl->m_RcvKmState;
+        w_optlen = sizeof(int32_t);
         break;
 
     case SRTO_SNDKMSTATE: // State imposed by Agent depending on PW and KMX
         if (m_pCryptoControl)
-            *(int32_t*)optval = m_pCryptoControl->m_SndKmState;
+            *(int32_t*)pw_optval = m_pCryptoControl->m_SndKmState;
         else
-            *(int32_t*)optval = SRT_KM_S_UNSECURED;
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = SRT_KM_S_UNSECURED;
+        w_optlen = sizeof(int32_t);
         break;
 
     case SRTO_RCVKMSTATE: // State returned by Peer as informed during KMX
         if (m_pCryptoControl)
-            *(int32_t*)optval = m_pCryptoControl->m_RcvKmState;
+            *(int32_t*)pw_optval = m_pCryptoControl->m_RcvKmState;
         else
-            *(int32_t*)optval = SRT_KM_S_UNSECURED;
-        optlen = sizeof(int32_t);
+            *(int32_t*)pw_optval = SRT_KM_S_UNSECURED;
+        w_optlen = sizeof(int32_t);
         break;
 
     case SRTO_LOSSMAXTTL:
-        *(int32_t*)optval = m_iMaxReorderTolerance;
-        optlen = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_iMaxReorderTolerance;
+        w_optlen = sizeof(int32_t);
         break;
 
     case SRTO_NAKREPORT:
-        *(bool*)optval = m_bRcvNakReport;
-        optlen         = sizeof(bool);
+        *(bool*)pw_optval = m_bRcvNakReport;
+        w_optlen         = sizeof(bool);
         break;
 
     case SRTO_VERSION:
-        *(int32_t*)optval = m_lSrtVersion;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_lSrtVersion;
+        w_optlen            = sizeof(int32_t);
         break;
 
     case SRTO_PEERVERSION:
-        *(int32_t*)optval = m_lPeerSrtVersion;
-        optlen            = sizeof(int32_t);
+        *(int32_t*)pw_optval = m_lPeerSrtVersion;
+        w_optlen            = sizeof(int32_t);
         break;
 
 #ifdef SRT_ENABLE_CONNTIMEO
     case SRTO_CONNTIMEO:
-        *(int*)optval = count_milliseconds(m_tdConnTimeOut);
-        optlen        = sizeof(int);
+        *(int*)pw_optval = count_milliseconds(m_tdConnTimeOut);
+        w_optlen        = sizeof(int);
         break;
 #endif
 
     case SRTO_MINVERSION:
-        *(uint32_t*)optval = m_lMinimumPeerSrtVersion;
-        optlen             = sizeof(uint32_t);
+        *(uint32_t*)pw_optval = m_lMinimumPeerSrtVersion;
+        w_optlen             = sizeof(uint32_t);
         break;
 
     case SRTO_STREAMID:
-        if (size_t(optlen) < m_sStreamName.size() + 1)
+        if (size_t(w_optlen) < m_sStreamName.size() + 1)
             throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 
-        strcpy((char*)optval, m_sStreamName.c_str());
-        optlen = m_sStreamName.size();
+        strcpy(((char*)pw_optval), m_sStreamName.c_str());
+        w_optlen = m_sStreamName.size();
         break;
 
     case SRTO_CONGESTION:
     {
         string tt = m_CongCtl.selected_name();
-        strcpy((char*)optval, tt.c_str());
-        optlen = tt.size();
+        strcpy(((char*)pw_optval), tt.c_str());
+        w_optlen = tt.size();
     }
     break;
 
     case SRTO_MESSAGEAPI:
-        optlen         = sizeof(bool);
-        *(bool*)optval = m_bMessageAPI;
+        w_optlen         = sizeof(bool);
+        *(bool*)pw_optval = m_bMessageAPI;
         break;
 
     case SRTO_PAYLOADSIZE:
-        optlen        = sizeof(int);
-        *(int*)optval = m_zOPT_ExpPayloadSize;
+        w_optlen        = sizeof(int);
+        *(int*)pw_optval = m_zOPT_ExpPayloadSize;
         break;
 
     case SRTO_ENFORCEDENCRYPTION:
-        optlen            = sizeof(int32_t); // also with TSBPDMODE and SENDER
-        *(int32_t*)optval = m_bOPT_StrictEncryption;
+        w_optlen            = sizeof(int32_t); // also with TSBPDMODE and SENDER
+        *(int32_t*)pw_optval = m_bOPT_StrictEncryption;
         break;
 
     case SRTO_IPV6ONLY:
-        optlen        = sizeof(int);
-        *(int*)optval = m_iIpV6Only;
+        w_optlen        = sizeof(int);
+        *(int*)pw_optval = m_iIpV6Only;
         break;
 
     case SRTO_PEERIDLETIMEO:
-        *(int*)optval = m_iOPT_PeerIdleTimeout;
-        optlen        = sizeof(int);
+        *(int*)pw_optval = m_iOPT_PeerIdleTimeout;
+        w_optlen        = sizeof(int);
         break;
 
     case SRTO_PACKETFILTER:
-        if (size_t(optlen) < m_OPT_PktFilterConfigString.size() + 1)
+        if (size_t(w_optlen) < m_OPT_PktFilterConfigString.size() + 1)
             throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 
-        strcpy((char*)optval, m_OPT_PktFilterConfigString.c_str());
-        optlen = m_OPT_PktFilterConfigString.size();
+        strcpy(((char*)pw_optval), m_OPT_PktFilterConfigString.c_str());
+        w_optlen = m_OPT_PktFilterConfigString.size();
         break;
 
     default:
@@ -2488,6 +2488,7 @@ int CUDT::processSrtMsg_HSRSP(const uint32_t* srtdata, size_t len, uint32_t ts, 
     {
         // HSv5 way: extract the receiver latency and sender latency, if used.
 
+        // PEER WILL RECEIVE TSBPD == AGENT SHALL SEND TSBPD.
         if (IsSet(m_lPeerSrtFlags, SRT_OPT_TSBPDRCV))
         {
             // TsbPd feature enabled
@@ -2500,6 +2501,7 @@ int CUDT::processSrtMsg_HSRSP(const uint32_t* srtdata, size_t len, uint32_t ts, 
             HLOGC(mglog.Debug, log << "HSRSP/rcv: Peer (responder) DOES NOT USE latency");
         }
 
+        // PEER WILL SEND TSBPD == AGENT SHALL RECEIVE TSBPD.
         if (IsSet(m_lPeerSrtFlags, SRT_OPT_TSBPDSND))
         {
             if (!m_bTsbPd)
@@ -3559,7 +3561,7 @@ bool CUDT::processAsyncConnectRequest(EReadStatus         rst,
         */
     }
 
-    HLOGC(mglog.Debug, log << "processAsyncConnectRequest: sending request packet, setting REQ-TIME HIGH.");
+    HLOGC(mglog.Debug, log << "processAsyncConnectRequest: setting REQ-TIME HIGH, SENDING HS:" << m_ConnReq.show());
     m_tsLastReqTime = steady_clock::now();
     m_pSndQueue->sendto(serv_addr, request);
     return status;
@@ -4774,7 +4776,7 @@ void* CUDT::tsbpd(void* param)
 #if ENABLE_LOGGING
                     int64_t timediff_us = 0;
                     if (!is_zero(tsbpdtime))
-                        timediff_us = count_microseconds(tsbpdtime - steady_clock::now());
+                        timediff_us = count_microseconds(steady_clock::now() - tsbpdtime);
 #if ENABLE_HEAVY_LOGGING
                     HLOGC(tslog.Debug,
                           log << self->CONID() << "tsbpd: DROPSEQ: up to seq=" << CSeqNo::decseq(skiptoseqno) << " ("
@@ -8321,7 +8323,6 @@ int CUDT::processData(CUnit* in_unit)
     ++m_stats.recvTotal;
     CGuard::leaveCS(m_StatsLock);
 
-    typedef vector<pair<int32_t, int32_t> > loss_seqs_t;
     loss_seqs_t                             filter_loss_seqs;
     loss_seqs_t                             srt_loss_seqs;
     vector<CUnit*>                          incoming;
@@ -8351,6 +8352,11 @@ int CUDT::processData(CUnit* in_unit)
     if (packet.getMsgSeq() != 0) // disregard filter-control packets, their seq may mean nothing
     {
         int diff = CSeqNo::seqoff(m_iRcvCurrPhySeqNo, packet.m_iSeqNo);
+       // Difference between these two sequence numbers is expected to be:
+       // 0 - duplicated last packet (theory only)
+       // 1 - subsequent packet (alright)
+       // <0 - belated or recovered packet
+       // >1 - jump over a packet loss (loss = seqdiff-1)
         if (diff > 1)
         {
             CGuard lg (m_StatsLock);
