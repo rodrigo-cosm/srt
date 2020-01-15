@@ -793,6 +793,7 @@ ERR_ROLLBACK:
           m_Sockets.erase(id);
           m_ClosedSockets[id] = ns;
       }
+
       return -1;
    }
 
@@ -2231,7 +2232,7 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
 
    if (s->m_pQueuedSockets)
    {
-      CGuard cg(s->m_AcceptLock);
+       CGuard cg(s->m_AcceptLock);
 
        // if it is a listener, close all un-accepted sockets in its queue
        // and remove them later
@@ -2248,7 +2249,7 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
 
            CUDTSocket* as = si->second;
 
-         as->makeClosed();
+           as->makeClosed();
            m_ClosedSockets[*q] = as;
            m_Sockets.erase(*q);
        }
@@ -3707,7 +3708,7 @@ int bind(SRTSOCKET u, const struct sockaddr* name, int namelen)
    return CUDT::bind(u, name, namelen);
 }
 
-int bind2(SRTSOCKET u, int udpsock)
+int bind2(SRTSOCKET u, UDPSOCKET udpsock)
 {
    return CUDT::bind(u, udpsock);
 }

@@ -1062,7 +1062,7 @@ bool CRcvBuffer::getRcvFirstMsg(steady_clock::time_point& w_tsbpdtime,
     // - tsbpdtime: real time when the packet is ready to play (whether ready to play or not)
     // - w_passack: false (the report concerns a packet with an exactly next sequence)
     // - w_skipseqno == -1: no packets to skip towards the first RTP
-    // - curpktseq: sequence number for reported packet (for debug purposes)
+    // - w_curpktseq: sequence number for reported packet (for debug purposes)
     // - @return: whether the reported packet is ready to play
 
     /* Check the acknowledged packets */

@@ -11029,6 +11029,7 @@ SRT_REJECT_REASON CUDT::rejectReason(SRTSOCKET u)
 
     return s->m_pUDT->m_RejectReason;
 }
+
 bool CUDT::runAcceptHook(CUDT* acore, const sockaddr* peer, const CHandShake& hs, const CPacket& hspkt)
 {
     // Prepare the information for the hook.
