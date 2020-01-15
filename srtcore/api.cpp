@@ -705,6 +705,7 @@ ERR_ROLLBACK:
           m_Sockets.erase(id);
           m_ClosedSockets[id] = ns;
       }
+
       return -1;
    }
 
@@ -3398,7 +3399,7 @@ int bind(SRTSOCKET u, const struct sockaddr* name, int namelen)
    return CUDT::bind(u, name, namelen);
 }
 
-int bind2(SRTSOCKET u, int udpsock)
+int bind2(SRTSOCKET u, UDPSOCKET udpsock)
 {
    return CUDT::bind(u, udpsock);
 }
