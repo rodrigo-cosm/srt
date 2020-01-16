@@ -30,6 +30,10 @@ Another important type is **Maintenance**, which should get interest over
 3. The **Impact** category may be significant for the works. The **Low**
 impact category is expected to be quick to review and therefore it can
 be treated as priority enhancement.
+4. The upcoming release gets highest priority. The "Priority" category
+then decides priorities only within the release, while as the deadline
+for the release comes closer, lowest priority (according to all above
+criteria) should be the first to potentially shift to the next release.
 
 
 Category: [scope]
@@ -66,32 +70,42 @@ Category: Status
 This describes the current status of a PR or Issue and defines what
 should be done next with it.
 
-* Abandoned: The reported problem is of no more interest.
+* **Abandoned** : The reported problem is of no more interest.
    * Typically after 3 months of inactivity it will be closed.
-* Accepted: For issue of type Question, a satisfactionary answer
+* **Accepted** : For issue of type Question, a satisfactionary answer
    * Expected the question can be closed, although it still remains archived
-* Available: A requested enhancement could be provided without extensions.
+* **Available** : A requested enhancement could be provided without extensions.
    * Expected to be closed once picked up by the requester.
-* Blocked: A dependent Issue/PR must be closed/merged first.
+* **Blocked** : A dependent Issue/PR must be closed/merged first.
    * Should stay unchanged until the dependency is resolved
    * NOTE: The first line in Description must provide dependency info!
-* Completed: Ready to close, if there's nothing else.
+* **Completed** : Ready to close, if there's nothing else.
    * Typically after 3 months of inactivity it will be closed.
-* Fixing After Review: review was done, expected post-review fixes to be done
-   * Typically after 3 months of inactivity it will be dismissed.
-   * If it was something important, admins will take the changes over.
-* In Progress: The work is ongoing and not yet ready to review
-* Moved: Duplicate or takeover by another Issue/PR
+* **Fixing After Review** : review was done, expected post-review fixes to be done
+   * Aftera too long inactivity it will be `->`takenover
+* **In Progress** : The work is ongoing and not yet ready to review
+* **Moved** : Duplicate or takeover by another Issue/PR
    * NOTE: The first line in Description must provide redirection info!
-* On Hold: The work was paused due to unknown reasons.
+* **On Hold** : The work was paused due to unknown reasons.
    * Should be revisited after every release
-* Pending: Not started, but recognized as needed to do.
+* **Pending** : Not started, but recognized as needed to do.
    * Expected to turn into "In Progress" once resources are available
-* Review needed: expected review to be performed
-* Unclear: The problem can't be reproduced or is incorrectly described
+* **Review needed** : expected review to be performed
+* **Unclear** : The problem can't be reproduced or is incorrectly described
    * Expected clarification from the reporter
-   * Typically after 3 months of inactivity it will be dismissed.
-   * If it was something important, admins will take the changes over.
+   * After a too long inactivity it will be `->`takenover
+
+`->`takenover tickets are tickets that have their original reported
+considered lost, therefore there are two possible actions:
+
+* If the ticket describes or provides something important for the project,
+especially if it's about an importnat functionality fix, or an enhancement
+in the interest of the project management, a new ticket will be spawned
+to handle it, this time without involving the original reporter and resolved
+within the project team exclusively.
+
+* After the takeover, or if it was decided that the takeover wasn't necessary
+and 3 months have passed, the ticket is closed.
 
 Note that the status typically defines something that is expected to
 happen next. Please note also that the 3-month quarantine is enforced
@@ -110,7 +124,9 @@ Practical meaning of the priority is only within particular type. There
 is a general meaning of the priorities:
 
 * Critical: this is predicted for bugs and bugfixes only. This has the
-highest possible priority as it repairs some very serious bug.
+highest possible priority as it repairs some very serious bug. Hangup of
+all other works is expected to investigate the reported issue, as well as
+review and merge the associated ticket.
 
 * High: The first issues to be taken out of the way, in the current
 release only. Tickes of high priority are **not** expected to be moved
@@ -121,7 +137,7 @@ priority tickets are resolved. Those that can't be resolved in this
 release, should be moved to the next one.
 
 * Low: Something that didn't gain enough interest to be important,
-only applicable if **Medium** tickets are resolved
+only applicable if **Medium** tickets are resolved.
 
 
 Category: Impact
