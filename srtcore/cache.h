@@ -97,7 +97,7 @@ public:
 
    int lookup(T* data)
    {
-      srt::sync::ScopedLock cacheguard(m_Lock);
+      srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)
@@ -125,7 +125,7 @@ public:
 
    int update(T* data)
    {
-       srt::sync::ScopedLock cacheguard(m_Lock);
+       srt::sync::CGuard cacheguard(m_Lock);
 
       int key = data->getKey();
       if (key < 0)

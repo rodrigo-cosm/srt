@@ -238,7 +238,7 @@ inline bool is_zero(const TimePoint<steady_clock>& t) { return t.is_zero(); }
 #ifdef USE_STL_CHRONO
 // Mutex for C++03 should call pthread init and destroy
 using Mutex      = mutex;
-using UniqueLock = unique_lock<mutex>;
+using CGuard = unique_lock<mutex>;
 #if ENABLE_CXX17
 using ScopedLock = scoped_lock<mutex>;
 #else
@@ -284,13 +284,13 @@ private:
 
 
 
-class UniqueLock
+class CGuard
 {
     friend class SyncEvent;
 
 public:
-    UniqueLock(Mutex &m);
-    ~UniqueLock();
+    CGuard(Mutex &m);
+    ~CGuard();
 
 public:
     void unlock();
@@ -313,11 +313,8 @@ inline void SleepFor(const steady_clock::duration& t)
 #endif  // USE_STL_CHRONO
 
 
-struct CriticalSection
-{
-    static void enter(Mutex &m) { m.lock(); }
-    static void leave(Mutex &m) { m.unlock(); }
-};
+inline void enterCS(Mutex &m) { m.lock(); }
+inline void leaveCS(Mutex &m) { m.unlock(); }
 
 
 class InvertedLock
@@ -331,14 +328,14 @@ class InvertedLock
         if (!m_pMutex)
             return;
 
-        CriticalSection::leave(*m_pMutex);
+        leaveCS(*m_pMutex);
     }
 
     ~InvertedLock()
     {
         if (!m_pMutex)
             return;
-        CriticalSection::enter(*m_pMutex);
+        enterCS(*m_pMutex);
     }
 };
 
@@ -352,8 +349,8 @@ public:
     ~SyncCond();
 
 public:
-    bool wait_for(UniqueLock& lk, steady_clock::duration timeout);
-    void wait(UniqueLock& lk);
+    bool wait_for(CGuard& lk, steady_clock::duration timeout);
+    void wait(CGuard& lk);
 
     void notify_one();
     void notify_all();
@@ -409,11 +406,11 @@ public:
     ///
     /// @return true  if condition occured or spuriously woken up
     ///         false on timeout
-    bool wait_for(UniqueLock &lk, const steady_clock::duration& rel_time);
+    bool wait_for(CGuard &lk, const steady_clock::duration& rel_time);
 
     void wait();
 
-    void wait(UniqueLock& lk);
+    void wait(CGuard& lk);
 
     void notify_one();
 

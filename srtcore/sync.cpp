@@ -241,20 +241,20 @@ srt::sync::ScopedLock::~ScopedLock()
 //
 //
 
-srt::sync::UniqueLock::UniqueLock(Mutex& m)
+srt::sync::CGuard::CGuard(Mutex& m)
     : m_Mutex(m)
 {
     m_iLocked = m_Mutex.lock();
 }
 
 
-srt::sync::UniqueLock::~UniqueLock()
+srt::sync::CGuard::~CGuard()
 {
     unlock();
 }
 
 
-void srt::sync::UniqueLock::unlock()
+void srt::sync::CGuard::unlock()
 {
     if (m_iLocked == 0)
     {
@@ -287,7 +287,7 @@ srt::sync::SyncEvent::~SyncEvent()
 
 bool srt::sync::SyncEvent::wait_until(const TimePoint<steady_clock>& tp)
 {
-    UniqueLock lck(m_tick_lock);
+    CGuard lck(m_tick_lock);
 
     TimePoint<steady_clock> cur_tp = steady_clock::now();
 
@@ -325,11 +325,11 @@ void srt::sync::SyncEvent::notify_all()
 
 bool srt::sync::SyncEvent::wait_for(const Duration<steady_clock>& rel_time)
 {
-    UniqueLock lock(m_tick_lock);
+    CGuard lock(m_tick_lock);
     return wait_for(lock, rel_time);
 }
 
-bool srt::sync::SyncEvent::wait_for(UniqueLock& lock, const Duration<steady_clock>& rel_time)
+bool srt::sync::SyncEvent::wait_for(CGuard& lock, const Duration<steady_clock>& rel_time)
 {
     timeval now;
     gettimeofday(&now, 0);
@@ -343,11 +343,11 @@ bool srt::sync::SyncEvent::wait_for(UniqueLock& lock, const Duration<steady_cloc
 
 void srt::sync::SyncEvent::wait()
 {
-    UniqueLock lock(m_tick_lock);
+    CGuard lock(m_tick_lock);
     wait(lock);
 }
 
-void srt::sync::SyncEvent::wait(UniqueLock& lk)
+void srt::sync::SyncEvent::wait(CGuard& lk)
 {
     pthread_cond_wait(&m_tick_cond, &lk.m_Mutex.m_mutex);
 }
@@ -373,9 +373,9 @@ bool srt::sync::Timer::sleep_until(TimePoint<steady_clock> tp)
 {
     // The class member m_sched_time can be used to interrupt the sleep.
     // Refer to Timer::interrupt().
-    CriticalSection::enter(m_event.mutex());
+    enterCS(m_event.mutex());
     m_sched_time = tp;
-    CriticalSection::leave(m_event.mutex());
+    leaveCS(m_event.mutex());
 
     TimePoint<steady_clock> cur_tp = steady_clock::now();
 
@@ -402,7 +402,7 @@ bool srt::sync::Timer::sleep_until(TimePoint<steady_clock> tp)
 
 void srt::sync::Timer::interrupt()
 {
-    UniqueLock lck(m_event.mutex());
+    CGuard lck(m_event.mutex());
     m_sched_time = steady_clock::now();
     m_event.notify_all();
 }

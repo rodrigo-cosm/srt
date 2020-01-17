@@ -29,14 +29,14 @@ srt::sync::SyncCond::SyncCond() {}
 srt::sync::SyncCond::~SyncCond() {}
 
 
-bool srt::sync::SyncCond::wait_for(UniqueLock& lk, steady_clock::duration timeout)
+bool srt::sync::SyncCond::wait_for(CGuard& lk, steady_clock::duration timeout)
 {
     // Another possible implementation is wait_until(steady_clock::now() + timeout);
     return m_tick_cond.wait_for(lk, timeout) != cv_status::timeout;
 }
 
 
-void srt::sync::SyncCond::wait(UniqueLock& lk)
+void srt::sync::SyncCond::wait(CGuard& lk)
 {
     return m_tick_cond.wait(lk);
 }
@@ -82,7 +82,7 @@ bool srt::sync::SyncEvent::wait_for(const steady_clock::duration& rel_time)
     // wait_until(steady_clock::now() + timeout);
 }
 
-bool srt::sync::SyncEvent::wait_for(UniqueLock& lk, const steady_clock::duration& rel_time)
+bool srt::sync::SyncEvent::wait_for(CGuard& lk, const steady_clock::duration& rel_time)
 {
     return m_tick_cond.wait_for(lk, rel_time) != cv_status::timeout;
 
@@ -90,7 +90,7 @@ bool srt::sync::SyncEvent::wait_for(UniqueLock& lk, const steady_clock::duration
 }
 
 
-void srt::sync::SyncEvent::wait(UniqueLock& lk)
+void srt::sync::SyncEvent::wait(CGuard& lk)
 {
     return m_tick_cond.wait(lk);
 }
