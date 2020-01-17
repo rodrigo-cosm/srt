@@ -256,25 +256,23 @@ CSndUList::CSndUList()
     , m_iArrayLength(512)
     , m_iLastEntry(-1)
     , m_ListLock()
-    , m_pWindowLock(NULL)
-    , m_pWindowCond(NULL)
+    , m_pWindowSync(NULL)
     , m_pTimer(NULL)
 {
     m_pHeap = new CSNode *[m_iArrayLength];
-    pthread_mutex_init(&m_ListLock, NULL);
 }
 
 CSndUList::~CSndUList()
 {
     delete[] m_pHeap;
-    pthread_mutex_destroy(&m_ListLock);
 }
 
-void CSndUList::update(const CUDT *u, EReschedule reschedule)
-{
-    CGuard listguard(m_ListLock);
 
-    CSNode *n = u->m_pSNode;
+void CSndUList::update(const CUDT* u, EReschedule reschedule)
+{
+    ScopedLock listguard(m_ListLock);
+
+    CSNode* n = u->m_pSNode;
 
     if (n->m_iHeapLoc >= 0)
     {
@@ -284,7 +282,7 @@ void CSndUList::update(const CUDT *u, EReschedule reschedule)
         if (n->m_iHeapLoc == 0)
         {
             n->m_tsTimeStamp = steady_clock::now();
-            m_pTimer->interrupt();
+            m_pTimer->notify_one();
             return;
         }
 
@@ -298,7 +296,7 @@ void CSndUList::update(const CUDT *u, EReschedule reschedule)
 
 int CSndUList::pop(sockaddr_any& addr, CPacket &pkt)
 {
-    CGuard listguard(m_ListLock);
+    ScopedLock listguard(m_ListLock);
 
     if (-1 == m_iLastEntry)
         return -1;
@@ -339,14 +337,14 @@ int CSndUList::pop(sockaddr_any& addr, CPacket &pkt)
 
 void CSndUList::remove(const CUDT *u)
 {
-    CGuard listguard(m_ListLock);
+    ScopedLock listguard(m_ListLock);
 
     remove_(u);
 }
 
 steady_clock::time_point CSndUList::getNextProcTime()
 {
-    CGuard listguard(m_ListLock);
+    ScopedLock listguard(m_ListLock);
 
     if (-1 == m_iLastEntry)
         return steady_clock::time_point();
@@ -356,7 +354,7 @@ steady_clock::time_point CSndUList::getNextProcTime()
 
 void CSndUList::realloc_()
 {
-    CSNode **temp = NULL;
+    CSNode** temp = NULL;
 
     try
     {
@@ -367,7 +365,7 @@ void CSndUList::realloc_()
         throw CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0);
     }
 
-    memcpy(temp, m_pHeap, sizeof(CSNode *) * m_iArrayLength);
+    memcpy(temp, m_pHeap, sizeof(CSNode*) * m_iArrayLength);
     m_iArrayLength *= 2;
     delete[] m_pHeap;
     m_pHeap = temp;
@@ -384,7 +382,7 @@ void CSndUList::insert_(const steady_clock::time_point& ts, const CUDT* u)
 
 void CSndUList::insert_norealloc_(const steady_clock::time_point& ts, const CUDT* u)
 {
-    CSNode *n = u->m_pSNode;
+    CSNode* n = u->m_pSNode;
 
     // do not insert repeated node
     if (n->m_iHeapLoc >= 0)
@@ -395,7 +393,7 @@ void CSndUList::insert_norealloc_(const steady_clock::time_point& ts, const CUDT
     m_iLastEntry++;
     m_pHeap[m_iLastEntry] = n;
     n->m_tsTimeStamp = ts;
-    
+
     int q = m_iLastEntry;
     int p = q;
     while (p != 0)
@@ -418,9 +416,8 @@ void CSndUList::insert_norealloc_(const steady_clock::time_point& ts, const CUDT
     // first entry, activate the sending queue
     if (0 == m_iLastEntry)
     {
-        pthread_mutex_lock(m_pWindowLock);
-        pthread_cond_signal(m_pWindowCond);
-        pthread_mutex_unlock(m_pWindowLock);
+        ScopedLock lock(m_pWindowSync->mutex());
+        m_pWindowSync->notify_one();
     }
 }
 
@@ -469,12 +466,8 @@ CSndQueue::CSndQueue()
     , m_pSndUList(NULL)
     , m_pChannel(NULL)
     , m_pTimer(NULL)
-    , m_WindowLock()
-    , m_WindowCond()
     , m_bClosing(false)
 {
-    pthread_cond_init(&m_WindowCond, NULL);
-    pthread_mutex_init(&m_WindowLock, NULL);
 }
 
 CSndQueue::~CSndQueue()
@@ -486,24 +479,21 @@ CSndQueue::~CSndQueue()
         m_pTimer->interrupt();
     }
 
-    pthread_mutex_lock(&m_WindowLock);
-    pthread_cond_signal(&m_WindowCond);
-    pthread_mutex_unlock(&m_WindowLock);
+    CriticalSection::enter(m_WindowSync.mutex());
+    m_WindowSync.notify_one();
+    CriticalSection::leave(m_WindowSync.mutex());
     if (!pthread_equal(m_WorkerThread, pthread_t()))
         pthread_join(m_WorkerThread, NULL);
-    pthread_cond_destroy(&m_WindowCond);
-    pthread_mutex_destroy(&m_WindowLock);
 
     delete m_pSndUList;
 }
 
-void CSndQueue::init(CChannel *c, CTimer *t)
+void CSndQueue::init(CChannel *c, srt::sync::Timer *t)
 {
     m_pChannel                 = c;
     m_pTimer                   = t;
     m_pSndUList                = new CSndUList;
-    m_pSndUList->m_pWindowLock = &m_WindowLock;
-    m_pSndUList->m_pWindowCond = &m_WindowCond;
+    m_pSndUList->m_pWindowSync = &m_WindowSync;
     m_pSndUList->m_pTimer      = m_pTimer;
 
     ThreadName tn("SRT:SndQ:worker");
@@ -534,7 +524,7 @@ void *CSndQueue::worker(void *param)
 
     while (!self->m_bClosing)
     {
-        steady_clock::time_point next_time = self->m_pSndUList->getNextProcTime();
+        const steady_clock::time_point next_time = self->m_pSndUList->getNextProcTime();
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         self->m_WorkerStats.lIteration++;
@@ -548,17 +538,16 @@ void *CSndQueue::worker(void *param)
 
             // wait here if there is no sockets with data to be sent
             THREAD_PAUSED();
-            pthread_mutex_lock(&self->m_WindowLock);
+            UniqueLock lock(self->m_WindowSync.mutex());
             if (!self->m_bClosing && (self->m_pSndUList->m_iLastEntry < 0))
             {
-                pthread_cond_wait(&self->m_WindowCond, &self->m_WindowLock);
+                self->m_WindowSync.wait(lock);
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
                 self->m_WorkerStats.lCondWait++;
 #endif /* SRT_DEBUG_SNDQ_HIGHRATE */
             }
             THREAD_RESUMED();
-            pthread_mutex_unlock(&self->m_WindowLock);
 
             continue;
         }
@@ -585,7 +574,7 @@ void *CSndQueue::worker(void *param)
         THREAD_PAUSED();
         if (currtime < next_time)
         {
-            self->m_pTimer->sleepto(next_time);
+            self->m_pTimer->sleep_until(next_time);
 
 #if defined(HAI_DEBUG_SNDQ_HIGHRATE)
             self->m_WorkerStats.lSleepTo++;
@@ -813,20 +802,17 @@ CRendezvousQueue::CRendezvousQueue()
     : m_lRendezvousID()
     , m_RIDVectorLock()
 {
-    pthread_mutex_init(&m_RIDVectorLock, NULL);
 }
 
 CRendezvousQueue::~CRendezvousQueue()
 {
-    pthread_mutex_destroy(&m_RIDVectorLock);
-
     m_lRendezvousID.clear();
 }
 
 void CRendezvousQueue::insert(
     const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, const steady_clock::time_point& ttl)
 {
-    CGuard vg(m_RIDVectorLock);
+    ScopedLock vg(m_RIDVectorLock);
 
     CRL r;
     r.m_iID        = id;
@@ -839,21 +825,25 @@ void CRendezvousQueue::insert(
 
 void CRendezvousQueue::remove(const SRTSOCKET &id, bool should_lock)
 {
-    CGuard vg(m_RIDVectorLock, should_lock);
+    if (should_lock)
+        CriticalSection::enter(m_RIDVectorLock);
 
     for (list<CRL>::iterator i = m_lRendezvousID.begin(); i != m_lRendezvousID.end(); ++i)
     {
         if (i->m_iID == id)
         {
             m_lRendezvousID.erase(i);
-            return;
+            break;
         }
     }
+
+    if (should_lock)
+        CriticalSection::leave(m_RIDVectorLock);
 }
 
 CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> r_id)
 {
-    CGuard     vg(m_RIDVectorLock);
+    ScopedLock vg(m_RIDVectorLock);
     SRTSOCKET &id = *r_id;
 
     // TODO: optimize search
@@ -871,7 +861,7 @@ CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> r_id
 
 void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, const CPacket &response)
 {
-    CGuard vg(m_RIDVectorLock);
+    ScopedLock vg(m_RIDVectorLock);
 
     if (m_lRendezvousID.empty())
         return;
@@ -1016,7 +1006,6 @@ CRcvQueue::CRcvQueue()
     , m_pRcvUList(NULL)
     , m_pHash(NULL)
     , m_pChannel(NULL)
-    , m_pTimer(NULL)
     , m_iPayloadSize()
     , m_bClosing(false)
     , m_LSLock()
@@ -1025,13 +1014,7 @@ CRcvQueue::CRcvQueue()
     , m_vNewEntry()
     , m_IDLock()
     , m_mBuffer()
-    , m_PassLock()
-    , m_PassCond()
 {
-    pthread_mutex_init(&m_PassLock, NULL);
-    pthread_cond_init(&m_PassCond, NULL);
-    pthread_mutex_init(&m_LSLock, NULL);
-    pthread_mutex_init(&m_IDLock, NULL);
 }
 
 CRcvQueue::~CRcvQueue()
@@ -1039,10 +1022,6 @@ CRcvQueue::~CRcvQueue()
     m_bClosing = true;
     if (!pthread_equal(m_WorkerThread, pthread_t()))
         pthread_join(m_WorkerThread, NULL);
-    pthread_mutex_destroy(&m_PassLock);
-    pthread_cond_destroy(&m_PassCond);
-    pthread_mutex_destroy(&m_LSLock);
-    pthread_mutex_destroy(&m_IDLock);
 
     delete m_pRcvUList;
     delete m_pHash;
@@ -1061,7 +1040,7 @@ CRcvQueue::~CRcvQueue()
     }
 }
 
-void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel *cc, CTimer *t)
+void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel *cc)
 {
     m_iPayloadSize = payload;
 
@@ -1071,7 +1050,6 @@ void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel *c
     m_pHash->init(hsize);
 
     m_pChannel = cc;
-    m_pTimer   = t;
 
     m_pRcvUList        = new CRcvUList;
     m_pRendezvousQueue = new CRendezvousQueue;
@@ -1137,15 +1115,15 @@ void *CRcvQueue::worker(void *param)
                 continue;
             }
             have_received = true;
-        }
-        else if (rst == RST_ERROR)
-        {
-            // According to the description by CChannel::recvfrom, this can be either of:
-            // - IPE: all errors except EBADF
-            // - socket was closed in the meantime by another thread: EBADF
-            // If EBADF, then it's expected that the "closing" state is also set.
-            // Check that just to report possible errors, but interrupt the loop anyway.
-            if (self->m_bClosing)
+       }
+       else if (rst == RST_ERROR)
+       {
+           // According to the description by CChannel::recvfrom, this can be either of:
+           // - IPE: all errors except EBADF
+           // - socket was closed in the meantime by another thread: EBADF
+           // If EBADF, then it's expected that the "closing" state is also set.
+           // Check that just to report possible errors, but interrupt the loop anyway.
+           if (self->m_bClosing)
             {
                 HLOGC(mglog.Debug,
                       log << self->CONID() << "CChannel reported error, but Queue is closing - INTERRUPTING worker.");
@@ -1236,11 +1214,12 @@ static string PacketInfo(const CPacket &pkt)
 
 EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_unit, sockaddr_any& w_addr)
 {
-#if !USE_BUSY_WAITING
-    // This might be not really necessary, and probably
-    // not good for extensive bidirectional communication.
-    m_pTimer->tick();
-#endif
+    // TODO: Put this change in a separate commit
+    //#if !USE_BUSY_WAITING
+    //    // This might be not really necessary, and probably
+    //    // not good for extensive bidirectional communication.
+    //    m_pTimer->tick();
+    //#endif
 
     // check waiting list, if new socket, insert it to the list
     while (ifNewEntry())
@@ -1305,7 +1284,7 @@ EConnectStatus CRcvQueue::worker_ProcessConnectionRequest(CUnit* unit, const soc
     SRT_REJECT_REASON listener_ret  = SRT_REJ_UNKNOWN;
     bool              have_listener = false;
     {
-        CGuard cg(m_LSLock);
+        ScopedLock cg(m_LSLock);
         if (m_pListener)
         {
             LOGC(mglog.Note,
@@ -1522,14 +1501,14 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
 
 int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
 {
-    CGuard   bufferlock(m_PassLock);
-    CPacket &packet = *r_packet;
+    UniqueLock bufferlock(m_BufferSync.mutex());
+    CPacket &  packet = *r_packet;
 
     map<int32_t, std::queue<CPacket *> >::iterator i = m_mBuffer.find(id);
 
     if (i == m_mBuffer.end())
     {
-        SyncEvent::wait_for(&m_PassCond, &m_PassLock, seconds_from(1));
+        m_BufferSync.wait_for(bufferlock, seconds_from(1));
 
         i = m_mBuffer.find(id);
         if (i == m_mBuffer.end())
@@ -1574,7 +1553,7 @@ int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
 
 int CRcvQueue::setListener(CUDT *u)
 {
-    CGuard lslock(m_LSLock);
+    ScopedLock lslock(m_LSLock);
 
     if (NULL != m_pListener)
         return -1;
@@ -1585,7 +1564,7 @@ int CRcvQueue::setListener(CUDT *u)
 
 void CRcvQueue::removeListener(const CUDT *u)
 {
-    CGuard lslock(m_LSLock);
+    ScopedLock lslock(m_LSLock);
 
     if (u == m_pListener)
         m_pListener = NULL;
@@ -1603,7 +1582,7 @@ void CRcvQueue::removeConnector(const SRTSOCKET &id, bool should_lock)
     HLOGC(mglog.Debug, log << "removeConnector: removing %" << id);
     m_pRendezvousQueue->remove(id, should_lock);
 
-    CGuard bufferlock(m_PassLock);
+    ScopedLock bufferlock(m_BufferSync.mutex());
 
     map<int32_t, std::queue<CPacket *> >::iterator i = m_mBuffer.find(id);
     if (i != m_mBuffer.end())
@@ -1623,7 +1602,7 @@ void CRcvQueue::removeConnector(const SRTSOCKET &id, bool should_lock)
 void CRcvQueue::setNewEntry(CUDT *u)
 {
     HLOGC(mglog.Debug, log << CUDTUnited::CONID(u->m_SocketID) << "setting socket PENDING FOR CONNECTION");
-    CGuard listguard(m_IDLock);
+    ScopedLock listguard(m_IDLock);
     m_vNewEntry.push_back(u);
 }
 
@@ -1631,7 +1610,7 @@ bool CRcvQueue::ifNewEntry() { return !(m_vNewEntry.empty()); }
 
 CUDT *CRcvQueue::getNewEntry()
 {
-    CGuard listguard(m_IDLock);
+    ScopedLock listguard(m_IDLock);
 
     if (m_vNewEntry.empty())
         return NULL;
@@ -1644,14 +1623,14 @@ CUDT *CRcvQueue::getNewEntry()
 
 void CRcvQueue::storePkt(int32_t id, CPacket *pkt)
 {
-    CGuard bufferlock(m_PassLock);
+    ScopedLock bufferlock(m_BufferSync.mutex());
 
     map<int32_t, std::queue<CPacket *> >::iterator i = m_mBuffer.find(id);
 
     if (i == m_mBuffer.end())
     {
         m_mBuffer[id].push(pkt);
-        pthread_cond_signal(&m_PassCond);
+        m_BufferSync.notify_one();
     }
     else
     {
