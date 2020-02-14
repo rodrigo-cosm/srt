@@ -60,6 +60,19 @@ modified by
 #include "utilities.h"
 #include <fstream>
 
+// The notation used for "circular numbers" in comments:
+// The "cicrular numbers" are numbers that when increased up to the
+// maximum become zero, and similarly, when the zero value is decreased,
+// it turns into the maximum value minus one. This wrapping works the
+// same for adding and subtracting. Circular numbers cannot be multiplied.
+
+// Operations done on these numbers are marked with additional % character:
+// a %> b : a is later than b
+// a ++% (++%a) : shift a by 1 forward
+// a +% b : shift a by b
+// a == b : equality is same as for just numbers
+
+
 class CSndBuffer
 {
 public:
@@ -161,7 +174,7 @@ private:    // Constants
     static const int      INPUTRATE_INITIAL_BYTESPS = BW_INFINITE;
 
 private:
-   srt::sync::CMutex m_BufLock;           // used to synchronize buffer operation
+   srt::sync::Mutex m_BufLock;           // used to synchronize buffer operation
 
    struct Block
    {
@@ -376,7 +389,7 @@ public:
       /// @param [in] timestamp packet time stamp
       /// @param [ref] lock Mutex that should be locked for the operation
 
-   void addRcvTsbPdDriftSample(uint32_t timestamp, srt::sync::CMutex& lock);
+   void addRcvTsbPdDriftSample(uint32_t timestamp, srt::sync::Mutex& lock);
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
    void printDriftHistogram(int64_t iDrift);
@@ -457,7 +470,7 @@ public:
    srt::sync::steady_clock::time_point getPktTsbPdTime(uint32_t timestamp);
    int debugGetSize() const;
    srt::sync::steady_clock::time_point debugGetDeliveryTime(int offset);
-   
+
    // Required by PacketFilter facility to use as a storage
    // for provided packets
    CUnitQueue* getUnitQueue()
@@ -514,7 +527,7 @@ private:
                                         // up to which data are already retrieved;
                                         // in message reading mode it's unused and always 0)
 
-   srt::sync::CMutex m_BytesCountLock;    // used to protect counters operations
+   srt::sync::Mutex m_BytesCountLock;   // used to protect counters operations
    int m_iBytesCount;                   // Number of payload bytes in the buffer
    int m_iAckedPktsCount;               // Number of acknowledged pkts in the buffer
    int m_iAckedBytesCount;              // Number of acknowledged payload bytes in the buffer

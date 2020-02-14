@@ -119,6 +119,10 @@ struct CEPollDesc
 
    typedef std::map<SRTSOCKET, Wait> ewatch_t;
 
+#if ENABLE_HEAVY_LOGGING
+std::string DisplayEpollWatch();
+#endif
+
 private:
 
    /// Sockets that are subscribed for events in this eid.
@@ -385,10 +389,10 @@ public: // for CUDT to acknowledge IO status
 
 private:
    int m_iIDSeed;                            // seed to generate a new ID
-   srt::sync::CMutex m_SeedLock;
+   srt::sync::Mutex m_SeedLock;
 
    std::map<int, CEPollDesc> m_mPolls;       // all epolls
-   srt::sync::CMutex m_EPollLock;
+   srt::sync::Mutex m_EPollLock;
 };
 
 

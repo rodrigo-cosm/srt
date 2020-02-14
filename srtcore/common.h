@@ -56,6 +56,7 @@ modified by
 #define _CRT_SECURE_NO_WARNINGS 1 // silences windows complaints for sscanf
 
 #include <cstdlib>
+#include <cstdio>
 #ifndef _WIN32
    #include <sys/time.h>
    #include <sys/uio.h>
@@ -64,9 +65,10 @@ modified by
    //#include <windows.h>
 #endif
 
-#include "udt.h"
+#include "srt.h"
 #include "utilities.h"
 #include "sync.h"
+#include "netinet_any.h"
 
 // System-independent errno
 #ifndef _WIN32
@@ -91,7 +93,7 @@ modified by
 // is predicted to NEVER LET ANY EXCEPTION out of implementation,
 // so it's useless to catch this exception anyway.
 
-class UDT_API CUDTException: public std::exception
+class SRT_API CUDTException: public std::exception
 {
 public:
 
@@ -106,6 +108,8 @@ public:
     {
         return getErrorMessage();
     }
+
+    const std::string& getErrorString() const;
 
     /// Get the system errno for the exception.
     /// @return errno.
@@ -256,6 +260,12 @@ enum EConnectStatus
     CONN_CONFUSED = 3,   //< listener thinks it's connected, but caller missed conclusion
     CONN_RUNNING = 10,   //< no connection in progress, already connected
     CONN_AGAIN = -2      //< No data was read, don't change any state.
+};
+
+enum EConnectMethod
+{
+    COM_ASYNCHRO,
+    COM_SYNCHRO
 };
 
 std::string ConnectStatusStr(EConnectStatus est);
@@ -567,10 +577,6 @@ public:
       /// @retval WT_ERROR The function has exit due to an error
 
    static EWait waitForEvent();
-
-      /// sleep for a short interval. exact sleep time does not matter
-
-   static void sleep();
    
       /// Wait for condition with timeout 
       /// @param [in] cond Condition variable to wait for
@@ -583,11 +589,12 @@ private:
    srt::sync::steady_clock::time_point m_tsSchedTime;             // next schedulled time
 
    pthread_cond_t m_TickCond;
-   pthread_mutex_t m_TickLock;
+   srt::sync::Mutex m_TickLock;
 
    static pthread_cond_t m_EventCond;
-   static pthread_mutex_t m_EventLock;
+   static srt::sync::Mutex m_EventLock;
 };
+
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -671,6 +678,13 @@ public:
            return m_iMaxSeqNo - left + 1;
        }
        return seq - dec;
+   }
+
+   static int32_t maxseq(int32_t seq1, int32_t seq2)
+   {
+       if (seqcmp(seq1, seq2) < 0)
+           return seq2;
+       return seq1;
    }
 
 public:
@@ -830,6 +844,10 @@ public:
 #endif
 };
 
+namespace srt_logging
+{
+std::string SockStatusStr(SRT_SOCKSTATUS s);
+}
 
 // Version parsing
 inline ATR_CONSTEXPR uint32_t SrtVersion(int major, int minor, int patch)

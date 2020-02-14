@@ -62,13 +62,18 @@ modified by
 #include "epoll.h"
 #include "logging.h"
 #include "udt.h"
+#include "logging.h"
 
 using namespace std;
 using namespace srt::sync;
 
+#if ENABLE_HEAVY_LOGGING
+static void PrintEpollEvent(ostream& os, int events);
+#endif
+
 namespace srt_logging
 {
-extern Logger mglog;
+    extern Logger dlog, mglog;
 }
 
 using namespace srt_logging;
@@ -85,7 +90,6 @@ m_iIDSeed(0)
 
 CEPoll::~CEPoll()
 {
-   releaseMutex(m_EPollLock);
 }
 
 int CEPoll::create()
@@ -143,11 +147,11 @@ int CEPoll::add_ssock(const int eid, const SYSSOCKET& s, const int* events)
    else
    {
       ev.events = 0;
-      if (*events & UDT_EPOLL_IN)
+      if (*events & SRT_EPOLL_IN)
          ev.events |= EPOLLIN;
-      if (*events & UDT_EPOLL_OUT)
+      if (*events & SRT_EPOLL_OUT)
          ev.events |= EPOLLOUT;
-      if (*events & UDT_EPOLL_ERR)
+      if (*events & SRT_EPOLL_ERR)
          ev.events |= EPOLLERR;
    }
 
@@ -165,11 +169,11 @@ int CEPoll::add_ssock(const int eid, const SYSSOCKET& s, const int* events)
    }
    else
    {
-      if (*events & UDT_EPOLL_IN)
+      if (*events & SRT_EPOLL_IN)
       {
          EV_SET(&ke[num++], s, EVFILT_READ, EV_ADD, 0, 0, NULL);
       }
-      if (*events & UDT_EPOLL_OUT)
+      if (*events & SRT_EPOLL_OUT)
       {
          EV_SET(&ke[num++], s, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
       }
@@ -303,11 +307,11 @@ int CEPoll::update_ssock(const int eid, const SYSSOCKET& s, const int* events)
    else
    {
       ev.events = 0;
-      if (*events & UDT_EPOLL_IN)
+      if (*events & SRT_EPOLL_IN)
          ev.events |= EPOLLIN;
-      if (*events & UDT_EPOLL_OUT)
+      if (*events & SRT_EPOLL_OUT)
          ev.events |= EPOLLOUT;
-      if (*events & UDT_EPOLL_ERR)
+      if (*events & SRT_EPOLL_ERR)
          ev.events |= EPOLLERR;
    }
 
@@ -333,11 +337,11 @@ int CEPoll::update_ssock(const int eid, const SYSSOCKET& s, const int* events)
    }
    else
    {
-      if (*events & UDT_EPOLL_IN)
+      if (*events & SRT_EPOLL_IN)
       {
          EV_SET(&ke[num++], s, EVFILT_READ, EV_ADD, 0, 0, NULL);
       }
-      if (*events & UDT_EPOLL_OUT)
+      if (*events & SRT_EPOLL_OUT)
       {
          EV_SET(&ke[num++], s, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
       }
@@ -492,13 +496,13 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
             {
                 ++it_next;
                 IF_HEAVY_LOGGING(++total_noticed);
-                if (readfds && ((it->events & UDT_EPOLL_IN) || (it->events & UDT_EPOLL_ERR)))
+                if (readfds && ((it->events & SRT_EPOLL_IN) || (it->events & SRT_EPOLL_ERR)))
                 {
                     if (readfds->insert(it->fd).second)
                         ++total;
                 }
 
-                if (writefds && ((it->events & UDT_EPOLL_OUT) || (it->events & UDT_EPOLL_ERR)))
+                if (writefds && ((it->events & SRT_EPOLL_OUT) || (it->events & SRT_EPOLL_ERR)))
                 {
                     if (writefds->insert(it->fd).second)
                         ++total;
@@ -621,7 +625,7 @@ int CEPoll::wait(const int eid, set<SRTSOCKET>* readfds, set<SRTSOCKET>* writefd
 
         if ((msTimeOut >= 0) && (count_microseconds(srt::sync::steady_clock::now() - entertime) >= msTimeOut * int64_t(1000)))
         {
-            HLOGP(mglog.Debug, "... not waiting longer - timeout");
+            HLOGC(mglog.Debug, log << "EID:" << eid << ": TIMEOUT.");
             throw CUDTException(MJ_AGAIN, MN_XMTIMEOUT, 0);
         }
 
@@ -664,6 +668,7 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
         map<int, CEPollDesc>::iterator p = m_mPolls.find(*i);
         if (p == m_mPolls.end())
         {
+            HLOGC(dlog.Note, log << "epoll/update: EID " << *i << " was deleted in the meantime");
             // EID invalid, though still present in the socket's subscriber list
             // (dangling in the socket). Postpone to fix the subscruption and continue.
             lost.push_back(*i);
@@ -710,3 +715,52 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
 
     return 0;
 }
+
+// Debug use only.
+#if ENABLE_HEAVY_LOGGING
+static void PrintEpollEvent(ostream& os, int events)
+{
+    static pair<int, string> namemap [] = {
+        make_pair(SRT_EPOLL_IN, "[R]"),
+        make_pair(SRT_EPOLL_OUT, "[W]"),
+        make_pair(SRT_EPOLL_ERR, "[E]")
+    };
+
+    int N = Size(namemap);
+
+    for (int i = 0; i < N; ++i)
+    {
+        if (events & namemap[i].first)
+            os << namemap[i].second;
+    }
+}
+
+string DisplayEpollResults(const std::map<SRTSOCKET, int>& sockset)
+{
+    typedef map<SRTSOCKET, int> fmap_t;
+    ostringstream os;
+    for (fmap_t::const_iterator i = sockset.begin(); i != sockset.end(); ++i)
+    {
+        os << "@" << i->first << ":";
+        PrintEpollEvent(os, i->second);
+        os << " ";
+    }
+
+    return os.str();
+}
+
+string CEPollDesc::DisplayEpollWatch()
+{
+    ostringstream os;
+    for (ewatch_t::const_iterator i = m_USockWatchState.begin(); i != m_USockWatchState.end(); ++i)
+    {
+        os << "@" << i->first << ":";
+        PrintEpollEvent(os, i->second.watch);
+        os << " ";
+    }
+
+    return os.str();
+}
+
+#endif
+
