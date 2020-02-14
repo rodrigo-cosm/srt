@@ -59,8 +59,10 @@ modified by
 #include <iostream>
 #include <iomanip>
 #include "srt.h"
+#include "udt.h"
 #include "md5.h"
 #include "common.h"
+#include "netinet_any.h"
 #include "logging.h"
 #include "threadname.h"
 
@@ -70,16 +72,13 @@ using namespace std;
 using namespace srt::sync;
 
 
-pthread_mutex_t CTimer::m_EventLock = PTHREAD_MUTEX_INITIALIZER;
+Mutex CTimer::m_EventLock;
 pthread_cond_t CTimer::m_EventCond = PTHREAD_COND_INITIALIZER;
 
-CTimer::CTimer():
-m_tsSchedTime(),
-m_TickCond(),
-m_TickLock()
+CTimer::CTimer()
+    : m_tsSchedTime()
+    , m_TickCond()
 {
-    pthread_mutex_init(&m_TickLock, NULL);
-
 #if ENABLE_MONOTONIC_CLOCK
     pthread_condattr_t  CondAttribs;
     pthread_condattr_init(&CondAttribs);
@@ -92,16 +91,15 @@ m_TickLock()
 
 CTimer::~CTimer()
 {
-    pthread_mutex_destroy(&m_TickLock);
     pthread_cond_destroy(&m_TickCond);
 }
 
-void CTimer::sleepto(const srt::sync::steady_clock::time_point &nexttime)
+void CTimer::sleepto(const srt::sync::steady_clock::time_point& nexttime)
 {
-   // Use class member such that the method can be interrupted by others
-   m_tsSchedTime = nexttime;
+    // Use class member such that the method can be interrupted by others
+    m_tsSchedTime = nexttime;
 
-   steady_clock::time_point t = steady_clock::now();
+    steady_clock::time_point t = steady_clock::now();
 
 #if USE_BUSY_WAITING
 #if defined(_WIN32)
@@ -139,9 +137,9 @@ void CTimer::sleepto(const srt::sync::steady_clock::time_point &nexttime)
 #endif // ENABLE_MONOTONIC_CLOCK
 
         THREAD_PAUSED();
-        pthread_mutex_lock(&m_TickLock);
-        pthread_cond_timedwait(&m_TickCond, &m_TickLock, &timeout);
-        pthread_mutex_unlock(&m_TickLock);
+        enterCS(m_TickLock);
+        pthread_cond_timedwait(&m_TickCond, &m_TickLock.ref(), &timeout);
+        leaveCS(m_TickLock);
         THREAD_RESUMED();
 
         t = steady_clock::now();
@@ -164,7 +162,7 @@ void CTimer::sleepto(const srt::sync::steady_clock::time_point &nexttime)
         __nop();
 #endif
 
-       t = steady_clock::now();
+        t = steady_clock::now();
     }
 #endif // USE_BUSY_WAITING
 }
@@ -202,20 +200,11 @@ CTimer::EWait CTimer::waitForEvent()
         timeout.tv_sec = now.tv_sec + 1;
         timeout.tv_nsec = (now.tv_usec + 10000 - 1000000) * 1000;
     }
-    pthread_mutex_lock(&m_EventLock);
-    int reason = pthread_cond_timedwait(&m_EventCond, &m_EventLock, &timeout);
-    pthread_mutex_unlock(&m_EventLock);
+    enterCS(m_EventLock);
+    int reason = pthread_cond_timedwait(&m_EventCond, &m_EventLock.ref(), &timeout);
+    leaveCS(m_EventLock);
 
     return reason == ETIMEDOUT ? WT_TIMEOUT : reason == 0 ? WT_EVENT : WT_ERROR;
-}
-
-void CTimer::sleep()
-{
-   #ifndef _WIN32
-      usleep(10);
-   #else
-      Sleep(1);
-   #endif
 }
 
 CUDTException::CUDTException(CodeMajor major, CodeMinor minor, int err):
@@ -229,6 +218,11 @@ m_iMinor(minor)
 }
 
 const char* CUDTException::getErrorMessage() const ATR_NOTHROW
+{
+    return getErrorString().c_str();
+}
+
+const string& CUDTException::getErrorString() const
 {
    // translate "Major:Minor" code into text message.
 
@@ -434,7 +428,7 @@ const char* CUDTException::getErrorMessage() const ATR_NOTHROW
       m_strMsg += ": " + SysStrError(m_iErrno);
    }
 
-   return m_strMsg.c_str();
+   return m_strMsg;
 }
 
 #define UDT_XCODE(mj, mn) (int(mj)*1000)+int(mn)
@@ -488,33 +482,34 @@ bool CIPAddress::ipcmp(const sockaddr* addr1, const sockaddr* addr2, int ver)
    return false;
 }
 
-void CIPAddress::ntop(const sockaddr* addr, uint32_t ip[4], int ver)
+void CIPAddress::ntop(const sockaddr_any& addr, uint32_t ip[4])
 {
-   if (AF_INET == ver)
-   {
-      sockaddr_in* a = (sockaddr_in*)addr;
-      ip[0] = a->sin_addr.s_addr;
-   }
-   else
-   {
-      sockaddr_in6* a = (sockaddr_in6*)addr;
+    if (addr.family() == AF_INET)
+    {
+        ip[0] = addr.sin.sin_addr.s_addr;
+    }
+    else
+    {
+      const sockaddr_in6* a = &addr.sin6;
       ip[3] = (a->sin6_addr.s6_addr[15] << 24) + (a->sin6_addr.s6_addr[14] << 16) + (a->sin6_addr.s6_addr[13] << 8) + a->sin6_addr.s6_addr[12];
       ip[2] = (a->sin6_addr.s6_addr[11] << 24) + (a->sin6_addr.s6_addr[10] << 16) + (a->sin6_addr.s6_addr[9] << 8) + a->sin6_addr.s6_addr[8];
       ip[1] = (a->sin6_addr.s6_addr[7] << 24) + (a->sin6_addr.s6_addr[6] << 16) + (a->sin6_addr.s6_addr[5] << 8) + a->sin6_addr.s6_addr[4];
       ip[0] = (a->sin6_addr.s6_addr[3] << 24) + (a->sin6_addr.s6_addr[2] << 16) + (a->sin6_addr.s6_addr[1] << 8) + a->sin6_addr.s6_addr[0];
-   }
+    }
 }
 
-void CIPAddress::pton(sockaddr* addr, const uint32_t ip[4], int ver)
+// XXX This has void return and the first argument is passed by reference.
+// Consider simply returning sockaddr_any by value.
+void CIPAddress::pton(sockaddr_any& w_addr, const uint32_t ip[4], int ver)
 {
    if (AF_INET == ver)
    {
-      sockaddr_in* a = (sockaddr_in*)addr;
+      sockaddr_in* a = (&w_addr.sin);
       a->sin_addr.s_addr = ip[0];
    }
    else
    {
-      sockaddr_in6* a = (sockaddr_in6*)addr;
+      sockaddr_in6* a = (&w_addr.sin6);
       for (int i = 0; i < 4; ++ i)
       {
          a->sin6_addr.s6_addr[i * 4] = ip[i] & 0xFF;
@@ -697,22 +692,34 @@ const char* srt_rejectreason_str(SRT_REJECT_REASON rid)
 namespace srt_logging
 {
 
-std::string FormatTime(uint64_t time)
+
+std::string SockStatusStr(SRT_SOCKSTATUS s)
 {
-    using namespace std;
+    if (int(s) < int(SRTS_INIT) || int(s) > int(SRTS_NONEXIST))
+        return "???";
 
-    time_t sec = time/1000000;
-    time_t usec = time%1000000;
+    static struct AutoMap
+    {
+        // Values start from 1, so do -1 to avoid empty cell
+        std::string names[int(SRTS_NONEXIST)-1+1];
 
-    time_t tt = sec;
-    struct tm tm = SysLocalTime(tt);
+        AutoMap()
+        {
+#define SINI(statename) names[SRTS_##statename-1] = #statename
+            SINI(INIT);
+            SINI(OPENED);
+            SINI(LISTENING);
+            SINI(CONNECTING);
+            SINI(CONNECTED);
+            SINI(BROKEN);
+            SINI(CLOSING);
+            SINI(CLOSED);
+            SINI(NONEXIST);
+#undef SINI
+        }
+    } names;
 
-    char tmp_buf[512];
-    strftime(tmp_buf, 512, "%X.", &tm);
-
-    ostringstream out;
-    out << tmp_buf << setfill('0') << setw(6) << usec;
-    return out.str();
+    return names.names[int(s)-1];
 }
 
 LogDispatcher::Proxy::Proxy(LogDispatcher& guy) : that(guy), that_enabled(that.CheckEnabled())

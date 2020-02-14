@@ -34,11 +34,22 @@ struct sockaddr_any
         sockaddr sa;
     };
     socklen_t len;
+    static size_t storage_size()
+    {
+        typedef union
+        {
+            sockaddr_in sin;
+            sockaddr_in6 sin6;
+            sockaddr sa;
+        } ucopy;
+        return sizeof (ucopy);
+    }
+
 
     void reset()
     {
         // sin6 is the largest field
-        memset(&sin6, 0, sizeof sin6);
+        memset((&sin6), 0, sizeof sin6);
         len = 0;
     }
 
@@ -80,12 +91,12 @@ struct sockaddr_any
         // all data required for particular family.
         if (source->sa_family == AF_INET)
         {
-            memcpy(&sin, source, sizeof sin);
+            memcpy((&sin), source, sizeof sin);
             len = sizeof sin;
         }
         else if (source->sa_family == AF_INET6)
         {
-            memcpy(&sin6, source, sizeof sin6);
+            memcpy((&sin6), source, sizeof sin6);
             len = sizeof sin6;
         }
         else
@@ -99,17 +110,17 @@ struct sockaddr_any
     void set(const sockaddr* source, socklen_t namelen)
     {
         // It's not safe to copy it directly, so check.
-        if (source->sa_family == AF_INET && namelen >= sizeof sin)
+        if (source->sa_family == AF_INET && namelen >= socklen_t(sizeof sin))
         {
-            memcpy(&sin, source, sizeof sin);
+            memcpy((&sin), source, sizeof sin);
             len = sizeof sin;
         }
-        else if (source->sa_family == AF_INET6 && namelen >= sizeof sin6)
+        else if (source->sa_family == AF_INET6 && namelen >= socklen_t(sizeof sin6))
         {
             // Note: this isn't too safe, may crash for stupid values
             // of source->sa_family or any other data
             // in the source structure, so make sure it's correct first.
-            memcpy(&sin6, source, sizeof sin6);
+            memcpy((&sin6), source, sizeof sin6);
             len = sizeof sin6;
         }
         else
@@ -198,11 +209,6 @@ struct sockaddr_any
 
     sockaddr* get() { return &sa; }
     const sockaddr* get() const { return &sa; }
-    sockaddr* operator&() { return &sa; }
-    const sockaddr* operator&() const { return &sa; }
-
-    operator sockaddr&() { return sa; }
-    operator const sockaddr&() const { return sa; }
 
     template <int> struct TypeMap;
 
@@ -274,7 +280,7 @@ struct sockaddr_any
         if (sa.sa_family == AF_INET)
             return sin.sin_addr.s_addr == INADDR_ANY;
 
-        if (sa.sa_family == AF_INET)
+        if (sa.sa_family == AF_INET6)
             return memcmp(&sin6.sin6_addr, &in6addr_any, sizeof in6addr_any) == 0;
 
         return false;

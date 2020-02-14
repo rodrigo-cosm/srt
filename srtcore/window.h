@@ -155,10 +155,9 @@ public:
 
    ~CPktTimeWindow()
    {
-       srt::sync::releaseMutex(m_lockPktWindow);
-       srt::sync::releaseMutex(m_lockProbeWindow);
    }
 
+public:
    /// read the minimum packet sending interval.
    /// @return minimum packet sending interval (microseconds).
 
@@ -167,19 +166,19 @@ public:
    /// Calculate the packets arrival speed.
    /// @return Packet arrival speed (packets per second).
 
-   int getPktRcvSpeed(ref_t<int> bytesps) const
+   int getPktRcvSpeed(int& w_bytesps) const
    {
        // Lock access to the packet Window
        srt::sync::CGuard cg(m_lockPktWindow);
 
        int pktReplica[ASIZE];          // packet information window (inter-packet time)
-       return getPktRcvSpeed_in(m_aPktWindow, pktReplica, m_aBytesWindow, ASIZE, *bytesps);
+       return getPktRcvSpeed_in(m_aPktWindow, pktReplica, m_aBytesWindow, ASIZE, (w_bytesps));
    }
 
    int getPktRcvSpeed() const
    {
        int bytesps;
-       return getPktRcvSpeed(Ref(bytesps));
+       return getPktRcvSpeed((bytesps));
    }
 
    /// Estimate the bandwidth.
@@ -326,11 +325,11 @@ private:
    int m_aPktWindow[ASIZE];          // packet information window (inter-packet time)
    int m_aBytesWindow[ASIZE];        // 
    int m_iPktWindowPtr;         // position pointer of the packet info. window.
-   mutable srt::sync::CMutex m_lockPktWindow; // used to synchronize access to the packet window
+   mutable srt::sync::Mutex m_lockPktWindow; // used to synchronize access to the packet window
 
    int m_aProbeWindow[PSIZE];        // record inter-packet time for probing packet pairs
    int m_iProbeWindowPtr;       // position pointer to the probing window
-   mutable srt::sync::CMutex m_lockProbeWindow; // used to synchronize access to the probe window
+   mutable srt::sync::Mutex m_lockProbeWindow; // used to synchronize access to the probe window
 
    int m_iLastSentTime;         // last packet sending time
    int m_iMinPktSndInt;         // Minimum packet sending interval
