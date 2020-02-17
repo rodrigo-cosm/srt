@@ -9918,7 +9918,7 @@ void CUDTGroup::updateLatestRcv(CUDTGroup::gli_t current)
         targets.push_back(gi->ps->m_pUDT);
     }
 
-    lg.forceUnlock();
+    lg.unlock();
 
     // Do this on the unlocked group because this
     // operation will need receiver lock, so it might
@@ -13742,7 +13742,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
             // of Live mode, equal to 'len'.
 
             // Lift the group lock for a while, to avoid possible deadlocks.
-            InvertedGuard ug (m_GroupLock);
+            InvertedLock ug (m_GroupLock);
             stat = u.sendmsg2(buf, len, (w_mc));
         }
         catch (CUDTException& e)
@@ -13985,7 +13985,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
                     HLOGC(dlog.Debug, log << "grp/sendBackup: ... trying @" << d->id
                             << " - sending the VERY FIRST message");
-                    InvertedGuard ug (m_GroupLock);
+                    InvertedLock ug (m_GroupLock);
                     stat = d->ps->core().sendmsg2(buf, len, (w_mc));
                     if (stat != -1)
                     {
@@ -14100,7 +14100,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
         else
         {
             {
-                InvertedGuard ug (m_GroupLock);
+                InvertedLock ug (m_GroupLock);
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
@@ -14154,7 +14154,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
     if (!broken_sockets.empty()) // Prevent unlock-lock cycle if no broken sockets found
     {
         // Lift the group lock for a while, to avoid possible deadlocks.
-        InvertedGuard ug (m_GroupLock);
+        InvertedLock ug (m_GroupLock);
 
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
@@ -14225,7 +14225,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
 RetryWaitBlocked:
         {
-            InvertedGuard ug (m_GroupLock);
+            InvertedLock ug (m_GroupLock);
             HLOGC(dlog.Debug, log << "grp/sendBackup: swait call to get at least one link alive up to "
                     << m_iSndTimeOut << "us");
             brdy = m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, m_iSndTimeOut);
@@ -14555,7 +14555,7 @@ int CUDTGroup::sendBackupRexmit(CUDT& core, SRT_MSGCTRL& w_mc)
         {
             // XXX Not sure if the protection is right.
             // Analyze this and perform appropriate tests here!
-            InvertedGuard ug (m_GroupLock);
+            InvertedLock ug (m_GroupLock);
 
             // NOTE: an exception from here will interrupt the loop
             // and will be caught in the upper level.
