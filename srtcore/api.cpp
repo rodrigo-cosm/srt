@@ -101,9 +101,7 @@ CUDTSocket::~CUDTSocket()
    delete m_pQueuedSockets;
    delete m_pAcceptSockets;
 
-   releaseMutex(m_AcceptLock);
    releaseCond(m_AcceptCond);
-   releaseMutex(m_ControlLock);
 }
 
 
@@ -174,7 +172,6 @@ m_mMultiplexer(),
 m_MultiplexerLock(),
 m_pCache(NULL),
 m_bClosing(false),
-m_GCStopLock(),
 m_GCStopCond(),
 m_InitLock(),
 m_iInstanceCount(0),
@@ -188,7 +185,6 @@ m_ClosedSockets()
    // a static member s_ullCPUFrequency with dynamic initialization.
    // The order of initialization is not guaranteed.
    timeval t;
-
    gettimeofday(&t, 0);
    srand((unsigned int)t.tv_usec);
    
@@ -200,7 +196,6 @@ m_ClosedSockets()
    createMutex(m_GlobControlLock, "GlobControl");
    createMutex(m_IDLock, "ID");
    createMutex(m_InitLock, "Init");
-
    pthread_key_create(&m_TLSError, TLSDestroy);
 
    m_pCache = new CCache<CInfoBlock>;
@@ -215,10 +210,6 @@ CUDTUnited::~CUDTUnited()
     {
         cleanup();
     }
-
-    releaseMutex(m_GlobControlLock);
-    releaseMutex(m_IDLock);
-    releaseMutex(m_InitLock);
 
     delete (CUDTException*)pthread_getspecific(m_TLSError);
     pthread_key_delete(m_TLSError);
@@ -244,14 +235,14 @@ int CUDTUnited::startup()
       return 0;
 
    // Global initialization code
-   #ifdef _WIN32
-      WORD wVersionRequested;
-      WSADATA wsaData;
-      wVersionRequested = MAKEWORD(2, 2);
+#ifdef _WIN32
+   WORD wVersionRequested;
+   WSADATA wsaData;
+   wVersionRequested = MAKEWORD(2, 2);
 
-      if (0 != WSAStartup(wVersionRequested, &wsaData))
-         throw CUDTException(MJ_SETUP, MN_NONE,  WSAGetLastError());
-   #endif
+   if (0 != WSAStartup(wVersionRequested, &wsaData))
+      throw CUDTException(MJ_SETUP, MN_NONE,  WSAGetLastError());
+#endif
 
    PacketFilter::globalInit();
 
@@ -280,8 +271,6 @@ int CUDTUnited::cleanup()
    if (--m_iInstanceCount > 0)
       return 0;
 
-   //destroy CTimer::EventLock
-
    if (!m_bGCStatus)
       return 0;
 
@@ -302,16 +291,15 @@ int CUDTUnited::cleanup()
    // tolerated with simply exit the application without cleanup,
    // counting on that the system will take care of it anyway.
 #ifndef _WIN32
-   releaseMutex(m_GCStopLock);
    releaseCond(m_GCStopCond);
 #endif
 
    m_bGCStatus = false;
 
    // Global destruction code
-   #ifdef _WIN32
-      WSACleanup();
-   #endif
+#ifdef _WIN32
+   WSACleanup();
+#endif
 
    return 0;
 }
@@ -441,13 +429,14 @@ SRTSOCKET CUDTUnited::newSocket(CUDTSocket** pps)
    ns->m_pUDT->m_SocketID = ns->m_SocketID;
    ns->m_pUDT->m_pCache = m_pCache;
 
-   // protect the m_Sockets structure.
-   CGuard cs(m_GlobControlLock);
    try
    {
       HLOGC(mglog.Debug, log << CONID(ns->m_SocketID)
          << "newSocket: mapping socket "
          << ns->m_SocketID);
+
+      // protect the m_Sockets structure.
+      CGuard cs(m_GlobControlLock);
       m_Sockets[ns->m_SocketID] = ns;
    }
    catch (...)
@@ -478,11 +467,12 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    CUDTSocket* ls = locateSocket(listen);
    if (!ls)
    {
-      LOGC(mglog.Error, log << "IPE: newConnection by listener socket id=" << listen << " which DOES NOT EXIST.");
-      return -1;
+       LOGC(mglog.Error, log << "IPE: newConnection by listener socket id=" << listen << " which DOES NOT EXIST.");
+       return -1;
    }
 
-    HLOGC(mglog.Debug, log << "newConnection: creating new socket after listener @" << listen << " contacted with backlog=" << ls->m_uiBackLog);
+    HLOGC(mglog.Debug, log << "newConnection: creating new socket after listener @"
+            << listen << " contacted with backlog=" << ls->m_uiBackLog);
 
    // if this connection has already been processed
    if ((ns = locatePeer(peer, w_hs.m_iID, w_hs.m_iISN)) != NULL)
@@ -500,7 +490,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
       else
       {
          // connection already exist, this is a repeated connection request
-        // respond with existing HS information
+         // respond with existing HS information
          HLOGC(mglog.Debug, log
                << "newConnection: located a WORKING peer @"
                << w_hs.m_iID << " - ADAPTING.");
@@ -518,7 +508,8 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    }
    else
    {
-       HLOGC(mglog.Debug, log << "newConnection: NOT located any peer @" << w_hs.m_iID << " - resuming with initial connection.");
+       HLOGC(mglog.Debug, log << "newConnection: NOT located any peer @"
+               << w_hs.m_iID << " - resuming with initial connection.");
    }
 
    // exceeding backlog, refuse the connection request
@@ -628,7 +619,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    CIPAddress::pton((ns->m_SelfAddr), ns->m_pUDT->m_piSelfIP, ns->m_SelfAddr.family());
 
    // protect the m_Sockets structure.
-   CGuard::enterCS(m_GlobControlLock);
+   enterCS(m_GlobControlLock);
    try
    {
        HLOGF(mglog.Debug, 
@@ -641,7 +632,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
       LOGC(mglog.Error, log << "newConnection: error when mapping peer!");
       error = 2;
    }
-   CGuard::leaveCS(m_GlobControlLock);
+   leaveCS(m_GlobControlLock);
 
     if (ns->m_IncludedGroup)
     {
@@ -660,7 +651,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     }
 
 
-   CGuard::enterCS(ls->m_AcceptLock);
+   enterCS(ls->m_AcceptLock);
    try
    {
       ls->m_pQueuedSockets->insert(ns->m_SocketID);
@@ -670,7 +661,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
       LOGC(mglog.Error, log << "newConnection: error when queuing socket!");
       error = 3;
    }
-   CGuard::leaveCS(ls->m_AcceptLock);
+   leaveCS(ls->m_AcceptLock);
 
    HLOGC(mglog.Debug, log << "ACCEPT: new socket @" << ns->m_SocketID << " submitted for acceptance");
    // acknowledge users waiting for new connections on the listening socket
@@ -691,7 +682,6 @@ ERR_ROLLBACK:
        };
        LOGC(mglog.Error, log << CONID(ns->m_SocketID) << "newConnection: connection rejected due to: " << why[error]);
 #endif
-
       SRTSOCKET id = ns->m_SocketID;
       ns->makeClosed();
 
@@ -886,8 +876,8 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* pw_addr, int* pw_
    // !!only one conection can be set up each time!!
    while (!accepted)
    {
-       CGuard cg(ls->m_AcceptLock);
-       CSync  axcond(ls->m_AcceptCond, cg);
+       CGuard accept_lock(ls->m_AcceptLock);
+       CSync accept_sync(ls->m_AcceptCond, accept_lock);
 
        if ((ls->m_Status != SRTS_LISTENING) || ls->m_pUDT->m_bBroken)
        {
@@ -926,7 +916,7 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* pw_addr, int* pw_
        }
 
        if (!accepted && (ls->m_Status == SRTS_LISTENING))
-           axcond.wait();
+           accept_sync.wait();
 
        if (ls->m_pQueuedSockets->empty())
            m_EPoll.update_events(listen, ls->m_pUDT->m_sPollID, SRT_EPOLL_IN, false);
@@ -1246,7 +1236,7 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
     {
         // InvertedGuard unlocks in the constructor, then locks in the
         // destructor, no matter if an exception has fired.
-        InvertedGuard l_unlocker (s->m_ControlLock, s->m_pUDT->m_bSynRecving);
+       InvertedLock l_unlocker( s->m_pUDT->m_bSynRecving ? &s->m_ControlLock : 0 );
         s->m_pUDT->startConnect(target_addr, forced_isn);
     }
     catch (CUDTException& e) // Interceptor, just to change the state.
@@ -1327,7 +1317,7 @@ int CUDTUnited::close(CUDTSocket* s)
        HLOGC(mglog.Debug, log << "@" << u << "U::close done. GLOBAL CLOSE: " << s->m_pUDT->CONID() << ". Acquiring GLOBAL control lock");
        CGuard manager_cg(m_GlobControlLock);
 
-       // since "s" is located before m_ControlLock, locate it again in case
+       // since "s" is located before m_GlobControlLock, locate it again in case
        // it became invalid
        sockets_t::iterator i = m_Sockets.find(u);
        if ((i == m_Sockets.end()) || (i->second->m_Status == SRTS_CLOSED))
@@ -1907,10 +1897,10 @@ void CUDTUnited::checkBrokenSockets()
                continue;
          }
 
-         CGuard::enterCS(ls->second->m_AcceptLock);
+         enterCS(ls->second->m_AcceptLock);
          ls->second->m_pQueuedSockets->erase(s->m_SocketID);
          ls->second->m_pAcceptSockets->erase(s->m_SocketID);
-         CGuard::leaveCS(ls->second->m_AcceptLock);
+         leaveCS(ls->second->m_AcceptLock);
       }
    }
 
@@ -1959,34 +1949,36 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
    if (i == m_ClosedSockets.end())
       return;
 
-   CUDTSocket* s = i->second;
+   CUDTSocket* const s = i->second;
 
    // decrease multiplexer reference count, and remove it if necessary
    const int mid = s->m_iMuxID;
 
    if (s->m_pQueuedSockets)
    {
-       CGuard cg(s->m_AcceptLock);
+      CGuard cg(s->m_AcceptLock);
 
-       // if it is a listener, close all un-accepted sockets in its queue
-       // and remove them later
-       for (set<SRTSOCKET>::iterator q = s->m_pQueuedSockets->begin();
-               q != s->m_pQueuedSockets->end(); ++ q)
-       {
-           sockets_t::iterator si = m_Sockets.find(*q);
-           if (si == m_Sockets.end())
-           {
+      // if it is a listener, close all un-accepted sockets in its queue
+      // and remove them later
+      for (set<SRTSOCKET>::iterator q = s->m_pQueuedSockets->begin();
+         q != s->m_pQueuedSockets->end(); ++ q)
+      {
+         sockets_t::iterator si = m_Sockets.find(*q);
+         if (si == m_Sockets.end())
+         {
                // gone in the meantime
-               LOGC(mglog.Error, log << "removeSocket: IPE? socket %" << u << " being queued for listener socket %" << s->m_SocketID << " is GONE in the meantime ???");
-               continue;
-           }
+            LOGC(mglog.Error, log << "removeSocket: IPE? socket @" << u
+                    << " being queued for listener socket @" << s->m_SocketID
+                    << " is GONE in the meantime ???");
+            continue;
+         }
 
-           CUDTSocket* as = si->second;
+         CUDTSocket* as = si->second;
 
-           as->makeClosed();
-           m_ClosedSockets[*q] = as;
-           m_Sockets.erase(*q);
-       }
+         as->makeClosed();
+         m_ClosedSockets[*q] = as;
+         m_Sockets.erase(*q);
+      }
 
    }
 
@@ -2276,7 +2268,7 @@ void* CUDTUnited::garbageCollect(void* p)
 
    // remove all sockets and multiplexers
    HLOGC(mglog.Debug, log << "GC: GLOBAL EXIT - releasing all pending sockets. Acquring control lock...");
-   CGuard::enterCS(self->m_GlobControlLock);
+   enterCS(self->m_GlobControlLock);
    for (sockets_t::iterator i = self->m_Sockets.begin();
       i != self->m_Sockets.end(); ++ i)
    {
@@ -2293,10 +2285,10 @@ void* CUDTUnited::garbageCollect(void* p)
             continue;
       }
 
-      CGuard::enterCS(ls->second->m_AcceptLock);
+      enterCS(ls->second->m_AcceptLock);
       ls->second->m_pQueuedSockets->erase(i->second->m_SocketID);
       ls->second->m_pAcceptSockets->erase(i->second->m_SocketID);
-      CGuard::leaveCS(ls->second->m_AcceptLock);
+      leaveCS(ls->second->m_AcceptLock);
    }
    self->m_Sockets.clear();
 
@@ -2305,21 +2297,21 @@ void* CUDTUnited::garbageCollect(void* p)
    {
       j->second->m_tsClosureTimeStamp = steady_clock::time_point();
    }
-   CGuard::leaveCS(self->m_GlobControlLock);
+   leaveCS(self->m_GlobControlLock);
 
    HLOGC(mglog.Debug, log << "GC: GLOBAL EXIT - releasing all CLOSED sockets.");
    while (true)
    {
       self->checkBrokenSockets();
 
-      CGuard::enterCS(self->m_GlobControlLock);
+      enterCS(self->m_GlobControlLock);
       bool empty = self->m_ClosedSockets.empty();
-      CGuard::leaveCS(self->m_GlobControlLock);
+      leaveCS(self->m_GlobControlLock);
 
       if (empty)
          break;
 
-      CTimer::sleep();
+      SleepFor(milliseconds_from(1));
    }
 
    THREAD_EXIT();
