@@ -112,7 +112,6 @@ CSndBuffer::CSndBuffer(int size, int mss)
    }
 
    m_pFirstBlock = m_pCurrBlock = m_pLastBlock = m_pBlock;
-
    createMutex(m_BufLock, "Buf");
 }
 
@@ -134,8 +133,6 @@ CSndBuffer::~CSndBuffer()
       delete [] temp->m_pcData;
       delete temp;
    }
-
-   releaseMutex(m_BufLock);
 }
 
 void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
@@ -226,7 +223,7 @@ void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
     }
     m_pLastBlock = s;
 
-    CGuard::enterCS(m_BufLock);
+    enterCS(m_BufLock);
     m_iCount += size;
 
     m_iBytesCount += len;
@@ -238,7 +235,7 @@ void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
     updAvgBufSize(time);
 #endif
 
-    CGuard::leaveCS(m_BufLock);
+    leaveCS(m_BufLock);
 
 
     // MSGNO_SEQ::mask has a form: 00000011111111...
@@ -345,11 +342,11 @@ int CSndBuffer::addBufferFromFile(fstream& ifs, int len)
    }
    m_pLastBlock = s;
 
-   CGuard::enterCS(m_BufLock);
+   enterCS(m_BufLock);
    m_iCount += size;
    m_iBytesCount += total;
 
-   CGuard::leaveCS(m_BufLock);
+   leaveCS(m_BufLock);
 
    m_iNextMsgNo ++;
    if (m_iNextMsgNo == int32_t(MSGNO_SEQ::mask))
@@ -528,7 +525,7 @@ int CSndBuffer::getCurrBufSize() const
 
 int CSndBuffer::getAvgBufSize(int& w_bytes, int& w_tsp)
 {
-    CGuard bufferguard(m_BufLock); /* Consistency of pkts vs. w_bytes vs. spantime */
+    CGuard bufferguard(m_BufLock); /* Consistency of pkts vs. bytes vs. spantime */
 
     /* update stats in case there was no add/ack activity lately */
     updAvgBufSize(steady_clock::now());
@@ -750,7 +747,6 @@ m_iNotch(0)
    memset(m_TsbPdDriftHisto100us, 0, sizeof(m_TsbPdDriftHisto100us));
    memset(m_TsbPdDriftHisto1ms, 0, sizeof(m_TsbPdDriftHisto1ms));
 #endif
-
    createMutex(m_BytesCountLock, "BytesCount");
 }
 
@@ -765,8 +761,6 @@ CRcvBuffer::~CRcvBuffer()
    }
 
    delete [] m_pUnit;
-
-   releaseMutex(m_BytesCountLock);
 }
 
 void CRcvBuffer::countBytes(int pkts, int bytes, bool acked)
@@ -1037,9 +1031,9 @@ bool CRcvBuffer::getRcvFirstMsg(steady_clock::time_point& w_tsbpdtime,
 
     // Below this line we have only two options:
     // - m_iMaxPos == 0, which means that no more packets are in the buffer
-    //    - returned: tsbpdtime=0, w_passack=true, w_skipseqno=-1, w_curpktseq=0, @return false
+    //    - returned: tsbpdtime=0, w_passack=true, w_skipseqno=-1, w_curpktseq=<unchanged>, @return false
     // - m_iMaxPos > 0, which means that there are packets arrived after a lost packet:
-    //    - returned: tsbpdtime=PKT.TS, w_passack=true, w_skipseqno=PKT.SEQ, ppkt=PKT, @return LOCAL(PKT.TS) <= NOW
+    //    - returned: tsbpdtime=PKT.TS, w_passack=true, w_skipseqno=PKT.SEQ, w_curpktseq=PKT, @return LOCAL(PKT.TS) <= NOW
 
     /* 
      * No acked packets ready but caller want to know next packet to wait for
@@ -1743,7 +1737,7 @@ bool CRcvBuffer::getInternalTimeBase(steady_clock::time_point& w_timebase, stead
 
 steady_clock::time_point CRcvBuffer::getPktTsbPdTime(uint32_t timestamp)
 {
-    steady_clock::time_point time_base = getTsbPdTimeBase(timestamp);
+    const steady_clock::time_point time_base = getTsbPdTimeBase(timestamp);
 
     // Display only ingredients, not the result, as the result will
     // be displayed anyway in the next logs.
@@ -1834,7 +1828,7 @@ void CRcvBuffer::printDriftOffset(int tsbPdOffset, int tsbPdDriftAvg)
 }
 #endif /* SRT_DEBUG_TSBPD_DRIFT */
 
-bool CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp_us, CMutex& mutex_to_lock,
+bool CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp_us, Mutex& mutex_to_lock,
         steady_clock::duration& w_udrift, steady_clock::time_point& w_newtimebase)
 {
     if (!m_bTsbPdMode) // Not checked unless in TSBPD mode
@@ -1859,7 +1853,7 @@ bool CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp_us, CMutex& mutex_to_
 
     const steady_clock::duration iDrift = steady_clock::now() - (getTsbPdTimeBase(timestamp_us) + microseconds_from(timestamp_us));
 
-    CGuard::enterCS(mutex_to_lock);
+    enterCS(mutex_to_lock);
 
     bool updated = m_DriftTracer.update(count_microseconds(iDrift));
 
@@ -1889,7 +1883,7 @@ bool CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp_us, CMutex& mutex_to_
         HLOGC(dlog.Debug, log << "DRIFT=" << FormatDuration(iDrift) << " TB REMAINS: " << FormatTime(m_tsTsbPdTimeBase));
     }
 
-    CGuard::leaveCS(mutex_to_lock);
+    leaveCS(mutex_to_lock);
     w_udrift = iDrift;
     w_newtimebase = m_tsTsbPdTimeBase;
     return updated;
@@ -2067,9 +2061,9 @@ void CRcvBuffer::readMsgHeavyLogging(int p)
 {
     static steady_clock::time_point prev_now;
     static steady_clock::time_point prev_srctime;
-    CPacket& pkt = m_pUnit[p]->m_Packet;
+    const CPacket& pkt = m_pUnit[p]->m_Packet;
 
-    int32_t seq = pkt.m_iSeqNo;
+    const int32_t seq = pkt.m_iSeqNo;
 
     steady_clock::time_point nowtime = steady_clock::now();
     steady_clock::time_point srctime = getPktTsbPdTime(m_pUnit[p]->m_Packet.getMsgTimeStamp());
