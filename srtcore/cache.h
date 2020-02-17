@@ -89,7 +89,6 @@ public:
    ~CCache()
    {
       clear();
-      srt::sync::releaseMutex(m_Lock);
    }
 
 public:
@@ -224,7 +223,7 @@ private:
    int m_iHashSize;
    int m_iCurrSize;
 
-   srt::sync::CMutex m_Lock;
+   srt::sync::Mutex m_Lock;
 
 private:
    CCache(const CCache&);

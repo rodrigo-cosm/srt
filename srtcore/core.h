@@ -378,7 +378,7 @@ public:
         return m_type == SRT_GTYPE_BROADCAST;
     }
 
-    pthread_mutex_t* exp_groupLock() { return &m_GroupLock; }
+    srt::sync::Mutex* exp_groupLock() { return &m_GroupLock; }
     void addEPoll(int eid);
     void removeEPoll(int eid);
     void updateReadState(SRTSOCKET sock, int32_t sequence);
@@ -433,7 +433,7 @@ private:
     void getMemberStatus(std::vector<SRT_SOCKGROUPDATA>& w_gd, SRTSOCKET wasread, int result, bool again);
 
     class CUDTUnited* m_pGlobal;
-    pthread_mutex_t m_GroupLock;
+    srt::sync::Mutex m_GroupLock;
 
     SRTSOCKET m_GroupID;
     SRTSOCKET m_PeerGroupID;
@@ -598,7 +598,7 @@ private:
     // Signal for the blocking user thread that the packet
     // is ready to deliver.
     pthread_cond_t m_RcvDataCond;
-    pthread_mutex_t m_RcvDataLock;
+    srt::sync::Mutex m_RcvDataLock;
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
     volatile int32_t m_iLastSchedMsgNo;
 public:
@@ -854,9 +854,9 @@ public: // internal API
     size_t maxPayloadSize() const { return m_iMaxSRTPayloadSize; }
     size_t OPT_PayloadSize() const { return m_zOPT_ExpPayloadSize; }
     int sndLossLength() { return m_pSndLossList->getLossLength(); }
-    duration minNAKInterval() const { return m_tdMinNakInterval; }
     int32_t ISN() const { return m_iISN; }
     int32_t peerISN() const { return m_iPeerISN; }
+    srt::sync::steady_clock::duration minNAKInterval() const { return m_tdMinNakInterval; }
     sockaddr_any peerAddr() const { return m_PeerAddr; }
 
     int minSndSize(int len = 0) const
@@ -904,12 +904,12 @@ public: // internal API
     CUDTUnited* uglobal() { return &s_UDTUnited; } // needed by tsbpdLoop
     std::set<int>& pollset() { return m_sPollID; }
 
-    SRTU_PROPERTY_RO(bool, closing, m_bClosing);
+    SRTU_PROPERTY_RO(bool, isClosing, m_bClosing);
     SRTU_PROPERTY_RO(CRcvBuffer*, rcvBuffer, m_pRcvBuffer);
     SRTU_PROPERTY_RO(bool, isTLPktDrop, m_bTLPktDrop);
     SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
-    SRTU_PROPERTY_RR(pthread_cond_t*, recvDataCond, &m_RecvDataCond);
-    SRTU_PROPERTY_RR(pthread_cond_t*, recvTsbPdCond, &m_RcvTsbPdCond);
+    SRTU_PROPERTY_RR(srt::sync::CCondition*, recvDataCond, &m_RecvDataCond);
+    SRTU_PROPERTY_RR(srt::sync::CCondition*, recvTsbPdCond, &m_RcvTsbPdCond);
 
     void ConnectSignal(ETransmissionEvent tev, EventSlot sl);
     void DisconnectSignal(ETransmissionEvent tev);
@@ -1389,7 +1389,7 @@ private: // Receiving related data
     bool m_bGroupTsbPd;                          // TSBPD should be used for GROUP RECEIVER instead.
 
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
-    srt::sync::CCondition m_RcvTsbPdCond;
+    srt::sync::CCondition m_RcvTsbPdCond;        // TSBPD signals if reading is ready
     bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
 
     CallbackHolder<srt_listen_callback_fn> m_cbAcceptHook;
@@ -1405,26 +1405,22 @@ private:
 
 
 private: // synchronization: mutexes and conditions
-    srt::sync::CMutex m_ConnectionLock;            // used to synchronize connection operation
+    srt::sync::Mutex m_ConnectionLock;           // used to synchronize connection operation
 
     srt::sync::CCondition m_SendBlockCond;              // used to block "send" call
-    srt::sync::CMutex m_SendBlockLock;             // lock associated to m_SendBlockCond
+    srt::sync::Mutex m_SendBlockLock;            // lock associated to m_SendBlockCond
 
-    srt::sync::CMutex m_RcvBufferLock;             // Protects the state of the m_pRcvBuffer
-
+    srt::sync::Mutex m_RcvBufferLock;            // Protects the state of the m_pRcvBuffer
     // Protects access to m_iSndCurrSeqNo, m_iSndLastAck
-    srt::sync::CMutex m_RecvAckLock;               // Protects the state changes while processing incomming ACK (UDT_EPOLL_OUT)
-
+    srt::sync::Mutex m_RecvAckLock;              // Protects the state changes while processing incomming ACK (SRT_EPOLL_OUT)
 
     srt::sync::CCondition m_RecvDataCond;               // used to block "recv" when there is no data
-    srt::sync::CMutex m_RecvDataLock;              // lock associated to m_RecvDataCond
+    srt::sync::Mutex m_RecvDataLock;             // lock associated to m_RecvDataCond
 
-    srt::sync::CMutex m_SendLock;                  // used to synchronize "send" call
-    srt::sync::CMutex m_RecvLock;                  // used to synchronize "recv" call
-
-    srt::sync::CMutex m_RcvLossLock;               // Protects the receiver loss list (access: CRcvQueue::worker, CUDT::tsbpd)
-
-    srt::sync::CMutex m_StatsLock;                 // used to synchronize access to trace statistics
+    srt::sync::Mutex m_SendLock;                 // used to synchronize "send" call
+    srt::sync::Mutex m_RecvLock;                 // used to synchronize "recv" call
+    srt::sync::Mutex m_RcvLossLock;              // Protects the receiver loss list (access: CRcvQueue::worker, CUDT::tsbpd)
+    srt::sync::Mutex m_StatsLock;                // used to synchronize access to trace statistics
 
     void initSynch();
     void destroySynch();
