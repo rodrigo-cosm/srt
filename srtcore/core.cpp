@@ -15514,7 +15514,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
             // >0 value that defines the size of the data that it has sent, that is, in case
             // of Live mode, equal to 'len'.
             CUDTSocket* ps = selink->ps;
-            InvertedGuard ug (m_GroupLock);
+            InvertedLock ug (m_GroupLock);
 
             HLOGC(dlog.Debug, log << "grp/sendBalancing: SENDING #" << w_mc.msgno << " through link [" << m_uBalancingRoll << "]");
 
@@ -15590,7 +15590,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         else
         {
             {
-                InvertedGuard ug (m_GroupLock);
+                InvertedLock ug (m_GroupLock);
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
@@ -15695,7 +15695,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
     if (!broken_sockets.empty()) // Prevent unlock-lock cycle if no broken sockets found
     {
         // Lift the group lock for a while, to avoid possible deadlocks.
-        InvertedGuard ug (m_GroupLock);
+        InvertedLock ug (m_GroupLock);
 
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
@@ -15879,7 +15879,7 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         CUDTSocket* ps = d->ps;
 
         // Lift the group lock for a while, to avoid possible deadlocks.
-        InvertedGuard ug (m_GroupLock);
+        InvertedLock ug (m_GroupLock);
 
         HLOGC(dlog.Debug, log << "grp/sendBalancing: SENDING #" << w_mc.msgno << " through link [" << m_uBalancingRoll << "]");
 
@@ -15925,7 +15925,7 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         else
         {
             {
-                InvertedGuard ug (m_GroupLock);
+                InvertedLock ug (m_GroupLock);
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
@@ -15979,7 +15979,7 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
     if (!broken_sockets.empty()) // Prevent unlock-lock cycle if no broken sockets found
     {
         // Lift the group lock for a while, to avoid possible deadlocks.
-        InvertedGuard ug (m_GroupLock);
+        InvertedLock ug (m_GroupLock);
 
         for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
         {
@@ -16095,7 +16095,7 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
-            InvertedGuard ug (m_GroupLock);
+            InvertedLock ug (m_GroupLock);
             HLOGC(dlog.Debug, log << "grp/sendBalancing: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
