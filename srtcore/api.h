@@ -72,20 +72,20 @@ class CUDT;
 class CUDTSocket
 {
 public:
-   CUDTSocket():
-       m_Status(SRTS_INIT),
-       m_SocketID(0),
-       m_ListenSocket(0),
-       m_PeerID(0),
-       m_IncludedGroup(),
-       m_iISN(0),
-       m_pUDT(NULL),
-       m_pQueuedSockets(NULL),
-       m_pAcceptSockets(NULL),
-       m_AcceptCond(),
-       m_AcceptLock(),
-       m_uiBackLog(0),
-       m_iMuxID(-1)
+   CUDTSocket()
+       : m_Status(SRTS_INIT)
+       , m_SocketID(0)
+       , m_ListenSocket(0)
+       , m_PeerID(0)
+       , m_IncludedGroup()
+       , m_iISN(0)
+       , m_pUDT(NULL)
+       , m_pQueuedSockets(NULL)
+       , m_pAcceptSockets(NULL)
+       , m_AcceptCond()
+       , m_AcceptLock()
+       , m_uiBackLog(0)
+       , m_iMuxID(-1)
    {
        construct();
    }
@@ -121,13 +121,13 @@ public:
    std::set<SRTSOCKET>* m_pAcceptSockets;    //< set of accept()ed connections
 
    srt::sync::CCondition m_AcceptCond;              //< used to block "accept" call
-   srt::sync::CMutex m_AcceptLock;             //< mutex associated to m_AcceptCond
+   srt::sync::Mutex m_AcceptLock;            //< mutex associated to m_AcceptCond
 
    unsigned int m_uiBackLog;                 //< maximum number of connections in queue
 
    int m_iMuxID;                             //< multiplexer ID
 
-   srt::sync::CMutex m_ControlLock;            //< lock this socket exclusively for control APIs: bind/listen/connect
+   srt::sync::Mutex m_ControlLock;           //< lock this socket exclusively for control APIs: bind/listen/connect
 
    CUDT& core() { return *m_pUDT; }
 
@@ -310,10 +310,9 @@ private:
 
    sockets_t m_Sockets;
    groups_t m_Groups;
+   srt::sync::Mutex m_GlobControlLock;               // used to synchronize UDT API
 
-   srt::sync::CMutex m_GlobControlLock;                // used to synchronize UDT API
-
-   srt::sync::CMutex m_IDLock;                         // used to synchronize ID generation
+   srt::sync::Mutex m_IDLock;                        // used to synchronize ID generation
 
    static const int32_t MAX_SOCKET_VAL = 1 << 29;    // maximum value for a regular socket
 
@@ -337,17 +336,17 @@ private:
 
 private:
    std::map<int, CMultiplexer> m_mMultiplexer;		// UDP multiplexer
-   srt::sync::CMutex m_MultiplexerLock;
+   srt::sync::Mutex            m_MultiplexerLock;
 
 private:
    CCache<CInfoBlock>* m_pCache;			// UDT network information cache
 
 private:
    volatile bool m_bClosing;
-   srt::sync::CMutex m_GCStopLock;
+   srt::sync::Mutex m_GCStopLock;
    srt::sync::CCondition m_GCStopCond;
 
-   srt::sync::CMutex m_InitLock;
+   srt::sync::Mutex m_InitLock;
    int m_iInstanceCount;				// number of startup() called by application
    bool m_bGCStatus;					// if the GC thread is working (true)
 

@@ -155,10 +155,9 @@ public:
 
    ~CPktTimeWindow()
    {
-       srt::sync::releaseMutex(m_lockPktWindow);
-       srt::sync::releaseMutex(m_lockProbeWindow);
    }
 
+public:
    /// read the minimum packet sending interval.
    /// @return minimum packet sending interval (microseconds).
 
@@ -326,11 +325,11 @@ private:
    int m_aPktWindow[ASIZE];          // packet information window (inter-packet time)
    int m_aBytesWindow[ASIZE];        // 
    int m_iPktWindowPtr;         // position pointer of the packet info. window.
-   mutable srt::sync::CMutex m_lockPktWindow; // used to synchronize access to the packet window
+   mutable srt::sync::Mutex m_lockPktWindow; // used to synchronize access to the packet window
 
    int m_aProbeWindow[PSIZE];        // record inter-packet time for probing packet pairs
    int m_iProbeWindowPtr;       // position pointer to the probing window
-   mutable srt::sync::CMutex m_lockProbeWindow; // used to synchronize access to the probe window
+   mutable srt::sync::Mutex m_lockProbeWindow; // used to synchronize access to the probe window
 
    int m_iLastSentTime;         // last packet sending time
    int m_iMinPktSndInt;         // Minimum packet sending interval
