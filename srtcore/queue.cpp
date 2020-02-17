@@ -267,7 +267,6 @@ CSndUList::CSndUList()
 CSndUList::~CSndUList()
 {
     delete[] m_pHeap;
-    releaseMutex(m_ListLock);
 }
 
 void CSndUList::update(const CUDT* u, EReschedule reschedule)
@@ -395,7 +394,7 @@ void CSndUList::insert_norealloc_(const steady_clock::time_point& ts, const CUDT
     m_iLastEntry++;
     m_pHeap[m_iLastEntry] = n;
     n->m_tsTimeStamp = ts;
-    
+
     int q = m_iLastEntry;
     int p = q;
     while (p != 0)
@@ -467,7 +466,6 @@ CSndQueue::CSndQueue()
     , m_pSndUList(NULL)
     , m_pChannel(NULL)
     , m_pTimer(NULL)
-    , m_WindowLock()
     , m_WindowCond()
     , m_bClosing(false)
 {
@@ -487,10 +485,12 @@ CSndQueue::~CSndQueue()
     CSync::lock_signal(m_WindowCond, m_WindowLock);
 
     if (isthread(m_WorkerThread))
+    {
+        HLOGC(mglog.Debug, log << "SndQueue: EXIT");
         jointhread(m_WorkerThread);
-
+    }
     releaseCond(m_WindowCond);
-    releaseMutex(m_WindowLock);
+
 
     delete m_pSndUList;
 }
@@ -532,7 +532,7 @@ void* CSndQueue::worker(void* param)
 
     while (!self->m_bClosing)
     {
-        steady_clock::time_point next_time = self->m_pSndUList->getNextProcTime();
+        const steady_clock::time_point next_time = self->m_pSndUList->getNextProcTime();
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)
         self->m_WorkerStats.lIteration++;
@@ -814,8 +814,6 @@ CRendezvousQueue::CRendezvousQueue()
 
 CRendezvousQueue::~CRendezvousQueue()
 {
-    releaseMutex(m_RIDVectorLock);
-
     m_lRendezvousID.clear();
 }
 
@@ -838,20 +836,23 @@ void CRendezvousQueue::insert(
 
 void CRendezvousQueue::remove(const SRTSOCKET& id, bool should_lock)
 {
-    CGuard vg (m_RIDVectorLock, should_lock);
-    HLOGC(mglog.Debug, log << "RID: socket @" << id << " removed");
+    if (should_lock)
+        enterCS(m_RIDVectorLock);
 
     for (list<CRL>::iterator i = m_lRendezvousID.begin(); i != m_lRendezvousID.end(); ++i)
     {
         if (i->m_iID == id)
         {
             m_lRendezvousID.erase(i);
-            return;
+            break;
         }
     }
+
+    if (should_lock)
+        leaveCS(m_RIDVectorLock);
 }
 
-CUDT *CRendezvousQueue::retrieve(const sockaddr_any& addr, SRTSOCKET& w_id)
+CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, SRTSOCKET& w_id)
 {
     CGuard vg (m_RIDVectorLock);
 
@@ -949,7 +950,7 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
         //
         // Maybe the time should be simply checked once and the whole loop not
         // done when "it's not the time"?
-        steady_clock::time_point now = steady_clock::now();
+        const steady_clock::time_point now = steady_clock::now();
         if (now >= i->m_tsTTL)
         {
             HLOGC(mglog.Debug, log << "RID: socket @" << i->m_iID
@@ -959,7 +960,7 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                 << "). removing from queue");
             // connection timer expired, acknowledge app via epoll
             i->m_pUDT->m_bConnecting = false;
-            CUDT::s_UDTUnited.m_EPoll.update_events(i->m_iID, i->m_pUDT->m_sPollID, UDT_EPOLL_ERR, true);
+            CUDT::s_UDTUnited.m_EPoll.update_events(i->m_iID, i->m_pUDT->m_sPollID, SRT_EPOLL_ERR, true);
             /*
              * Setting m_bConnecting to false but keeping socket in rendezvous queue is not a good idea.
              * Next CUDT::close will not remove it from rendezvous queue (because !m_bConnecting)
@@ -1049,11 +1050,10 @@ CRcvQueue::CRcvQueue()
     , m_vNewEntry()
     , m_IDLock()
     , m_mBuffer()
-    , m_PassLock()
-    , m_PassCond()
+    , m_BufferCond()
 {
-    createMutex(m_PassLock, "Pass");
-    createCond(m_PassCond, "Pass");
+    createMutex(m_BufferLock, "RcvQBuffer");
+    createCond(m_BufferCond, "RcvQBuffer");
     createMutex(m_LSLock, "LS");
     createMutex(m_IDLock, "ID");
 }
@@ -1066,10 +1066,8 @@ CRcvQueue::~CRcvQueue()
         HLOGC(mglog.Debug, log << "RcvQueue: EXIT");
         jointhread(m_WorkerThread);
     }
-    releaseMutex(m_PassLock);
-    releaseCond(m_PassCond);
-    releaseMutex(m_LSLock);
-    releaseMutex(m_IDLock);
+    releaseCond(m_BufferCond);
+
 
     delete m_pRcvUList;
     delete m_pHash;
@@ -1398,7 +1396,7 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
     // stored in the rendezvous queue (see CRcvQueue::registerConnector)
     // or simply 0, but then at least the address must match one of these.
     // If the id was 0, it will be set to the actual socket ID of the returned CUDT.
-    CUDT* u = m_pRendezvousQueue->retrieve(addr, (id));
+    CUDT *u = m_pRendezvousQueue->retrieve(addr, (id));
     if (!u)
     {
         // this socket is then completely unknown to the system.
@@ -1524,14 +1522,14 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
 
 int CRcvQueue::recvfrom(int32_t id, CPacket& w_packet)
 {
-    CGuard bufferlock (m_PassLock);
-    CSync passcond    (m_PassCond, bufferlock);
+    CGuard bufferlock (m_BufferLock);
+    CSync buffercond    (m_BufferCond, bufferlock);
 
     map<int32_t, std::queue<CPacket*> >::iterator i = m_mBuffer.find(id);
 
     if (i == m_mBuffer.end())
     {
-        passcond.wait_for(seconds_from(1));
+        buffercond.wait_for(seconds_from(1));
 
         i = m_mBuffer.find(id);
         if (i == m_mBuffer.end())
@@ -1605,7 +1603,7 @@ void CRcvQueue::removeConnector(const SRTSOCKET& id, bool should_lock)
     HLOGC(mglog.Debug, log << "removeConnector: removing @" << id);
     m_pRendezvousQueue->remove(id, should_lock);
 
-    CGuard bufferlock (m_PassLock);
+    CGuard bufferlock(m_BufferLock);
 
     map<int32_t, std::queue<CPacket*> >::iterator i = m_mBuffer.find(id);
     if (i != m_mBuffer.end())
@@ -1646,8 +1644,8 @@ CUDT* CRcvQueue::getNewEntry()
 
 void CRcvQueue::storePkt(int32_t id, CPacket* pkt)
 {
-    CGuard bufferlock (m_PassLock);
-    CSync passcond    (m_PassCond, bufferlock);
+    CGuard bufferlock (m_BufferLock);
+    CSync passcond    (m_BufferCond, bufferlock);
 
     map<int32_t, std::queue<CPacket*> >::iterator i = m_mBuffer.find(id);
 
