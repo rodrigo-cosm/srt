@@ -83,9 +83,9 @@ extern LogConfig srt_logger_config;
 
 void CUDTSocket::construct()
 {
-    createMutex(m_AcceptLock, "Accept");
-    createCond(m_AcceptCond, "Accept");
-    createMutex(m_ControlLock, "Control");
+    setupMutex(m_AcceptLock, "Accept");
+    setupCond(m_AcceptCond, "Accept");
+    setupMutex(m_ControlLock, "Control");
 }
 
 CUDTSocket::~CUDTSocket()
@@ -180,9 +180,9 @@ m_ClosedSockets()
    srand((unsigned int)t.tv_usec);
    m_SocketIDGenerator = 1 + (int)((1 << 30) * (double(rand()) / RAND_MAX));
 
-   createMutex(m_GlobControlLock, "GlobControl");
-   createMutex(m_IDLock, "ID");
-   createMutex(m_InitLock, "Init");
+   setupMutex(m_GlobControlLock, "GlobControl");
+   setupMutex(m_IDLock, "ID");
+   setupMutex(m_InitLock, "Init");
    pthread_key_create(&m_TLSError, TLSDestroy);
 
    m_pCache = new CCache<CInfoBlock>;
@@ -239,8 +239,8 @@ int CUDTUnited::startup()
       return true;
 
    m_bClosing = false;
-   createMutex(m_GCStopLock, "GCStop");
-   createCond_monotonic(m_GCStopCond, "GCStop");
+   setupMutex(m_GCStopLock, "GCStop");
+   setupCond(m_GCStopCond, "GCStop");
    {
        ThreadName tn("SRT:GC");
        pthread_create(&m_GCThread, NULL, garbageCollect, this);
@@ -268,7 +268,7 @@ int CUDTUnited::cleanup()
    // after which the m_bClosing flag is cheched, which
    // is set here above. Worst case secenario, this
    // jointhread() call will block for 1 second.
-   CSync::signal_relaxed(m_GCStopCond);
+   CSyncMono::signal_relaxed(m_GCStopCond);
    jointhread(m_GCThread);
 
    // XXX There's some weird bug here causing this
@@ -1834,8 +1834,8 @@ void* CUDTUnited::garbageCollect(void* p)
 
    THREAD_STATE_INIT("SRT:GC");
 
-   CGuard gcguard(self->m_GCStopLock);
-   CSync  gcsync(self->m_GCStopCond, gcguard);
+   CGuard    gcguard (self->m_GCStopLock);
+   CSyncMono gcsync (self->m_GCStopCond, gcguard);
 
    while (!self->m_bClosing)
    {
@@ -1843,7 +1843,7 @@ void* CUDTUnited::garbageCollect(void* p)
        self->checkBrokenSockets();
 
        HLOGC(mglog.Debug, log << "GC: sleep 1 s");
-       gcsync.wait_for_monotonic(seconds_from(1));
+       gcsync.wait_for(seconds_from(1));
    }
 
    // remove all sockets and multiplexers

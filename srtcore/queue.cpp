@@ -261,7 +261,7 @@ CSndUList::CSndUList()
     , m_pTimer(NULL)
 {
     m_pHeap = new CSNode*[m_iArrayLength];
-    createMutex(m_ListLock, "List");
+    setupMutex(m_ListLock, "List");
 }
 
 CSndUList::~CSndUList()
@@ -469,8 +469,8 @@ CSndQueue::CSndQueue()
     , m_WindowCond()
     , m_bClosing(false)
 {
-    createCond(m_WindowCond, "Window");
-    createMutex(m_WindowLock, "Window");
+    setupCond(m_WindowCond, "Window");
+    setupMutex(m_WindowLock, "Window");
 }
 
 CSndQueue::~CSndQueue()
@@ -809,7 +809,7 @@ CRendezvousQueue::CRendezvousQueue()
     : m_lRendezvousID()
     , m_RIDVectorLock()
 {
-    createMutex(m_RIDVectorLock, "RIDVector");
+    setupMutex(m_RIDVectorLock, "RIDVector");
 }
 
 CRendezvousQueue::~CRendezvousQueue()
@@ -1052,10 +1052,10 @@ CRcvQueue::CRcvQueue()
     , m_mBuffer()
     , m_BufferCond()
 {
-    createMutex(m_BufferLock, "RcvQBuffer");
-    createCond(m_BufferCond, "RcvQBuffer");
-    createMutex(m_LSLock, "LS");
-    createMutex(m_IDLock, "ID");
+    setupMutex(m_BufferLock, "RcvQBuffer");
+    setupCond(m_BufferCond, "RcvQBuffer");
+    setupMutex(m_LSLock, "LS");
+    setupMutex(m_IDLock, "ID");
 }
 
 CRcvQueue::~CRcvQueue()

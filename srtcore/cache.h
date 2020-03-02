@@ -83,7 +83,7 @@ public:
    m_iCurrSize(0)
    {
       m_vHashPtr.resize(m_iHashSize);
-      srt::sync::createMutex(m_Lock, "Cache");
+      srt::sync::setupMutex(m_Lock, "Cache");
    }
 
    ~CCache()
