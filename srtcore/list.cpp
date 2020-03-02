@@ -84,7 +84,7 @@ m_ListLock()
       m_caSeq[i].data1 = -1;
       m_caSeq[i].data2 = -1;
    }
-   createMutex(m_ListLock, "LossList");
+   setupMutex(m_ListLock, "LossList");
 }
 
 CSndLossList::~CSndLossList()
