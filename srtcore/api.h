@@ -103,15 +103,15 @@ public:
    /// 1 second (see CUDTUnited::checkBrokenSockets()).
    srt::sync::steady_clock::time_point m_tsClosureTimeStamp;
 
-   sockaddr_any m_SelfAddr;                  //< local address of the socket
-   sockaddr_any m_PeerAddr;                  //< peer address of the socket
+   sockaddr_any m_SelfAddr;                    //< local address of the socket
+   sockaddr_any m_PeerAddr;                    //< peer address of the socket
 
    SRTSOCKET m_SocketID;                     //< socket ID
    SRTSOCKET m_ListenSocket;                 //< ID of the listener socket; 0 means this is an independent socket
 
    SRTSOCKET m_PeerID;                       //< peer socket ID
-   CUDTGroup::gli_t m_IncludedIter;
-   CUDTGroup* m_IncludedGroup;
+   CUDTGroup::gli_t m_IncludedIter;          //< Container's iterator of the group to which it belongs, or gli_NULL() if it isn't
+   CUDTGroup* m_IncludedGroup;               //< Group this socket is a member of, or NULL if it isn't
 
    int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
 
@@ -120,7 +120,7 @@ public:
    std::set<SRTSOCKET>* m_pQueuedSockets;    //< set of connections waiting for accept()
    std::set<SRTSOCKET>* m_pAcceptSockets;    //< set of accept()ed connections
 
-   srt::sync::CCondition m_AcceptCond;              //< used to block "accept" call
+   srt::sync::Condition m_AcceptCond;        //< used to block "accept" call
    srt::sync::Mutex m_AcceptLock;            //< mutex associated to m_AcceptCond
 
    unsigned int m_uiBackLog;                 //< maximum number of connections in queue
@@ -214,10 +214,10 @@ public:
    int bind(CUDTSocket* u, UDPSOCKET udpsock);
    int listen(const SRTSOCKET u, int backlog);
    SRTSOCKET accept(const SRTSOCKET listen, sockaddr* addr, int* addrlen);
-   int connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const sockaddr* tarname, int tarlen);
-   int connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
+   int connect(SRTSOCKET u, const sockaddr* srcname, const sockaddr* tarname, int tarlen);
+   int connect(const SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
    int connectIn(CUDTSocket* s, const sockaddr_any& target, int32_t forced_isn);
-   int groupConnect(CUDTGroup* g, const sockaddr_any& source, SRT_SOCKGROUPDATA targets [], int arraysize);
+   int groupConnect(CUDTGroup* g, SRT_SOCKGROUPDATA targets [], int arraysize);
    int close(const SRTSOCKET u);
    int close(CUDTSocket* s);
    void getpeername(const SRTSOCKET u, sockaddr* name, int* namelen);
@@ -239,8 +239,8 @@ public:
       /// record the UDT exception.
       /// @param [in] e pointer to a UDT exception instance.
 
-   int setError(CodeMajor mj, CodeMinor mn, int syserr);
    void setError(CUDTException* e);
+
       /// look up the most recent UDT exception.
       /// @return pointer to a UDT exception instance.
 
@@ -273,15 +273,21 @@ public:
 
        CUDTGroup* pg = map_get(m_Groups, g->m_GroupID, NULL);
        if (pg)
-           delete pg;
-       else
        {
-           LOGC(mglog.Error, log << "IPE: the group id=" << g->m_GroupID << " not found in the map!");
-           // still delete it.
-           delete g;
+           // Everything ok, group was found, delete it, and its
+           // associated entry.
+           m_Groups.erase(g->m_GroupID);
+           if (g != pg) // sanity check -- only report
+           {
+               LOGC(mglog.Error, log << "IPE: the group id=" << g->m_GroupID << " had DIFFERENT OBJECT mapped!");
+           }
+           delete pg; // still delete it
+           return;
        }
 
-       m_Groups.erase(g->m_GroupID);
+       LOGC(mglog.Error, log << "IPE: the group id=" << g->m_GroupID << " not found in the map!");
+       delete g; // still delete it.
+       // Do not remove anything from the map - it's not found, anyway
    }
 
    CUDTGroup* findPeerGroup(SRTSOCKET peergroup)
@@ -297,11 +303,21 @@ public:
        return NULL;
    }
 
-   CEPoll& epollmg() { return m_EPoll; }
+   CEPoll& epoll_ref() { return m_EPoll; }
 
 private:
 //   void init();
 
+   /// Generates a new socket ID. This function starts from a randomly
+   /// generated value (at initialization time) and goes backward with
+   /// with next calls. The possible values come from the range without
+   /// the SRTGROUP_MASK bit, and the group bit is set when the ID is
+   /// generated for groups. It is also internally checked if the
+   /// newly generated ID isn't already used by an existing socket or group.
+   ///
+   /// @param group The socket id should be for socket group.
+   /// @return The new socket ID.
+   /// @throw CUDTException if after rolling over all possible ID values nothing can be returned
    SRTSOCKET generateSocketID(bool group = false);
 
 private:
@@ -344,7 +360,9 @@ private:
 private:
    volatile bool m_bClosing;
    srt::sync::Mutex m_GCStopLock;
-   srt::sync::CCondition m_GCStopCond;
+   srt::sync::ConditionMonotonic m_GCStopCond;
+
+
 
    srt::sync::Mutex m_InitLock;
    int m_iInstanceCount;				// number of startup() called by application

@@ -264,34 +264,27 @@ TEST(SyncTimePoint, OperatorMinusEqDuration)
 template <bool TEST_MONOTONIC_CLOCK = false>
 void TestSyncWaitFor()
 {
-    CCondition  cond;
+    Condition  cond;
     Mutex mutex;
 #if ENABLE_MONOTONIC_CLOCK
     if (TEST_MONOTONIC_CLOCK)
     {
-        createCond_monotonic(cond, "cond");
+        setupCond_monotonic(cond, "cond");
     }
     else
     {
-        createCond(cond, "cond");
+        setupCond(cond, "cond");
     }
 #else
-    createCond(cond, "cond");
+    setupCond(cond, "cond");
 #endif
-    createMutex(mutex, "mutex");
+    setupMutex(mutex, "mutex");
 
     for (int tout_us : {50, 100, 500, 1000, 101000, 1001000})
     {
         const steady_clock::duration   timeout = microseconds_from(tout_us);
         const steady_clock::time_point start = steady_clock::now();
-#if ENABLE_MONOTONIC_CLOCK
-        if (TEST_MONOTONIC_CLOCK)
-            EXPECT_FALSE(SyncEvent::wait_for_monotonic(&cond, &mutex.ref(), timeout) == 0);
-        else
-            EXPECT_FALSE(SyncEvent::wait_for(&cond, &mutex.ref(), timeout) == 0);
-#else
-        EXPECT_FALSE(SyncEvent::wait_for(&cond, &mutex.ref(), timeout) == 0);
-#endif
+        EXPECT_FALSE(SyncEvent::wait_for(&cond.ref(), &mutex.ref(), timeout) == 0);
         const steady_clock::time_point stop = steady_clock::now();
         if (tout_us < 1000)
         {
@@ -323,16 +316,16 @@ TEST(SyncEvent, WaitForMonotonic)
 
 TEST(SyncEvent, WaitForNotifyOne)
 {
-    CCondition  cond;
+    Condition  cond;
     Mutex mutex;
-    createCond(cond, "cond");
-    createMutex(mutex, "mutex");
+    setupCond(cond, "cond");
+    setupMutex(mutex, "mutex");
 
     const steady_clock::duration timeout = seconds_from(5);
 
-    auto wait_async = [](CCondition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
+    auto wait_async = [](Condition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
         ScopedLock lock(*mutex);
-        return SyncEvent::wait_for(cond, &mutex->ref(), timeout);
+        return SyncEvent::wait_for(&cond->ref(), &mutex->ref(), timeout);
     };
     auto wait_async_res = async(launch::async, wait_async, &cond, &mutex, timeout);
 
@@ -347,12 +340,12 @@ TEST(SyncEvent, WaitForNotifyOne)
 
 TEST(SyncEvent, WaitNotifyOne)
 {
-    CCondition  cond;
+    Condition  cond;
     Mutex mutex;
-    createCond(cond, "cond");
-    createMutex(mutex, "mutex");
+    setupCond(cond, "cond");
+    setupMutex(mutex, "mutex");
 
-    auto wait_async = [](CCondition* cond, Mutex* mutex) {
+    auto wait_async = [](Condition* cond, Mutex* mutex) {
         UniqueLock lock(*mutex);
         CSync gcsync(*cond, lock);
         return gcsync.wait();
@@ -369,15 +362,15 @@ TEST(SyncEvent, WaitNotifyOne)
 
 TEST(SyncEvent, WaitForTwoNotifyOne)
 {
-    CCondition  cond;
+    Condition  cond;
     Mutex mutex;
-    createCond(cond, "cond");
-    createMutex(mutex, "mutex");
+    setupCond(cond, "cond");
+    setupMutex(mutex, "mutex");
     const steady_clock::duration timeout = seconds_from(3);
 
-    auto wait_async = [](CCondition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
+    auto wait_async = [](Condition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
         ScopedLock lock(*mutex);
-        return SyncEvent::wait_for(cond, &mutex->ref(), timeout);
+        return SyncEvent::wait_for(&cond->ref(), &mutex->ref(), timeout);
     };
     auto wait_async1_res = async(launch::async, wait_async, &cond, &mutex, timeout);
     auto wait_async2_res = async(launch::async, wait_async, &cond, &mutex, timeout);
@@ -403,15 +396,15 @@ TEST(SyncEvent, WaitForTwoNotifyOne)
 
 TEST(SyncEvent, WaitForTwoNotifyAll)
 {
-    CCondition  cond;
+    Condition  cond;
     Mutex mutex;
-    createCond(cond, "cond");
-    createMutex(mutex, "mutex");
+    setupCond(cond, "cond");
+    setupMutex(mutex, "mutex");
     const steady_clock::duration timeout = seconds_from(3);
 
-    auto wait_async = [](CCondition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
+    auto wait_async = [](Condition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
         ScopedLock lock(*mutex);
-        return SyncEvent::wait_for(cond, &mutex->ref(), timeout);
+        return SyncEvent::wait_for(&cond->ref(), &mutex->ref(), timeout);
     };
     auto wait_async1_res = async(launch::async, wait_async, &cond, &mutex, timeout);
     auto wait_async2_res = async(launch::async, wait_async, &cond, &mutex, timeout);
@@ -433,15 +426,15 @@ TEST(SyncEvent, WaitForTwoNotifyAll)
 
 TEST(SyncEvent, WaitForNotifyAll)
 {
-    CCondition  cond;
+    Condition  cond;
     Mutex mutex;
-    createCond(cond, "cond");
-    createMutex(mutex, "mutex");
+    setupCond(cond, "cond");
+    setupMutex(mutex, "mutex");
     const steady_clock::duration timeout = seconds_from(5);
 
-    auto wait_async = [](CCondition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
+    auto wait_async = [](Condition* cond, Mutex* mutex, const steady_clock::duration& timeout) {
         ScopedLock lock(*mutex);
-        return SyncEvent::wait_for(cond, &mutex->ref(), timeout);
+        return SyncEvent::wait_for(&cond->ref(), &mutex->ref(), timeout);
     };
     auto wait_async_res = async(launch::async, wait_async, &cond, &mutex, timeout);
 

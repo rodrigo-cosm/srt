@@ -94,8 +94,8 @@ written by
 #elif defined(__cplusplus) && __cplusplus > 201406
 
 #define SRT_ATR_UNUSED [[maybe_unused]]
-#define SRT_ATR_DEPRECATED [[deprecated]]
-#define SRT_ATR_DEPRECATED_PX
+#define SRT_ATR_DEPRECATED
+#define SRT_ATR_DEPRECATED_PX [[deprecated]]
 #define SRT_ATR_NODISCARD [[nodiscard]]
 
 // GNUG is GNU C/C++; this syntax is also supported by Clang
@@ -237,7 +237,7 @@ typedef enum SRT_SOCKOPT {
 #define SRT_DEPRECATED_OPTION(value) ((SRT_SOCKOPT [[deprecated]])value)
 #else
     // Older (pre-C++11) compilers use gcc deprecated applied to a typedef
-    typedef SRT_ATR_DEPRECATED SRT_SOCKOPT SRT_SOCKOPT_DEPRECATED;
+    typedef SRT_ATR_DEPRECATED_PX SRT_SOCKOPT SRT_SOCKOPT_DEPRECATED SRT_ATR_DEPRECATED;
 #define SRT_DEPRECATED_OPTION(value) ((SRT_SOCKOPT_DEPRECATED)value)
 #endif
 
@@ -468,7 +468,7 @@ enum CodeMinor
     MN_BUSY            = 11,
     MN_XSIZE           = 12,
     MN_EIDINVAL        = 13,
-    MN_EEMPTY = 14,
+    MN_EEMPTY          = 14,
     // MJ_AGAIN
     MN_WRAVAIL         =  1,
     MN_RDAVAIL         =  2,
@@ -476,8 +476,8 @@ enum CodeMinor
     MN_CONGESTION      =  4
 };
 
-static const enum CodeMinor MN_ISSTREAM SRT_ATR_DEPRECATED = (enum CodeMinor)(9);
-static const enum CodeMinor MN_ISDGRAM SRT_ATR_DEPRECATED = (enum CodeMinor)(10);
+SRT_ATR_DEPRECATED_PX static const enum CodeMinor MN_ISSTREAM SRT_ATR_DEPRECATED = (enum CodeMinor)(9);
+SRT_ATR_DEPRECATED_PX static const enum CodeMinor MN_ISDGRAM SRT_ATR_DEPRECATED = (enum CodeMinor)(10);
 
 // Stupid, but effective. This will be #undefined, so don't worry.
 #define MJ(major) (1000 * MJ_##major)
@@ -731,6 +731,7 @@ typedef struct SRT_SocketGroupData_
     SRTSOCKET id;
     SRT_SOCKSTATUS status;
     int result;
+    struct sockaddr_storage srcaddr;
     struct sockaddr_storage peeraddr; // Don't want to expose sockaddr_any to public API
     int priority;
 } SRT_SOCKGROUPDATA;
@@ -753,18 +754,13 @@ typedef int srt_listen_callback_fn   (void* opaq, SRTSOCKET ns, int hsversion, c
 SRT_API       int srt_listen_callback(SRTSOCKET lsn, srt_listen_callback_fn* hook_fn, void* hook_opaque);
 SRT_API       int srt_connect      (SRTSOCKET u, const struct sockaddr* name, int namelen);
 SRT_API       int srt_connect_debug(SRTSOCKET u, const struct sockaddr* name, int namelen, int forced_isn);
-SRT_API       int srt_rendezvous   (SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
-                                    const struct sockaddr* remote_name, int remote_namelen);
-SRT_API       int srt_connect_bind (SRTSOCKET u,
-                                    const struct sockaddr* source, int source_len,
-                                    const struct sockaddr* target, int target_len);
+SRT_API       int srt_connect_bind (SRTSOCKET u, const struct sockaddr* source,
+                                    const struct sockaddr* target, int len);
 SRT_API       int srt_rendezvous   (SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
                                     const struct sockaddr* remote_name, int remote_namelen);
 
-SRT_API SRT_SOCKGROUPDATA srt_prepare_endpoint(const struct sockaddr* adr, int namelen);
-SRT_API int srt_connect_group(SRTSOCKET group,
-        const struct sockaddr* source /*nullable*/, int sourcelen,
-        SRT_SOCKGROUPDATA name [], int arraysize);
+SRT_API SRT_SOCKGROUPDATA srt_prepare_endpoint(const struct sockaddr* src /*nullable*/, const struct sockaddr* adr, int namelen);
+SRT_API       int srt_connect_group(SRTSOCKET group, SRT_SOCKGROUPDATA name [], int arraysize);
 
 
 SRT_API       int srt_close        (SRTSOCKET u);
@@ -857,7 +853,7 @@ SRT_API int srt_bistats(SRTSOCKET u, SRT_TRACEBSTATS * perf, int clear, int inst
 SRT_API SRT_SOCKSTATUS srt_getsockstate(SRTSOCKET u);
 
 SRT_API int srt_epoll_create(void);
-SRT_API extern int srt_epoll_clear_usocks(int eid);
+SRT_API int srt_epoll_clear_usocks(int eid);
 SRT_API int srt_epoll_add_usock(int eid, SRTSOCKET u, const int* events);
 SRT_API int srt_epoll_add_ssock(int eid, SYSSOCKET s, const int* events);
 SRT_API int srt_epoll_remove_usock(int eid, SRTSOCKET u);

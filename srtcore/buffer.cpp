@@ -112,7 +112,8 @@ CSndBuffer::CSndBuffer(int size, int mss)
    }
 
    m_pFirstBlock = m_pCurrBlock = m_pLastBlock = m_pBlock;
-   createMutex(m_BufLock, "Buf");
+
+   setupMutex(m_BufLock, "Buf");
 }
 
 CSndBuffer::~CSndBuffer()
@@ -133,6 +134,8 @@ CSndBuffer::~CSndBuffer()
       delete [] temp->m_pcData;
       delete temp;
    }
+
+   releaseMutex(m_BufLock);
 }
 
 void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
@@ -194,7 +197,7 @@ void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
         HLOGC(dlog.Debug, log << "addBuffer: %" << w_seqno << " #" << w_msgno
                 << " spreading from=" << (i*m_iMSS) << " size=" << pktlen
                 << " TO BUFFER:" << (void*)s->m_pcData);
-        memcpy(s->m_pcData, data + i * m_iMSS, pktlen);
+        memcpy((s->m_pcData), data + i * m_iMSS, pktlen);
         s->m_iLength = pktlen;
 
         s->m_iSeqNo = w_seqno;
@@ -524,10 +527,10 @@ int CSndBuffer::readData(const int offset, CPacket& w_packet, steady_clock::time
    w_packet.m_iMsgNo = p->m_iMsgNoBitset;
 
    // TODO: FR #930. Use source time if it is provided.
-   w_srctime = m_pCurrBlock->m_tsOriginTime;
+   w_srctime = p->m_tsOriginTime;
    /*w_srctime =
-      m_pCurrBlock->m_ullSourceTime_us ? m_pCurrBlock->m_ullSourceTime_us :
-      m_pCurrBlock->m_tsOriginTime;*/
+      p->m_ullSourceTime_us ? p->m_ullSourceTime_us :
+      p->m_tsOriginTime;*/
 
    HLOGC(dlog.Debug, log << CONID() << "CSndBuffer: getting packet %"
            << p->m_iSeqNo << " as per %" << w_packet.m_iSeqNo
@@ -798,7 +801,8 @@ m_iNotch(0)
    memset(m_TsbPdDriftHisto100us, 0, sizeof(m_TsbPdDriftHisto100us));
    memset(m_TsbPdDriftHisto1ms, 0, sizeof(m_TsbPdDriftHisto1ms));
 #endif
-   createMutex(m_BytesCountLock, "BytesCount");
+
+   setupMutex(m_BytesCountLock, "BytesCount");
 }
 
 CRcvBuffer::~CRcvBuffer()
@@ -812,6 +816,8 @@ CRcvBuffer::~CRcvBuffer()
    }
 
    delete [] m_pUnit;
+
+   releaseMutex(m_BytesCountLock);
 }
 
 void CRcvBuffer::countBytes(int pkts, int bytes, bool acked)
@@ -872,9 +878,7 @@ int CRcvBuffer::readBuffer(char* data, int len)
     int p = m_iStartPos;
     int lastack = m_iLastAckPos;
     int rs = len;
-#if ENABLE_HEAVY_LOGGING
-    char* begin = data;
-#endif
+    IF_HEAVY_LOGGING(char* begin = data);
 
     const steady_clock::time_point now = (m_bTsbPdMode ? steady_clock::now() : steady_clock::time_point());
 
@@ -991,11 +995,13 @@ int CRcvBuffer::ackData(int len)
    if (m_iMaxPos < 0)
       m_iMaxPos = 0;
 
+   CTimer::triggerEvent();
+
    // Returned value is the distance towards the starting
    // position from m_iLastAckPos, which is in sync with CUDT::m_iRcvLastSkipAck.
    // This should help determine the sequence number at first read-ready position.
 
-   int dist = m_iLastAckPos - m_iStartPos;
+   const int dist = m_iLastAckPos - m_iStartPos;
    if (dist < 0)
        return dist + m_iSize;
    return dist;
@@ -1056,7 +1062,7 @@ bool CRcvBuffer::getRcvFirstMsg(steady_clock::time_point& w_tsbpdtime,
     // - tsbpdtime: real time when the packet is ready to play (whether ready to play or not)
     // - w_passack: false (the report concerns a packet with an exactly next sequence)
     // - w_skipseqno == -1: no packets to skip towards the first RTP
-    // - w_curpktseq: sequence number for reported packet (for debug purposes)
+    // - w_curpktseq: that exactly packet that is reported (for debugging purposes)
     // - @return: whether the reported packet is ready to play
 
     /* Check the acknowledged packets */
@@ -1199,7 +1205,7 @@ int32_t CRcvBuffer::getTopMsgno()
 
 bool CRcvBuffer::getRcvReadyMsg(steady_clock::time_point& w_tsbpdtime, int32_t& w_curpktseq, int upto)
 {
-    bool havelimit = upto != -1;
+    const bool havelimit = upto != -1;
     int end = -1, past_end = -1;
     if (havelimit)
     {
@@ -1259,7 +1265,6 @@ bool CRcvBuffer::getRcvReadyMsg(steady_clock::time_point& w_tsbpdtime, int32_t& 
         }
         else
         {
-
             // This does:
             // 1. Get the TSBPD time of the unit. Stop and return false if this unit
             //    is not yet ready to play.
@@ -1366,13 +1371,13 @@ bool CRcvBuffer::isRcvDataReady(steady_clock::time_point& w_tsbpdtime, int32_t& 
 
     if (m_bTsbPdMode)
     {
-        CPacket* pkt = getRcvReadyPacket(seqdistance);
+        const CPacket* pkt = getRcvReadyPacket(seqdistance);
         if (!pkt)
         {
             HLOGC(dlog.Debug, log << "isRcvDataReady: packet NOT extracted.");
             return false;
         }
-    
+
         /* 
          * Acknowledged data is available,
          * Only say ready if time to deliver.
@@ -1437,9 +1442,7 @@ CPacket* CRcvBuffer::getRcvReadyPacket(int32_t seqdistance)
         HLOGC(dlog.Debug, log << "getRcvReadyPacket: Sequence offset=" << seqdistance << " IS NOT RECEIVED.");
         return 0;
     }
-#if ENABLE_HEAVY_LOGGING
-    int nskipped = 0;
-#endif
+    IF_HEAVY_LOGGING(int nskipped = 0);
 
     for (int i = m_iStartPos, n = m_iLastAckPos; i != n; i = shiftFwd(i))
     {
@@ -1452,9 +1455,7 @@ CPacket* CRcvBuffer::getRcvReadyPacket(int32_t seqdistance)
                     << " (" << nskipped << " empty cells skipped)");
             return &m_pUnit[i]->m_Packet;
         }
-#if ENABLE_HEAVY_LOGGING
-        ++nskipped;
-#endif
+        IF_HEAVY_LOGGING(++nskipped);
     }
 
     return 0;
@@ -2160,7 +2161,6 @@ void CRcvBuffer::readMsgHeavyLogging(int p)
 
 bool CRcvBuffer::scanMsg(int& w_p, int& w_q, bool& w_passack)
 {
-
     // empty buffer
     if ((m_iStartPos == m_iLastAckPos) && (m_iMaxPos <= 0))
     {
