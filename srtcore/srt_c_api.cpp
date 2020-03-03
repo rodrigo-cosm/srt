@@ -49,30 +49,37 @@ int srt_bind(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CU
 int srt_bind_acquire(SRTSOCKET u, UDPSOCKET udpsock) { return CUDT::bind(u, udpsock); }
 int srt_listen(SRTSOCKET u, int backlog) { return CUDT::listen(u, backlog); }
 SRTSOCKET srt_accept(SRTSOCKET u, struct sockaddr * addr, int * addrlen) { return CUDT::accept(u, addr, addrlen); }
-int srt_connect(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CUDT::connect(u, name, namelen, 0); }
+int srt_connect(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CUDT::connect(u, name, namelen, -1); }
 int srt_connect_debug(SRTSOCKET u, const struct sockaddr * name, int namelen, int forced_isn) { return CUDT::connect(u, name, namelen, forced_isn); }
 int srt_connect_bind(SRTSOCKET u,
-        const struct sockaddr* source, int source_len,
+        const struct sockaddr* source,
         const struct sockaddr* target, int target_len)
 {
-    return CUDT::connect(u, source, source_len, target, target_len);
+    return CUDT::connect(u, source, target, target_len);
 }
 
-SRT_SOCKGROUPDATA srt_prepare_endpoint(const struct sockaddr* adr, int namelen)
+SRT_SOCKGROUPDATA srt_prepare_endpoint(const struct sockaddr* src, const struct sockaddr* adr, int namelen)
 {
     SRT_SOCKGROUPDATA data;
     data.result = 0;
     data.status = SRTS_INIT;
     data.id = -1;
+    if (src)
+        memcpy(&data.srcaddr, src, namelen);
+    else
+    {
+        memset(&data.srcaddr, 0, sizeof data.srcaddr);
+        // Still set the family according to the target address
+        data.srcaddr.ss_family = adr->sa_family;
+    }
     memcpy(&data.peeraddr, adr, namelen);
     return data;
 }
 
 int srt_connect_group(SRTSOCKET group,
-        const struct sockaddr* source, int sourcelen,
         SRT_SOCKGROUPDATA name [], int arraysize)
 {
-    return CUDT::connectLinks(group, source, sourcelen, name, arraysize);
+    return CUDT::connectLinks(group, name, arraysize);
 }
 
 int srt_rendezvous(SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
@@ -135,12 +142,12 @@ int64_t srt_sendfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t siz
 {
     if (!path || !offset )
     {
-        return CUDT::setError(CUDTException(MJ_NOTSUP, MN_INVAL, 0));
+        return CUDT::APIError(MJ_NOTSUP, MN_INVAL, 0);
     }
     fstream ifs(path, ios::binary | ios::in);
     if (!ifs)
     {
-        return CUDT::setError(CUDTException(MJ_FILESYSTEM, MN_READFAIL, 0));
+        return CUDT::APIError(MJ_FILESYSTEM, MN_READFAIL, 0);
     }
     int64_t ret = CUDT::sendfile(u, ifs, *offset, size, block);
     ifs.close();
@@ -151,12 +158,12 @@ int64_t srt_recvfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t siz
 {
     if (!path || !offset )
     {
-        return CUDT::setError(CUDTException(MJ_NOTSUP, MN_INVAL, 0));
+        return CUDT::APIError(MJ_NOTSUP, MN_INVAL, 0);
     }
     fstream ofs(path, ios::binary | ios::out);
     if (!ofs)
     {
-        return CUDT::setError(CUDTException(MJ_FILESYSTEM, MN_WRAVAIL, 0));
+        return CUDT::APIError(MJ_FILESYSTEM, MN_WRAVAIL, 0);
     }
     int64_t ret = CUDT::recvfile(u, ofs, *offset, size, block);
     ofs.close();
@@ -341,7 +348,7 @@ enum SRT_REJECT_REASON srt_getrejectreason(SRTSOCKET sock)
 int srt_listen_callback(SRTSOCKET lsn, srt_listen_callback_fn* hook, void* opaq)
 {
     if (!hook)
-        return CUDT::setError(CUDTException(MJ_NOTSUP, MN_INVAL));
+        return CUDT::APIError(MJ_NOTSUP, MN_INVAL);
 
     return CUDT::installAcceptHook(lsn, hook, opaq);
 }

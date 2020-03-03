@@ -205,7 +205,7 @@ public:
     // be received). After a while when the current active link is confirmed broken, it turns
     // into broken state.
 
-    static std::string StateStr(GroupState);
+    static const char* StateStr(GroupState);
 
     struct SocketData
     {
@@ -308,7 +308,7 @@ public:
             // that was disconnected other than immediately closing it.
             if (m_Group.empty())
             {
-                m_iLastSchedSeqNo = 0;
+                m_iLastSchedSeqNo = -1;
                 setInitialRxSequence(-1);
             }
             s = true;
@@ -594,9 +594,8 @@ public: //API
     static int listen(SRTSOCKET u, int backlog);
     static SRTSOCKET accept(SRTSOCKET u, sockaddr* addr, int* addrlen);
     static int connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
-    static int connect(SRTSOCKET u, const sockaddr* name, int namelen, const sockaddr* tname, int tnamelen);
-    static int connectLinks(SRTSOCKET grp, const sockaddr* source /*[[nullable]]*/, int namelen,
-            SRT_SOCKGROUPDATA links [], int arraysize);
+    static int connect(SRTSOCKET u, const sockaddr* name, const sockaddr* tname, int namelen);
+    static int connectLinks(SRTSOCKET grp, SRT_SOCKGROUPDATA links [], int arraysize);
     static int close(SRTSOCKET u);
     static int getpeername(SRTSOCKET u, sockaddr* name, int* namelen);
     static int getsockname(SRTSOCKET u, sockaddr* name, int* namelen);
@@ -632,10 +631,20 @@ public: //API
     static std::string getstreamid(SRTSOCKET u);
     static int getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes);
     static SRT_REJECT_REASON rejectReason(SRTSOCKET s);
-    static int setError(const CUDTException& e);
-    static int setError(CodeMajor mj, CodeMinor mn, int syserr);
 
 public: // internal API
+    // This is public so that it can be used directly in API implementation functions.
+    struct APIError
+    {
+        APIError(const CUDTException&);
+        APIError(CodeMajor, CodeMinor, int = 0);
+
+        operator int() const
+        {
+            return SRT_ERROR;
+        }
+    };
+
     static const SRTSOCKET INVALID_SOCK = -1;         // invalid socket descriptor
     static const int ERROR = -1;                      // socket api error returned value
 
@@ -706,7 +715,7 @@ public: // internal API
     int sndLossLength() { return m_pSndLossList->getLossLength(); }
     int32_t ISN() const { return m_iISN; }
     int32_t peerISN() const { return m_iPeerISN; }
-    srt::sync::steady_clock::duration minNAKInterval() const { return m_tdMinNakInterval; }
+    duration minNAKInterval() const { return m_tdMinNakInterval; }
     sockaddr_any peerAddr() const { return m_PeerAddr; }
 
     int minSndSize(int len = 0) const
@@ -839,7 +848,7 @@ private:
     SRT_ATR_NODISCARD bool interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uint32_t* out_data, size_t* out_len);
     SRT_ATR_NODISCARD bool checkApplyFilterConfig(const std::string& cs);
 
-    static CUDTGroup& newGroup(int); // defined EXCEPTIONALLY in api.cpp for convenience reasons
+    static CUDTGroup& newGroup(const int); // defined EXCEPTIONALLY in api.cpp for convenience reasons
     // Note: This is an "interpret" function, which should treat the tp as
     // "possibly group type" that might be out of the existing values.
     SRT_ATR_NODISCARD bool interpretGroup(const int32_t grpdata[], int hsreq_type_cmd);
@@ -1113,11 +1122,9 @@ private: // Sending related data
     CSndLossList* m_pSndLossList;                // Sender loss list
     CPktTimeWindow<16, 16> m_SndTimeWindow;      // Packet sending time window
 
-    /*volatile*/ duration
-        m_tdSendInterval;                        // Inter-packet time, in CPU clock cycles
+    /*volatile*/ duration m_tdSendInterval;      // Inter-packet time, in CPU clock cycles
 
-    /*volatile*/ duration
-        m_tdSendTimeDiff;                        // aggregate difference in inter-packet sending time
+    /*volatile*/ duration m_tdSendTimeDiff;      // aggregate difference in inter-packet sending time
 
     volatile int m_iFlowWindowSize;              // Flow control window size
     volatile double m_dCongestionWindow;         // congestion window size
@@ -1176,7 +1183,6 @@ private: // Timers
     time_point m_SndLastAck2Time;                // The time when last ACK2 was sent back
     void setInitialSndSeq(int32_t isn)
     {
-        // m_iLastDecSeq = isn - 1; <-- purpose unknown; duplicate from FileCC?
         m_iSndLastAck = isn;
         m_iSndLastDataAck = isn;
         m_iSndLastFullAck = isn;
@@ -1236,7 +1242,7 @@ private: // Receiving related data
     bool m_bGroupTsbPd;                          // TSBPD should be used for GROUP RECEIVER instead.
 
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
-    srt::sync::Condition m_RcvTsbPdCond;        // TSBPD signals if reading is ready
+    srt::sync::Condition m_RcvTsbPdCond;         // TSBPD signals if reading is ready
     bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
 
     CallbackHolder<srt_listen_callback_fn> m_cbAcceptHook;
@@ -1254,14 +1260,14 @@ private:
 private: // synchronization: mutexes and conditions
     srt::sync::Mutex m_ConnectionLock;           // used to synchronize connection operation
 
-    srt::sync::Condition m_SendBlockCond;              // used to block "send" call
+    srt::sync::Condition m_SendBlockCond;        // used to block "send" call
     srt::sync::Mutex m_SendBlockLock;            // lock associated to m_SendBlockCond
 
     srt::sync::Mutex m_RcvBufferLock;            // Protects the state of the m_pRcvBuffer
     // Protects access to m_iSndCurrSeqNo, m_iSndLastAck
     srt::sync::Mutex m_RecvAckLock;              // Protects the state changes while processing incomming ACK (SRT_EPOLL_OUT)
 
-    srt::sync::Condition m_RecvDataCond;               // used to block "recv" when there is no data
+    srt::sync::Condition m_RecvDataCond;         // used to block "recv" when there is no data
     srt::sync::Mutex m_RecvDataLock;             // lock associated to m_RecvDataCond
 
     srt::sync::Mutex m_SendLock;                 // used to synchronize "send" call
@@ -1274,7 +1280,6 @@ private: // synchronization: mutexes and conditions
     void releaseSynch();
 
 private: // Common connection Congestion Control setup
-
     // This can fail only when it failed to create a congctl
     // which only may happen when the congctl list is extended 
     // with user-supplied congctl modules, not a case so far.
@@ -1283,7 +1288,7 @@ private: // Common connection Congestion Control setup
 
     // for updateCC it's ok to discard the value. This returns false only if
     // the congctl isn't created, and this can be prevented from.
-    bool updateCC(ETransmissionEvent, EventVariant arg);
+    bool updateCC(ETransmissionEvent, const EventVariant arg);
 
     // Failure to create the crypter means that an encrypted
     // connection should be rejected if ENFORCEDENCRYPTION is on.
@@ -1296,6 +1301,7 @@ private: // Generation and processing of packets
     void processCtrl(const CPacket& ctrlpkt);
     void sendLossReport(const std::vector< std::pair<int32_t, int32_t> >& losslist);
     void processCtrlAck(const CPacket& ctrlpkt, const time_point &currtime);
+    void processCtrlLossReport(const CPacket& ctrlpkt);
 
     ///
     /// @param ackdata_seqno    sequence number of a data packet being acknowledged
@@ -1307,7 +1313,7 @@ private: // Generation and processing of packets
     /// @param origintime [in, out] origin timestamp of the packet
     ///
     /// @return payload size on success, <=0 on failure
-    int packLostData(CPacket& w_packet, srt::sync::steady_clock::time_point& w_origintime);
+    int packLostData(CPacket &packet, time_point &origintime);
 
     /// Pack in CPacket the next data to be send.
     ///
@@ -1317,8 +1323,7 @@ private: // Generation and processing of packets
     ///         The payload tells the size of the payload, packed in CPacket.
     ///         The timestamp is the full source/origin timestamp of the data.
     ///         If payload is <= 0, consider the timestamp value invalid.
-    std::pair<int, time_point>
-        packData(CPacket& packet);
+    std::pair<int, time_point> packData(CPacket& packet);
 
     int processData(CUnit* unit);
     void processClose();
@@ -1401,11 +1406,17 @@ public:
     static const size_t MAX_SID_LENGTH = 512;
 
 private: // Timers functions
+    static const int BECAUSE_NO_REASON = 0, // NO BITS
+                     BECAUSE_ACK       = 1 << 0,
+                     BECAUSE_LITEACK   = 1 << 1,
+                     BECAUSE_NAKREPORT = 1 << 2,
+                     LAST_BECAUSE_BIT  =      3;
+
     void checkTimers();
     void considerLegacySrtHandshake(const time_point &timebase);
-    void checkACKTimer (const time_point& currtime, char debug_decision[10]);
-    void checkNAKTimer(const time_point& currtime, char debug_decision[10]);
-    bool checkExpTimer (const time_point& currtime, const char* debug_decision);  // returns true if the connection is expired
+    int checkACKTimer (const time_point& currtime);
+    int checkNAKTimer(const time_point& currtime);
+    bool checkExpTimer (const time_point& currtime, int check_reason);  // returns true if the connection is expired
     void checkRexmitTimer(const time_point& currtime);
 
 public: // For the use of CCryptoControl

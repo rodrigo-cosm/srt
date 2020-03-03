@@ -28,6 +28,7 @@ set_if(LINUX       ${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 set_if(BSD         ${SYSNAME_LC} MATCHES "bsd$")
 set_if(MICROSOFT   WIN32 AND (NOT MINGW AND NOT CYGWIN))
 set_if(GNU         ${CMAKE_SYSTEM_NAME} MATCHES "GNU")
+set_if(POSIX       LINUX OR DARWIN OR BSD OR (CYGWIN AND CYGWIN_USE_POSIX))
 set_if(SYMLINKABLE LINUX OR DARWIN OR BSD OR CYGWIN OR GNU)
 
 # Not sure what to do in case of compiling by MSVC.
@@ -181,27 +182,42 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-# Handle WITH_COMPILER_PREFIX and WITH_COMPILER_TYPE options
-if (DEFINED WITH_COMPILER_PREFIX)
-	message(STATUS "Handling compiler with WITH_COMPILER_PREFIX=${WITH_COMPILER_PREFIX}")
-	# Check also type. Default is gcc.
-	if (NOT DEFINED WITH_COMPILER_TYPE)
-		set (WITH_COMPILER_TYPE gcc)
-	endif()
+if (NOT DEFINED WITH_COMPILER_TYPE)
 
-	if (${WITH_COMPILER_TYPE} STREQUAL gcc)
-		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}gcc)
-		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}g++)
-	elseif (${WITH_COMPILER_TYPE} STREQUAL cc)
-		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}cc)
-		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}c++)
+	# This is for a case when you provided the prefix, but you didn't
+	# provide compiler type. This option is in this form predicted to work
+	# only on POSIX systems. Just typical compilers for Linux and Mac are
+	# included. 
+	if (DARWIN)
+		set (WITH_COMPILER_TYPE clang)
+	elseif (POSIX) # Posix, but not DARWIN
+		set(WITH_COMPILER_TYPE gcc)
+	else()
+		get_filename_component(WITH_COMPILER_TYPE ${CMAKE_C_COMPILER} NAME)
+	endif()
+	set (USING_DEFAULT_COMPILER_PREFIX 1)
+endif()
+
+if (NOT USING_DEFAULT_COMPILER_PREFIX OR DEFINED WITH_COMPILER_PREFIX)
+	message(STATUS "Handling compiler with PREFIX=${WITH_COMPILER_PREFIX} TYPE=${WITH_COMPILER_TYPE}")
+
+	parse_compiler_type(${WITH_COMPILER_TYPE} COMPILER_TYPE COMPILER_SUFFIX)
+
+	if (${COMPILER_TYPE} STREQUAL gcc)
+		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}gcc${COMPILER_SUFFIX})
+		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}g++${COMPILER_SUFFIX})
+	elseif (${COMPILER_TYPE} STREQUAL cc)
+		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}cc${COMPILER_SUFFIX})
+		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}c++${COMPILER_SUFFIX})
+	elseif (${COMPILER_TYPE} STREQUAL icc)
+		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}icc${COMPILER_SUFFIX})
+		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}icpc${COMPILER_SUFFIX})
 	else()
 		# Use blindly <command> for C compiler and <command>++ for C++.
 		# At least this matches clang.
 		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}${WITH_COMPILER_TYPE})
-		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}${WITH_COMPILER_TYPE}++)
+		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}${COMPILER_TYPE}++${COMPILER_SUFFIX})
 	endif()
-
 	message(STATUS "Compiler type: ${WITH_COMPILER_TYPE}. C: ${CMAKE_C_COMPILER}; C++: ${CMAKE_CXX_COMPILER}")
 else()
 	message(STATUS "No WITH_COMPILER_PREFIX - using C++ compiler ${CMAKE_CXX_COMPILER}")
@@ -716,10 +732,8 @@ endforeach()
 set (SRT_LIBS_PRIVATE ${SRT_LIBS_PRIVATE} ${PTHREAD_LIBRARY})
 
 target_compile_definitions(srt_virtual PRIVATE -DSRT_EXPORTS )
-target_compile_definitions(srt_virtual PUBLIC -DHAICRYPT_DYNAMIC)
 if (ENABLE_SHARED)
 	target_compile_definitions(srt_virtual PUBLIC -DSRT_DYNAMIC)
-	target_compile_definitions(srt_virtual PRIVATE -DHAICRYPT_EXPORTS)
 endif()
 
 if (srt_libspec_shared)
@@ -938,6 +952,10 @@ if (ENABLE_APPS)
 
 		srt_add_testprogram(srt-test-multiplex)
 		srt_make_application(srt-test-multiplex)
+
+		srt_add_testprogram(srt-test-mpbond)
+		srt_make_application(srt-test-mpbond)
+
 	endif()
 
 endif()
@@ -964,6 +982,12 @@ if (ENABLE_EXAMPLES)
 
 	srt_add_example(test-c-server.c)
 	srt_make_application(test-c-server)
+
+	srt_add_example(test-c-client-bonding.c)
+	srt_make_application(test-c-client-bonding)
+
+	srt_add_example(test-c-server-bonding.c)
+	srt_make_application(test-c-server-bonding)
 
 	srt_add_example(testcapi-connect.c)
 	target_link_libraries(testcapi-connect ${srt_link_library} ${DEPENDS_srt})

@@ -768,11 +768,11 @@ void SrtCommon::OpenGroupClient()
         sockaddr* psa = (sockaddr*)&sa;
         Verb() << "\t[" << i << "] " << c.host << ":" << c.port << " ... " << VerbNoEOL;
         ++i;
-        SRT_SOCKGROUPDATA gd = srt_prepare_endpoint(psa, namelen);
+        SRT_SOCKGROUPDATA gd = srt_prepare_endpoint(NULL, psa, namelen);
         targets.push_back(gd);
     }
 
-    int fisock = srt_connect_group(m_sock, 0, namelen, targets.data(), targets.size());
+    int fisock = srt_connect_group(m_sock, targets.data(), targets.size());
     if (fisock == SRT_ERROR)
     {
         Error("srt_connect_group");
@@ -1806,7 +1806,6 @@ RETRY_READING:
     Error("No data extracted");
     return output; // Just a marker - this above function throws an exception
 }
-
 #endif
 
 bytevector SrtSource::Read(size_t chunk)
@@ -1836,7 +1835,7 @@ bytevector SrtSource::Read(size_t chunk)
 
     do
     {
-        if (have_group)
+        if (have_group || m_listener_group)
         {
             mctrl.grpdata = m_group_data.data();
             mctrl.grpdata_size = m_group_data.size();
@@ -2487,7 +2486,6 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
         }
         ptr.reset( CreateUdp<Base>(u.host(), iport, u.parameters()) );
         break;
-
     }
 
     if (ptr)
