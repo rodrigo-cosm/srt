@@ -11895,8 +11895,11 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
             stat = -1;
             erc = e.getErrorCode();
         }
+
         if (stat != -1)
+        {
             curseq = w_mc.pktseq;
+        }
 
         const Sendstate cstate = {d, stat, erc};
         sendstates.push_back(cstate);
@@ -11944,6 +11947,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     // Now we can go to the idle links and attempt to send the payload
     // also over them.
 
+    // { sendBroadcast_ActivateIdlers
     for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
     {
         int erc = 0;
@@ -12002,6 +12006,10 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         HLOGC(dlog.Debug, log << "grp/sendBroadcast: updating current scheduling sequence %" << curseq);
         m_iLastSchedSeqNo = curseq;
     }
+
+    // }
+
+    // { send_CheckBrokenSockets()
 
     if (!pending.empty())
     {
@@ -12092,6 +12100,10 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     // We'll need you again.
     wipeme.clear();
     broken_sockets.clear();
+
+    // }
+
+    // { sendBroadcast_CheckBlockedLinks()
 
     // Alright, we've made an attempt to send a packet over every link.
     // Every operation was done through a non-blocking attempt, so
@@ -12280,8 +12292,11 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         }
     }
 
+    // }
+
     if (none_succeeded)
     {
+        HLOGC(dlog.Debug, log << "grp/sendBackup: all links broken (none succeeded to send a payload)");
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
         // Reparse error code, if set.
@@ -12340,6 +12355,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
         ready_again = ready_again | d->ps->writeReady();
     }
+    w_mc.grpdata_size = i;
 
     if (!ready_again)
     {
@@ -13636,6 +13652,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
         if (d->sndstate == GST_IDLE)
         {
+            // { send_CheckIdle() 
             SRT_SOCKSTATUS st = SRTS_NONEXIST;
             if (d->ps)
                 st = d->ps->getStatus();
@@ -13654,6 +13671,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
                 pending.push_back(d);
                 continue;
             }
+            // }
 
             HLOGC(dlog.Debug, log << "grp/sendBackup: socket in IDLE state: @" << d->id << " - will activate it IF NEEDED");
             // This is idle, we'll take care of them next time
@@ -13663,6 +13681,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
             // - if ALL SOCKETS ARE IDLE, then we simply activate the first from the list,
             //   and all others will be activated using the ISN from the first one.
             idlers.push_back(d);
+
+            // { send_CheckIdleTime()
 
             // Check if it was fresh set as idle, we had to wait until its sender
             // buffer gets empty so that we can make sure that KEEPALIVE will be the
@@ -13685,12 +13705,14 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
                     d->ps->m_pUDT->sendCtrl(UMSG_KEEPALIVE, &arg);
                 }
             }
+            // }
 
             continue;
         }
 
         if (d->sndstate == GST_RUNNING)
         {
+            // { send_CheckRunningStability()
             CUDT& u = d->ps->core();
             // This link might be unstable, check its responsiveness status
             // NOTE: currtime - last_rsp_time: we believe this value will be always positive as
@@ -13773,6 +13795,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
             {
                 HLOGC(dlog.Debug, log << "grp/sendBackup: socket in RUNNING state: @" << d->id << " - will send a payload");
             }
+
+            // }
             sendable.push_back(d);
             continue;
         }
@@ -13850,6 +13874,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
             erc = e.getErrorCode();
         }
 
+        // { sendBackup_CheckSendStatus 
+
         if (stat != -1)
         {
             if (curseq == -1)
@@ -13896,8 +13922,10 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
             if (u.m_tsUnstableSince  == steady_clock::zero()) // skip those unstable already - they are already counted
                 ++nunstable;
         }
+        // }
 
-        sendstates.push_back( (Sendstate) {d, stat, erc});
+        const Sendstate cstate = {d, stat, erc};
+        sendstates.push_back(cstate);
         d->sndresult = stat;
         d->laststatus = d->ps->getStatus();
     }
@@ -13978,6 +14006,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
     // Now we can go to the idle links and attempt to send the payload
     // also over them.
 
+    // { sendBackup_Buffering
 
     // This is required to rewrite into currentSchedSequence() property
     // as this value will be used as ISN when a new link is connected.
@@ -14025,6 +14054,10 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     if (oldest_buffer_seq != -1)
         m_iLastSchedSeqNo = oldest_buffer_seq;
+
+    // }
+
+    // { sendBackup_CheckNeedActivate
 
     // CHECK: no sendable that exceeds unstable
     // This embraces the case when there are no sendable at all.
@@ -14115,7 +14148,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
             d->sndresult = stat;
             d->laststatus = d->ps->getStatus();
 
-            sendstates.push_back( (Sendstate) {d, stat, erc});
+            const Sendstate cstate = {d, stat, erc};
+            sendstates.push_back(cstate);
 
             if (stat != -1)
             {
@@ -14170,6 +14204,10 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
         HLOGC(dlog.Debug, log << "grp/sendBackup: have sendable links, stable="
                 << (sendable.size() - nunstable) << " unstable=" << nunstable);
     }
+
+    // }
+
+    // { send_CheckBrokenSockets()
 
     // If we have at least one stable link, then select a link that have the
     // highest priority and silence the rest.
@@ -14270,6 +14308,10 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
     // We'll need you again.
     wipeme.clear();
     broken_sockets.clear();
+
+    // }
+
+    // { sendBackup_CheckParallelLinks()
 
     // In contradiction to redundancy sending, backup sending must check
     // the blocking state in total first. We need this information through
@@ -14485,6 +14527,8 @@ RetryWaitBlocked:
         }
     }
 
+    // }
+
     if (none_succeeded)
     {
         HLOGC(dlog.Debug, log << "grp/sendBackup: all links broken (none succeeded to send a payload)");
@@ -14528,7 +14572,7 @@ RetryWaitBlocked:
             else
                 w_mc.grpdata[i].result = -1;
 
-            memcpy(&w_mc.grpdata[i].peeraddr, &d->peer, d->peer.size());
+            memcpy((&w_mc.grpdata[i].peeraddr), &d->peer, d->peer.size());
         }
 
         // We perform this loop anyway because we still need to check if any
@@ -15602,6 +15646,9 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         // and error-reported.
     }
 
+
+    // { sendBalancing_CheckBrokenSockets()
+
     if (!pending.empty())
     {
         HLOGC(dlog.Debug, log << "grp/sendBroadcast: found pending sockets, polling them.");
@@ -15653,6 +15700,9 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         }
     }
 
+    // }
+
+
 
     // Do final checkups.
 
@@ -15699,6 +15749,8 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         ready_again = ready_again | d->ps->writeReady();
     }
 
+    // { sendBalancing_CloseBrokenSockets
+
     // Review the wipeme sockets.
     // The reason why 'wipeme' is kept separately to 'broken_sockets' is that
     // it might theoretically happen that ps becomes NULL while the item still exists.
@@ -15738,6 +15790,8 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
     }
 
     HLOGC(dlog.Debug, log << "grp/sendBalancing: - wiped " << wipeme.size() << " broken sockets");
+
+    // }
 
     w_mc.grpdata_size = i;
 
