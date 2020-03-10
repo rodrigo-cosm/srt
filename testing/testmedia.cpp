@@ -2001,7 +2001,6 @@ void SrtTarget::Write(const bytevector& data)
 
     if (have_group)
     {
-
         // For listener group this is not necessary. The group information
         // is updated in mctrl.
         UpdateGroupStatus(mctrl.grpdata, mctrl.grpdata_size);
