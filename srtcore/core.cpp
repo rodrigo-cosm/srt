@@ -13937,7 +13937,7 @@ void CUDTGroup::sendBackup_CheckNeedActivate(const vector<gli_t>& idlers,
     }
 }
 
-void CUDTGroup::send_CheckBrokenSockets(const vector<gli_t>& pending, vector<gli_t>& w_wipeme)
+void CUDTGroup::send_CheckPendingSockets(const vector<gli_t>& pending, vector<gli_t>& w_wipeme)
 {
     // If we have at least one stable link, then select a link that have the
     // highest priority and silence the rest.
@@ -13951,7 +13951,7 @@ void CUDTGroup::send_CheckBrokenSockets(const vector<gli_t>& pending, vector<gli
     //
     if (!pending.empty())
     {
-        HLOGC(dlog.Debug, log << "grp/sendBackup: found pending sockets, polling them.");
+        HLOGC(dlog.Debug, log << "grp/send*: found pending sockets, polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
@@ -13960,7 +13960,7 @@ void CUDTGroup::send_CheckBrokenSockets(const vector<gli_t>& pending, vector<gli
         if (m_SndEpolld->watch_empty())
         {
             // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "grp/sendBackup: IPE: reported pending sockets, but EID is empty - wiping pending!");
+            LOGC(dlog.Error, log << "grp/send*: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pending.begin(), pending.end(), back_inserter(w_wipeme));
         }
         else
@@ -13970,7 +13970,7 @@ void CUDTGroup::send_CheckBrokenSockets(const vector<gli_t>& pending, vector<gli
                 m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
             }
 
-            HLOGC(dlog.Debug, log << "grp/sendBackup: RDY: " << DisplayEpollResults(sready));
+            HLOGC(dlog.Debug, log << "grp/send*: RDY: " << DisplayEpollResults(sready));
 
             // sockets in EX: should be moved to w_wipeme.
             for (vector<gli_t>::const_iterator i = pending.begin(); i != pending.end(); ++i)
@@ -13978,7 +13978,7 @@ void CUDTGroup::send_CheckBrokenSockets(const vector<gli_t>& pending, vector<gli
                 gli_t d = *i;
                 if (CEPoll::isready(sready, d->id, SRT_EPOLL_ERR))
                 {
-                    HLOGC(dlog.Debug, log << "grp/sendBackup: Socket @" << d->id << " reported FAILURE - moved to wiped.");
+                    HLOGC(dlog.Debug, log << "grp/send*: Socket @" << d->id << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to w_wipeme. Remove from eid.
                     w_wipeme.push_back(d);
                     m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
@@ -13994,7 +13994,10 @@ void CUDTGroup::send_CheckBrokenSockets(const vector<gli_t>& pending, vector<gli
             m_pGlobal->m_EPoll.clear_ready_usocks(*m_SndEpolld, SRT_EPOLL_OUT);
         }
     }
+}
 
+void CUDTGroup::send_CloseBrokenSockets(vector<gli_t>& w_wipeme)
+{
     // Review the w_wipeme sockets.
     // The reason why 'w_wipeme' is kept separately to 'broken_sockets' is that
     // it might theoretically happen that ps becomes NULL while the item still exists.
@@ -14540,7 +14543,9 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
                 << (sendable.size() - nunstable) << " unstable=" << nunstable);
     }
 
-    send_CheckBrokenSockets(pending, (wipeme));
+    send_CheckPendingSockets(pending, (wipeme));
+
+    send_CloseBrokenSockets((wipeme));
 
     sendBackup_CheckParallelLinks(nunstable, (parallel), (final_stat), (none_succeeded), (w_mc), (cx));
 
@@ -15663,62 +15668,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         // and error-reported.
     }
 
-
-    // { sendBalancing_CheckBrokenSockets()
-
-    if (!pending.empty())
-    {
-        HLOGC(dlog.Debug, log << "grp/sendBroadcast: found pending sockets, polling them.");
-
-        // These sockets if they are in pending state, they should be added to m_SndEID
-        // at the connecting stage.
-        CEPoll::fmap_t sready;
-
-        if (m_SndEpolld->watch_empty())
-        {
-            // Sanity check - weird pending reported.
-            LOGC(dlog.Error, log << "grp/sendBroadcast: IPE: reported pending sockets, but EID is empty - wiping pending!");
-            copy(pending.begin(), pending.end(), back_inserter(wipeme));
-        }
-        else
-        {
-            {
-                InvertedLock ug (m_GroupLock);
-                m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
-            }
-
-            HLOGC(dlog.Debug, log << "grp/sendBroadcast: RDY: " << DisplayEpollResults(sready));
-
-            // sockets in EX: should be moved to wipeme.
-            for (vector<gli_t>::iterator i = pending.begin(); i != pending.end(); ++i)
-            {
-                gli_t d = *i;
-                int rdev = CEPoll::ready(sready, d->id);
-                if (rdev & SRT_EPOLL_ERR)
-                {
-                    HLOGC(dlog.Debug, log << "grp/sendBroadcast: Socket @" << d->id << " reported FAILURE - moved to wiped.");
-                    // Failed socket. Move d to wipeme. Remove from eid.
-                    wipeme.push_back(d);
-                    m_pGlobal->m_EPoll.remove_usock(m_SndEID, d->id);
-                }
-                else if (rdev & SRT_EPOLL_OUT)
-                {
-                    d->sndstate = GST_IDLE;
-                }
-            }
-
-            // After that, all sockets that have been reported
-            // as ready to write should be removed from EID. This
-            // will also remove those sockets that have been added
-            // as redundant links at the connecting stage and became
-            // writable (connected) before this function had a chance
-            // to check them.
-            m_pGlobal->m_EPoll.clear_ready_usocks(*m_SndEpolld, SRT_EPOLL_CONNECT);
-        }
-    }
-
-    // }
-
+    send_CheckPendingSockets(pending, (wipeme));
 
 
     // Do final checkups.
@@ -15766,49 +15716,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
         ready_again = ready_again | d->ps->writeReady();
     }
 
-    // { sendBalancing_CloseBrokenSockets
-
-    // Review the wipeme sockets.
-    // The reason why 'wipeme' is kept separately to 'broken_sockets' is that
-    // it might theoretically happen that ps becomes NULL while the item still exists.
-    vector<CUDTSocket*> broken_sockets;
-
-    // delete all sockets that were broken at the entrance
-    for (vector<gli_t>::iterator i = wipeme.begin(); i != wipeme.end(); ++i)
-    {
-        gli_t d = *i;
-        CUDTSocket* ps = d->ps;
-        if (!ps)
-        {
-            LOGC(dlog.Error, log << "grp/sendBalancing: IPE: socket NULL at id=" << d->id << " - removing from group list");
-            // Closing such socket is useless, it simply won't be found in the map and
-            // the internal facilities won't know what to do with it anyway.
-            // Simply delete the entry.
-            m_Group.erase(d);
-            continue;
-        }
-        broken_sockets.push_back(ps);
-    }
-
-    if (!broken_sockets.empty()) // Prevent unlock-lock cycle if no broken sockets found
-    {
-        // Lift the group lock for a while, to avoid possible deadlocks.
-        InvertedLock ug (m_GroupLock);
-
-        for (vector<CUDTSocket*>::iterator x = broken_sockets.begin(); x != broken_sockets.end(); ++x)
-        {
-            CUDTSocket* ps = *x;
-            HLOGC(dlog.Debug, log << "grp/sendBalancing: BROKEN SOCKET @" << ps->m_SocketID << " - CLOSING AND REMOVING.");
-
-            // NOTE: This does inside: ps->removeFromGroup().
-            // After this call, 'd' is no longer valid and *i is singular.
-            CUDT::s_UDTUnited.close(ps);
-        }
-    }
-
-    HLOGC(dlog.Debug, log << "grp/sendBalancing: - wiped " << wipeme.size() << " broken sockets");
-
-    // }
+    send_CloseBrokenSockets((wipeme));
 
     w_mc.grpdata_size = i;
 

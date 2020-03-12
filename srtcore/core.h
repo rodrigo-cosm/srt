@@ -377,7 +377,8 @@ private:
             CUDTException& w_cx, std::vector<Sendstate>& w_sendstates,
             std::vector<gli_t>& w_parallel, std::vector<gli_t>& w_wipeme,
             const std::string& activate_reason);
-    void send_CheckBrokenSockets(const std::vector<gli_t>& pending, std::vector<gli_t>& w_wipeme);
+    void send_CheckPendingSockets(const std::vector<gli_t>& pending, std::vector<gli_t>& w_wipeme);
+    void send_CloseBrokenSockets(std::vector<gli_t>& w_wipeme);
     void sendBackup_CheckParallelLinks(const size_t nunstable, std::vector<gli_t>& w_parallel,
             int& w_final_stat, bool& w_none_succeeded, SRT_MSGCTRL& w_mc, CUDTException& w_cx);
 
