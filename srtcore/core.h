@@ -360,10 +360,28 @@ public:
     int sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc);
     int old_sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc);
 
+private:
     // For Backup, sending all previous packet
     int sendBackupRexmit(CUDT& core, SRT_MSGCTRL& w_mc);
 
+    // Support functions for sendBackup and sendBroadcast
+    bool send_CheckIdle(const gli_t d, std::vector<gli_t>& w_wipeme, std::vector<gli_t>& w_pending);
+    void sendBackup_CheckIdleTime(gli_t w_d);
+    void sendBackup_CheckRunningStability(const gli_t d, const time_point currtime, size_t& w_nunstable);
+    bool sendBackup_CheckSendStatus(const gli_t d, const time_point& currtime, const int stat, const int erc, const int32_t lastseq,
+            const int32_t pktseq, CUDT& w_u, int32_t& w_curseq, std::vector<gli_t>& w_parallel,
+            int& w_final_stat, std::set<int>& w_sendable_pri, size_t& w_nsuccessful, size_t& w_nunstable);
+    void sendBackup_Buffering(const char* buf, const int len, int32_t& curseq, SRT_MSGCTRL& w_mc);
+    void sendBackup_CheckNeedActivate(const std::vector<gli_t>& idlers, const char *buf, const int len,
+            bool& w_none_succeeded, SRT_MSGCTRL& w_mc, int32_t& w_curseq, int32_t& w_final_stat,
+            CUDTException& w_cx, std::vector<Sendstate>& w_sendstates,
+            std::vector<gli_t>& w_parallel, std::vector<gli_t>& w_wipeme,
+            const std::string& activate_reason);
+    void send_CheckBrokenSockets(const std::vector<gli_t>& pending, std::vector<gli_t>& w_wipeme);
+    void sendBackup_CheckParallelLinks(const size_t nunstable, std::vector<gli_t>& w_parallel,
+            int& w_final_stat, bool& w_none_succeeded, SRT_MSGCTRL& w_mc, CUDTException& w_cx);
 
+public:
     int recv(char* buf, int len, SRT_MSGCTRL& w_mc);
     int recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mc);
 
@@ -522,7 +540,6 @@ private:
 
 public:
 
-    // XXX unused now 
     struct BufferedMessageStorage
     {
         size_t blocksize;
@@ -596,14 +613,19 @@ public:
         {
             // This is only to copy empty container.
             // Any other use should not be done.
-#if ENABLE_DEBUG
-            if (foreign.data)
-                abort();
-#endif
+//#if ENABLE_DEBUG
+//            if (foreign.data)
+//                abort();
+//#endif
         }
 
     private:
-        friend void fwd_swap(BufferedMessage&, BufferedMessage&);
+        void swap_with(BufferedMessage& b)
+        {
+            std::swap(this->mc, b.mc);
+            std::swap(this->data, b.data);
+            std::swap(this->size, b.size);
+        }
     };
 
     typedef std::deque< BufferedMessage > senderBuffer_t;
@@ -793,7 +815,7 @@ public:
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool,           managed,              m_selfManaged);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type,                 m_type);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t,        currentSchedSequence, m_iLastSchedSeqNo);
-    SRTU_PROPERTY_RRW(std::set<int>&, epollset, m_sPollID);
+    SRTU_PROPERTY_RRW(                std::set<int>&, epollset,             m_sPollID);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int64_t,        latency,              m_iTsbPdDelay_us);
 
     /*
@@ -806,21 +828,6 @@ public:
     */
 };
 
-inline void fwd_swap(CUDTGroup::BufferedMessage& a, CUDTGroup::BufferedMessage& b)
-{
-    CUDTGroup::BufferedMessage tmp;
-    tmp = a;
-    a = b;
-    b = tmp;
-    tmp.data = 0;
-}
-
-namespace std
-{
-    template<>
-    inline void swap(CUDTGroup::BufferedMessage& a, CUDTGroup::BufferedMessage& b)
-    { ::fwd_swap(a, b); }
-}
 
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
 // There's no reason for separating them, there's no case of having them
@@ -847,7 +854,6 @@ class CUDT
     typedef srt::sync::steady_clock::duration duration;
 
 private: // constructor and desctructor
-
     void construct();
     void clearData();
     CUDT(CUDTSocket* parent);
@@ -867,9 +873,10 @@ public: //API
     static int configureGroup(SRTSOCKET groupid, const char* str);
     static bool isgroup(SRTSOCKET sock) { return (sock & SRTGROUP_MASK) != 0; }
     static int bind(SRTSOCKET u, const sockaddr* name, int namelen);
-    static int bind(SRTSOCKET u, int udpsock);
+    static int bind(SRTSOCKET u, UDPSOCKET udpsock);
     static int listen(SRTSOCKET u, int backlog);
     static SRTSOCKET accept(SRTSOCKET u, sockaddr* addr, int* addrlen);
+    static SRTSOCKET accept_bond(const SRTSOCKET listeners [], int lsize, int64_t msTimeOut);
     static int connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
     static int connect(SRTSOCKET u, const sockaddr* name, const sockaddr* tname, int namelen);
     static int connectLinks(SRTSOCKET grp, SRT_SOCKGROUPDATA links [], int arraysize);
@@ -1354,7 +1361,7 @@ private: // Identification
     bool m_bOPT_TLPktDrop;           // Whether Agent WILL DO TLPKTDROP on Rx.
     int m_iOPT_SndDropDelay;         // Extra delay when deciding to snd-drop for TLPKTDROP, -1 to off
     bool m_bOPT_StrictEncryption;    // Off by default. When on, any connection other than nopw-nopw & pw1-pw1 is rejected.
-    bool m_bOPT_GroupConnect;
+    int m_OPT_GroupConnect;
     std::string m_sStreamName;
     int m_iOPT_PeerIdleTimeout;      // Timeout for hearing anything from the peer.
     uint32_t m_uOPT_StabilityTimeout;
@@ -1470,7 +1477,6 @@ private: // Timers
     //   always increased by one in this call, otherwise it will be increased by the number of blocks
     //   scheduled for sending.
 
-    //int32_t m_iLastDecSeq;                       // Sequence number sent last decrease occurs (actually part of FileCC, formerly CUDTCC)
     int32_t m_iSndLastAck2;                      // Last ACK2 sent back
     time_point m_SndLastAck2Time;                // The time when last ACK2 was sent back
     void setInitialSndSeq(int32_t isn)

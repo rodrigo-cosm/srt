@@ -564,36 +564,11 @@ public:
 
    void tick();
 
-public:
-
-      /// trigger an event such as new connection, close, new data, etc. for "select" call.
-
-   static void triggerEvent();
-
-   enum EWait {WT_EVENT, WT_ERROR, WT_TIMEOUT};
-
-      /// wait for an event to br triggered by "triggerEvent".
-      /// @retval WT_EVENT The event has happened
-      /// @retval WT_TIMEOUT The event hasn't happened, the function exited due to timeout
-      /// @retval WT_ERROR The function has exit due to an error
-
-   static EWait waitForEvent();
-   
-      /// Wait for condition with timeout 
-      /// @param [in] cond Condition variable to wait for
-      /// @param [in] mutex locked mutex associated with the condition variable
-      /// @param [in] delay timeout in microseconds
-      /// @retval 0 Wait was successfull
-      /// @retval ETIMEDOUT The wait timed out
-
 private:
    srt::sync::steady_clock::time_point m_tsSchedTime;             // next schedulled time
 
    pthread_cond_t m_TickCond;
    srt::sync::Mutex m_TickLock;
-
-   static pthread_cond_t m_EventCond;
-   static srt::sync::Mutex m_EventLock;
 };
 
 // UDT Sequence Number 0 - (2^31 - 1)
@@ -634,7 +609,7 @@ public:
        return seqcmp(value, other.value) <= 0;
    }
 
-   // rounded arithmetics
+   // circular arithmetics
    friend int operator-(const CSeqNo& c1, const CSeqNo& c2)
    {
        return seqoff(c2.value, c1.value);
@@ -742,7 +717,6 @@ public:
    static const int32_t m_iMaxSeqNo = 0x7FFFFFFF;            // maximum sequence number used in UDT
 };
 
-
 ////////////////////////////////////////////////////////////////////////////////
 
 // UDT ACK Sub-sequence Number: 0 - (2^31 - 1)
@@ -770,7 +744,6 @@ public:
     static const size_t HALF = (OVER-MIN)/2;
 
 private:
-
     static int Diff(uint32_t left, uint32_t right)
     {
         // UNExpected order, diff is negative
@@ -798,7 +771,6 @@ private:
     }
 
 public:
-
     explicit RollNumber(uint32_t val): number(val)
     {
     }
@@ -909,7 +881,6 @@ class StatsLossRecords
     std::bitset<SIZE> array;
 
 public:
-
     StatsLossRecords(): initseq(-1) {}
 
     // To check if this structure still keeps record of that sequence.
@@ -1057,7 +1028,6 @@ public:
     CircularBuffer(const CircularBuffer&);
 
 public:
-
     typedef Value value_type;
 
     CircularBuffer(int size)
@@ -1100,7 +1070,6 @@ public:
         {
             for (int i = m_xBegin; i < m_xEnd; ++i)
                 destr(m_aStorage[i]);
-
         }
 
         m_xBegin = 0;
@@ -1290,7 +1259,6 @@ private:
     }
 
 public:
-
     bool set(int position, const Value& newval, bool overwrite = true)
     {
         Value* pval = 0;
@@ -1443,7 +1411,7 @@ inline int32_t SrtParseVersion(const char* v)
         return 0;
     }
 
-    return major*0x10000 + minor*0x100 + patch;
+    return SrtVersion(major, minor, patch);
 }
 
 inline std::string SrtVersionString(int version)

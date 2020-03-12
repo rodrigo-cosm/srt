@@ -266,18 +266,7 @@ void TestSyncWaitFor()
 {
     Condition  cond;
     Mutex mutex;
-#if ENABLE_MONOTONIC_CLOCK
-    if (TEST_MONOTONIC_CLOCK)
-    {
-        setupCond_monotonic(cond, "cond");
-    }
-    else
-    {
-        setupCond(cond, "cond");
-    }
-#else
     setupCond(cond, "cond");
-#endif
     setupMutex(mutex, "mutex");
 
     for (int tout_us : {50, 100, 500, 1000, 101000, 1001000})
