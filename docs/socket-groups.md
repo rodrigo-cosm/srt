@@ -1,6 +1,4 @@
-
-Abstract
-========
+# Abstract
 
 The general concept of the socket groups means that a separate entity,
 parallel to a socket, is provided, and the operation done on a group
@@ -38,8 +36,7 @@ is still sent over the unicast link.
 Details for the group types:
 
 
-1. Broadcast
--------------
+## 1. Broadcast
 
 This is the simplest bonding group type. The payload sent for a group will be
 then sent over every single link in the group simultaneously. On the reception
@@ -56,8 +53,7 @@ links in the group, whereas only one link at a time delivers any useful data.
 Every next link in this group gives then another 100% overhead.
 
 
-2. Backup
----------
+## 2. Backup
 
 This solution is more complicated and more challenging for the settings,
 and in contradiction to Broadcast group, it costs some penalties.
@@ -103,9 +99,9 @@ take over sending, although as this is resolved through sorting, then
 whichever link out of those with the same priority would take over when
 all links are stable is undefined.
 
-Note that this group has an advantage over Backup in that it allows you
+Note that this group has an advantage over Broadcast in that it allows you
 to implement link redundancy with a very little overhead, as it keeps the
-link utilization at minimum. It costs you some penalties, however:
+extra link utilization at minimum. It costs you some penalties, however:
 
 1. Latency penalty. The latency set on the connection used with backup
 groups must be at minimum twice the value of `SRTO_GROUPSTABTIMEO` option,
@@ -114,83 +110,85 @@ switch into the backup link connected with resending all non-ACK-ed packets
 might not be on time as required to play them. Your latency setting must be
 able to compensate not only usual loss-retransmission time, but also the
 time to realize that the link might be broken and time required for resending
-all unacknowledge packets, before the time to play comes from the received
+all unacknowledged packets, before the time to play comes for the received
 packets. If this time isn't met, packets will be dropped and your advantage
-of having the backup link will evaporate. According to the tests on the local
-network it turns out that the most sensible unstability timeout is about 50ms,
-while normally ACK timeout is 30ms, so extra 100ms latency tax seems to be an
-absolute minimum.
+of having the backup link might be impaired. According to the tests on the
+local network it turns out that the most sensible unstability timeout is about
+50ms, while normally ACK timeout is 30ms, so extra 100ms latency tax seems to
+be an absolute minimum.
 
 2. Bandwidth penalty. Note that in case when the Backup group activates
 another link, it must resend all packets that haven't been acknowledged,
 which is simply the least risk taken for a case that a link got suddenly
 broken. However, how many packets have been collected, depends on a luck,
 and worst case scenario it may need to resend as many packets as it is
-normally collected between two ACK events - in case when the link broken
+normally collected between two ACK events - in case when the link got broken
 exactly at the moment when packets were about to be acknowledged. The
 link switch always means a large burst of packets to be sent at that
 moment - so the mechanism needs large enough time to send them and to
 consider them for delivery. However, if your bandwidth limit is too strong,
-sending these packets will be dampered possibly too much to live up to
+sending these packets might be dampened possibly too much to live up to
 the required time to play. It is unknown as to what recommendations should
 be used for that case, although it is usually more required than to
 compensate a burst for retransmission and also the maximum burst size
 is dependent on the bitrate, in particular, how many packets would be
-collected between to acknowledgement events.
+collected between two acknowledgement events. It might be not that touch
+as it seems from this description, as it's about starting a transmission
+over an earlier not used link, so there's some chance that the link will
+withstand the initial high burst of packets, while then the bitrate will
+become stable - but still, some extra latency might be needed to compensate
+any quite probable packet loss that may occur during this process.
 
 
-
-3. Balancing
-------------
+## 3. Balancing
 
 The idea of balancing means that there are multiple network links used for
 carrying out the same transmission, however a single input signal should
 distribute the incoming packets between the links so that one link can
 leverage the bandwith burden of the other. Note that this group is not
-directly used as protection - it is normally predicted to work with a
+directly used as protection - it is normally intended to work with a
 condition that a single link out of all links in the group would not be
-able to withstand the bitrate of the signal, and the best case protection
-could be when you use, for example, three links currently, while two
-would be able to withstand the bitrate of the signal, or when you have
-two links to carry the signal normally and one backup that would take
-over when one of these two gets broken.
+able to withstand the bitrate of the signal. In order to utilize a
+protection, the mechanism should quickly detect a link as broken so
+that packets lost on the broken link can be resent over the others,
+but no such mechanism has been provided for balancing group.
 
-In the current implementation there's used the simplest proof-of-concept
-method by simply using a roll-counter for sending - after sending a packet
-over particular link, next packet will be sent over another link.
+As there could be various ways as to how to implement balancing
+algorithm, there's a framework provided to implement various methods,
+and two algorithms are currently provided:
 
-The concept of balancing embraces various different method and algorithms
-not determined exactly at this moment, but some possible concepts are:
+1. `plain` (default). This is a simple round-robin - next link selected
+to send the next packet is the oldest used so far.
+
+2. `window`. This algorithm is performing cyclic measurement of the
+minimum flight window and this way determines the "cost of sending"
+of a packet over particular link. The link is then "paid" for sending
+a packet appropriate "price", which is collected in the link's "pocket".
+To send the next packet the link with lowest state of the "pocket" is
+selected. The "cost of sending" measurement is being repeated once per
+a time with a distance of 16 packets on each link.
+
+There are possible also other methods and algorithms, like:
 
 a) Explicit share definition. You declare, how much bandwidth you expect
-the links to withstand as a percentage of the signal's bitrate. This can
-sum up to more than 100%, for a case when you predict that one broken link
-need not mean broken connection, if you still have at least 100% from
-the remaining links. Otherwise when it falls below 100% from all alive
-links, the group-wise link needs to be closed.
+the links to withstand as a percentage of the signal's bitrate. This
+shall not exceed 100%. This is merely like the above Window algorithm,
+but the "cost of sending" is defined by this percentage.
 
-b) Dynamic balancing. We start with all links having the internal same
-bitrate share (for some short time since the connection it should use
-the initial link rolling). Then, basing on the measurements as to how
-big percantage of the link bandwidth is in use for the current distribution
-levels, a share rebalancing should happen so that every link uses more-less
-the same percentage of its bandwidth. This should involve measurements
-and traffic shaping done similarly as for the file transmission, so
-the actual result expected to be achieved is to have also the least
-number of lost packets overall - so when the usage percentage for
-particular link needs to be smaller at the expense of leveraging the
-burden by other links, when this achieves less lost packets on this
-link without increasing packet loss rate on the others, this state is
-more preferred. Dynamic balancing may also have various versions, depending
-on how we define best utilization - for example, we may also treat
-the size of the congestion window as a measurement of the link load
-and keep the least possible load on every link.
+b) Bandwidth measurement. This relies on the fact that the current
+sending on particular link should use only some percentage of its
+overall possible bandwidth. This requires a reliable way of measuring
+the bandwidth, which is currently not good enough yet. This needs to
+use a similar method as in "window" algorithm, that is, start with
+equal round-robin and then perform actively a measurement and update
+the cost of sending by assigning so much of a share of the signal
+bitrte as it is represented by the share of the link in the sum of
+all maximum bandwidth values from every link.
 
 
-4. Multicast (NOT IMPLEMENTED - a concept)
-------------------------------------------
+## 4. Multicast (NOT IMPLEMENTED - a concept)
 
-This group - unlike all others - is not predicted to send one signal
+This group - unlike all others - is not intended to send one signal
 between two network nodes over multiple links, but rather a method of
 receiving a data stream sent from a stream server by multiple receivers.
 
@@ -215,14 +213,13 @@ Nevertheless, the advantage here is that the same data stream is sent
 once instead of being sent multiple times over the same link, at least
 between the stream sender and the router.
 
-The multicast groups in SRT are predicted to use this very advantage.
+The multicast groups in SRT are intended to use this very advantage.
 
-While the connection still must be maintained as before, the dedicted
-UDP link that results from it is predicted to carry out only the control
-traffic. For the data traffic there would be a UDP multicast group IP
-address established and all nodes that connect to the stream sender using
-a multicast group will then receive the data stream from the multicast
-group.
+While the connection still must be maintained as before, the dedicated
+UDP link that results from it is to carry out only the control traffic. For the
+data traffic there would be a UDP multicast group IP address established and
+all nodes that connect to the stream sender using a multicast group will then
+receive the data stream from the multicast group.
 
 This method has limitations on the connection setup. You should then
 make a listener on the side where you want to have a stream sender, and
@@ -243,7 +240,7 @@ if more than 2 links report a loss of the exactly same packet, the
 retransmission may use the multicast link instead of the individual
 link - whichever would spare more bandwidth would be used.
 
-Predicted implementation:
+Potential implementation:
 
 Instead of `groupconnect` option set to true, you have to set the
 `multicast` option to a nonempty string of any contents (just limited
@@ -307,8 +304,7 @@ however all control packets will be still sent the same way as before,
 that is, over a direct connection.
 
 
-Socket groups in SRT
-====================
+# Socket groups in SRT
 
 The general idea of groups is that there can be multiple sockets belonging
 to a group, and various operations, normally done on single sockets, can
@@ -335,9 +331,9 @@ Similarly, the reading operation will read over all links and due to
 synchronized sequence numbers use them to decide the payload order: when
 the very next packet has been receiver over any link, it will be delivered,
 and when older than that, it will be discarded. The TSBPD mechanism is used to
-determine the order in case when a packet was decided to be dropped. That is,
-if a packet drop occurs, it will happen that a packet that has jumped-over a
-sequence will be first ready to play.
+determine the order in case when a packet was decided to be dropped on
+particular link. That is, if a packet drop occurs, then simply the same
+packet received over another link will be still earlier ready to play.
 
 The difference in reading between groups is that:
 
@@ -348,17 +344,16 @@ used to sort packets out
 (sequence numbers are not synchronized)
 
 - For Multicast group, there's only one link at the receiver side group,
-just the group contains additional socket that is predicted to read from
-the multicast group, in case when packets are expected to be read. By
-having the target specified as the group id, it gets correctly dispatched
-to this channel's own buffer and delivered. For this purpose, however,
-payloads sent over the multicast link must have the target defined as the
-group ID so that all data in the header look exactly the same way depite
-being predicted to be received by various different network nodes.
+just the group contains additional socket that should read from the multicast
+group, in case when packets are expected to be read. By having the target
+specified as the group id, it gets correctly dispatched to this channel's own
+buffer and delivered. For this purpose, however, payloads sent over the
+multicast link must have the target defined as the group ID so that all data in
+the header look exactly the same way depite being intended to be received by
+various different network nodes.
 
 
-How to prepare connection for bonded links
-==========================================
+# How to prepare connection for bonded links
 
 In the listener-caller setup, you have to take care of the side separately.
 
@@ -396,8 +391,7 @@ to you.
 On the caller the matter is a little bit more complicated.
 
 
-Connect bonded
-==============
+# Connect bonded
 
 At first, please remember that the official function to create a socket is now
 `srt_create_socket` and it gets no arguments. All previous functions to create
@@ -479,8 +473,7 @@ the only way how you can define the outgoing port for a socket that belongs
 to a managed group).
 
 
-Maintaining link activity
-=========================
+# Maintaining link activity
 
 A link can get broken, and the only thing that the library does about it is
 make you aware of it. The bonding group, as managed, will simply delete the
@@ -524,8 +517,7 @@ by `srt_sendmsg2` or `srt_recvmsg2`.
 
 
 
-Writing data to a bonded link
-=============================
+# Writing data to a bonded link
 
 This is very simple. Call the sending function (recommended is `srt_sendmsg2`)
 to send the data, passing group ID in the place of socket ID. By recognizing
@@ -550,8 +542,7 @@ throughout the link and never go in the order of scheduling on one link.
 Therefore this group uses message numbers for ordering.
 
 
-Reading data from a bonded link
-===============================
+# Reading data from a bonded link
 
 This is also simple from the user's perspective. Simply call the reading
 function, such as `srt_recvmsg2`, passing the group ID instead of socket
@@ -564,8 +555,7 @@ order and at the time to play, and the redundant payloads retrieved over
 different links simultaneously will be discarded.
 
 
-Checking the status
-===================
+# Checking the status
 
 If you call `srt_sendmsg2` or `srt_recvmsg2`, you'll get the status of every
 socket in the group in a part of the `SRT_MSGCTRL` structure, where you should
@@ -635,8 +625,7 @@ And finally, a group can be closed. In this case, it internally closes first
 all sockets that are members of this group, then the group itself is deleted.
 
 
-Application support
-===================
+# Application support
 
 Currently only the `srt-test-live` application is supporting a syntax for
 socket groups.
