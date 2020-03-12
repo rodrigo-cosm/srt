@@ -32,6 +32,8 @@
 #include <srt.h>
 #include <logging.h>
 
+srt_logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-live");
+
 // Make the windows-nonexistent alarm an empty call
 #ifdef _WIN32
 #define alarm(argument) (void)0

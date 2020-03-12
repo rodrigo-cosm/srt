@@ -1073,8 +1073,13 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
         bool active = (find_if(grpdata, gend,
                     [&n] (const SRT_SOCKGROUPDATA& sg) { return sg.id == n.socket; }) != gend);
         if (!active)
+        {
+            applog.Debug() << "NODE: " << n.host << ":" << n.port << " @" << n.socket << " missing in group data. RESETTING TO -1.";
             n.socket = SRT_INVALID_SOCK;
+        }
     }
+
+    applog.Debug() << "GROUP: received " << grpdata_size << " sockets in the group";
 
     // Note: sockets are not necessarily in the same order. Find
     // the socket by id.
@@ -1088,9 +1093,13 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
 
         if (result != -1 && status == SRTS_CONNECTED)
         {
+            applog.Debug() << "GROUP[" << i << "] @" << id << " -- CONNECTED, ok.";
             // Everything's ok. Don't do anything.
             continue;
         }
+        applog.Debug() << "GROUP[" << i << "] @" << id << " -- result=" << result
+            << " status=" << SockStatusStr(status) << " -- EXPECT REMOVED";
+
         // id, status, result, peeraddr
         Verb() << "GROUP SOCKET: @" << id << " <" << SockStatusStr(status) << "> (=" << result << ") PEER:"
             << SockaddrToString(sockaddr_any((sockaddr*)&d.peeraddr, sizeof d.peeraddr));
