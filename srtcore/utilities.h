@@ -716,6 +716,21 @@ void FilterIf(InputIterator bg, InputIterator nd,
     }
 }
 
+#if HAVE_CXX11
+// std::result_of can't be used, while
+// what we need here is the return type of
+// the given function signature.
+
+template <class Whatever>
+struct FunctionResult;
+
+template <typename Return, typename... Args>
+struct FunctionResult<Return(Args...)>
+{
+    typedef Return type;
+};
+#endif
+
 template <class Signature>
 struct CallbackHolder
 {
@@ -747,7 +762,7 @@ struct CallbackHolder
     // This is a possible implementation for C++11.
     // For C++03, unfortunately, use the below CALLBACK_CALL macro.
     template <typename... Args>
-    std::result_of<Signature>::type call(Args&&... args)
+    typename FunctionResult<Signature>::type call(Args&&... args)
     {
         return (*fn)(opaque, std::forward(args)...);
     }

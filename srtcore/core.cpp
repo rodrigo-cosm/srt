@@ -12104,7 +12104,8 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (stat != -1)
             curseq = mc.pktseq;
 
-        sendstates.push_back( (Sendstate) {d, stat, erc});
+        Sendstate estate = {d, stat, erc};
+        sendstates.push_back(estate);
         d->sndresult = stat;
         d->laststatus = d->ps->getStatus();
     }
@@ -12198,7 +12199,8 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         d->sndresult = stat;
         d->laststatus = d->ps->getStatus();
 
-        sendstates.push_back( (Sendstate) {d, stat, erc});
+        Sendstate estate = {d, stat, erc};
+        sendstates.push_back(estate);
     }
 
     if (curseq != -1)
@@ -12455,7 +12457,8 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 if (stat != -1)
                     curseq = mc.pktseq;
 
-                sendstates.push_back( (Sendstate) {d, stat, erc});
+                Sendstate estate = {d, stat, erc};
+                sendstates.push_back(estate);
                 d->sndresult = stat;
                 d->laststatus = d->ps->getStatus();
             }
@@ -14108,7 +14111,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 ++nunstable;
         }
 
-        sendstates.push_back( (Sendstate) {d, stat, erc});
+        Sendstate estate = {d, stat, erc};
+        sendstates.push_back(estate);
         d->sndresult = stat;
         d->laststatus = d->ps->getStatus();
     }
@@ -14326,7 +14330,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             d->sndresult = stat;
             d->laststatus = d->ps->getStatus();
 
-            sendstates.push_back( (Sendstate) {d, stat, erc});
+            Sendstate estate = {d, stat, erc};
+            sendstates.push_back(estate);
 
             if (stat != -1)
             {
@@ -16403,7 +16408,8 @@ int CUDTGroup::old_sendBalancing(const char* buf, int len, ref_t<SRT_MSGCTRL> r_
                     }
                 }
 
-                sendstates.push_back( (Sendstate) {d, stat, erc});
+                Sendstate estate = {d, stat, erc};
+                sendstates.push_back(estate);
                 d->sndresult = stat;
                 d->laststatus = d->ps->getStatus();
             }
