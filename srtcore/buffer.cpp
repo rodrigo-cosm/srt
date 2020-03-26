@@ -248,7 +248,7 @@ void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
     // in comparison, although it's far from reaching the sign bit.
 
     int nextmsgno = ++MsgNo(m_iNextMsgNo);
-    HLOGC(mglog.Debug, log << "CSndBuffer::addBuffer: updating msgno: #" << m_iNextMsgNo << " -> #" << nextmsgno);
+    HLOGC(bslog.Debug, log << "CSndBuffer::addBuffer: updating msgno: #" << m_iNextMsgNo << " -> #" << nextmsgno);
     m_iNextMsgNo = nextmsgno;
 }
 
@@ -396,7 +396,7 @@ int CSndBuffer::readData(CPacket& w_packet, steady_clock::time_point& w_srctime,
 
    if (kflgs == -1)
    {
-       HLOGC(bslog.Debug, log << CONID() << " CSndBuffer: ERROR: encryption required and not possible. NOT SENDING.");
+       HLOGC(qslog.Debug, log << CONID() << " CSndBuffer: ERROR: encryption required and not possible. NOT SENDING.");
        readlen = 0;
    }
    else
@@ -413,7 +413,7 @@ int CSndBuffer::readData(CPacket& w_packet, steady_clock::time_point& w_srctime,
 
    m_pCurrBlock = m_pCurrBlock->m_pNext;
 
-   HLOGC(bslog.Debug, log << CONID() << "CSndBuffer: extracting packet size=" << readlen << " to send");
+   HLOGC(qslog.Debug, log << CONID() << "CSndBuffer: extracting packet size=" << readlen << " to send");
 
    return readlen;
 }
@@ -507,7 +507,7 @@ int CSndBuffer::readData(const int offset, CPacket& w_packet, steady_clock::time
          w_msglen++;
       }
 
-      HLOGC(bslog.Debug, log << "CSndBuffer::readData: due to TTL exceeded, " << w_msglen << " messages to drop, up to " << msgno);
+      HLOGC(qslog.Debug, log << "CSndBuffer::readData: due to TTL exceeded, " << w_msglen << " messages to drop, up to " << msgno);
 
       // If readData returns -1, then msgno_bitset is understood as a Message ID to drop.
       // This means that in this case it should be written by the message sequence value only
@@ -534,7 +534,7 @@ int CSndBuffer::readData(const int offset, CPacket& w_packet, steady_clock::time
       p->m_ullSourceTime_us ? p->m_ullSourceTime_us :
       p->m_tsOriginTime;*/
 
-   HLOGC(bslog.Debug, log << CONID() << "CSndBuffer: getting packet %"
+   HLOGC(qslog.Debug, log << CONID() << "CSndBuffer: getting packet %"
            << p->m_iSeqNo << " as per %" << w_packet.m_iSeqNo
            << " size=" << readlen << " to send [REXMIT]");
 
@@ -861,7 +861,7 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
       m_iMaxPos = offset + 1;
 
    if (m_pUnit[pos] != NULL) {
-      HLOGC(brlog.Debug, log << "addData: unit %" << unit->m_Packet.m_iSeqNo
+      HLOGC(qrlog.Debug, log << "addData: unit %" << unit->m_Packet.m_iSeqNo
               << " rejected, already exists");
       return -1;
    }
@@ -870,7 +870,7 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
 
    m_pUnitQueue->makeUnitGood(unit);
 
-   HLOGC(brlog.Debug, log << "addData: unit %" << unit->m_Packet.m_iSeqNo
+   HLOGC(qrlog.Debug, log << "addData: unit %" << unit->m_Packet.m_iSeqNo
            << " accepted, off=" << offset << " POS=" << pos);
    return 0;
 }

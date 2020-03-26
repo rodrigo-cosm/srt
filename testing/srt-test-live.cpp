@@ -555,6 +555,7 @@ int main( int argc, char** argv )
                     en10 = entry.first/10;
                 }
             }
+            cerr << endl;
 
             return 1;
         }
