@@ -805,7 +805,8 @@ public: //API
     static bool setstreamid(SRTSOCKET u, const std::string& sid);
     static std::string getstreamid(SRTSOCKET u);
     static int getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes);
-    static SRT_REJECT_REASON rejectReason(SRTSOCKET s);
+    static int rejectReason(SRTSOCKET s);
+    static int rejectReason(SRTSOCKET s, int value);
 
 public: // internal API
     // This is public so that it can be used directly in API implementation functions.
@@ -1034,6 +1035,7 @@ private:
     SRT_ATR_NODISCARD int processSrtMsg_HSREQ(const uint32_t* srtdata, size_t len, uint32_t ts, int hsv);
     SRT_ATR_NODISCARD int processSrtMsg_HSRSP(const uint32_t* srtdata, size_t len, uint32_t ts, int hsv);
     SRT_ATR_NODISCARD bool interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uint32_t* out_data, size_t* out_len);
+                      void interpretRejectionMessage(const CHandShake& hs, const CPacket& pkt);
     SRT_ATR_NODISCARD bool checkApplyFilterConfig(const std::string& cs);
 
     static CUDTGroup& newGroup(const int); // defined EXCEPTIONALLY in api.cpp for convenience reasons
@@ -1291,7 +1293,7 @@ private:
     volatile bool m_bShutdown;                   // If the peer side has shutdown the connection
     volatile bool m_bBroken;                     // If the connection has been broken
     volatile bool m_bPeerHealth;                 // If the peer status is normal
-    volatile SRT_REJECT_REASON m_RejectReason;
+    volatile int m_RejectReason;
     bool m_bOpened;                              // If the UDT entity has been opened
     int m_iBrokenCounter;                        // a counter (number of GC checks) to let the GC tag this socket as disconnected
 
@@ -1517,7 +1519,10 @@ private: // Generation and processing of packets
 
     int processData(CUnit* unit);
     void processClose();
-    SRT_REJECT_REASON processConnectRequest(const sockaddr_any& addr, CPacket& packet);
+
+    /// Returns: URQ code, possibly containing reject reason
+    int processConnectRequest(const sockaddr_any& addr, CPacket& packet);
+    size_t addHandshakeExtension(char *data, int cmd, size_t hs_size, std::string contents);
     static void addLossRecord(std::vector<int32_t>& lossrecord, int32_t lo, int32_t hi);
     int32_t bake(const sockaddr_any& addr, int32_t previous_cookie = 0, int correction = 0);
     int32_t ackDataUpTo(int32_t seq);

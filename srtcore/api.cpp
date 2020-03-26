@@ -470,7 +470,7 @@ SRTSOCKET CUDTUnited::newSocket(CUDTSocket** pps)
 }
 
 int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, const CPacket& hspkt,
-        CHandShake& w_hs, SRT_REJECT_REASON& w_error)
+        CHandShake& w_hs, int& w_error, string& w_streaminfo)
 {
    CUDTSocket* ns = NULL;
 
@@ -549,6 +549,8 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
       return -1;
    }
 
+   ns->m_pUDT->m_RejectReason = SRT_REJ_UNKNOWN; // pre-set a universal value
+
    try
    {
        ns->m_SocketID = generateSocketID();
@@ -586,6 +588,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    // CUDT::open() may only throw original std::bad_alloc from new.
    // This is only to make the library extra safe (when your machine lacks
    // memory, it will continue to work, but fail to accept connection).
+
    try
    {
        // This assignment must happen b4 the call to CUDT::connect() because
@@ -607,6 +610,11 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
        {
            if (!ls->m_pUDT->runAcceptHook(ns->m_pUDT, peer.get(), w_hs, hspkt))
            {
+               w_error = ns->m_pUDT->m_RejectReason;
+
+               // Save the STREAMID contents in case when a user changed it
+               // in the listener callback
+               w_streaminfo = ns->m_pUDT->m_sStreamName;
                error = 1;
                goto ERR_ROLLBACK;
            }
@@ -777,11 +785,12 @@ ERR_ROLLBACK:
 #if ENABLE_LOGGING
        static const char* why [] = {
            "UNKNOWN ERROR",
-           "CONNECTION REJECTED",
+           "EXPLICIT REJECTION",
            "IPE when mapping a socket",
            "IPE when inserting a socket"
        };
-       LOGC(calog.Error, log << CONID(ns->m_SocketID) << "newConnection: connection rejected due to: " << why[error]);
+       LOGC(calog.Error, log << CONID(ns->m_SocketID) << "newConnection: connection rejected due to: "
+               << why[error] << " - " << RequestTypeStr(URQFailure(w_error)));
 #endif
       SRTSOCKET id = ns->m_SocketID;
       ns->makeClosed();
@@ -4176,9 +4185,14 @@ SRT_API std::string getstreamid(SRTSOCKET u)
     return CUDT::getstreamid(u);
 }
 
-SRT_REJECT_REASON getrejectreason(SRTSOCKET u)
+int getrejectreason(SRTSOCKET u)
 {
     return CUDT::rejectReason(u);
+}
+
+int setrejectreason(SRTSOCKET u, int value)
+{
+    return CUDT::rejectReason(u, value);
 }
 
 }  // namespace UDT
