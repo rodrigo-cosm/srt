@@ -571,19 +571,62 @@ enum SRT_REJECT_REASON
 // Logger Functional Areas
 // Note that 0 is "general".
 
-// Made by #define so that it's available also for C API.
-#define SRT_LOGFA_GENERAL   0
-#define SRT_LOGFA_BSTATS    1
-#define SRT_LOGFA_CONTROL   2
-#define SRT_LOGFA_DATA      3
-#define SRT_LOGFA_TSBPD     4
-#define SRT_LOGFA_REXMIT    5
-#define SRT_LOGFA_HAICRYPT  6
-#define SRT_LOGFA_CONGEST   7
+// XXX This part should better be generated
+// from logging_defs.inc.cpp, but this would require
+// that either whole srt.h is partially generated, or
+// this should be kept in a separate file.
 
-// To make a typical int32_t size, although still use std::bitset.
+// Values 0* - general, unqualified
+// Values 1* - control
+// Values 2* - receiving
+// Values 3* - sending
+// Values 4* - management
+
+
+// Made by #define so that it's available also for C API.
+// NOTE:
+// Use ../scripts/generate-logging-defs.tcl to regenerate.
+
+#define SRT_LOGFA_GENERAL    0 // gg
+#define SRT_LOGFA_MGMT       1 // mg
+#define SRT_LOGFA_CONN       2 // ca
+#define SRT_LOGFA_XTIMER     3 // xt
+#define SRT_LOGFA_TSBPD      4 // ts
+#define SRT_LOGFA_RSRC       5 // rs
+#define SRT_LOGFA_HAICRYPT   6 // hc
+#define SRT_LOGFA_CONGEST    7 // cc
+#define SRT_LOGFA_PFILTER    8 // pf
+
+#define SRT_LOGFA_APPLOG     10 // ap
+#define SRT_LOGFA_API_CTRL   11 // ac
+
+#define SRT_LOGFA_QUE_CTRL   13 // qc
+
+#define SRT_LOGFA_EPOLL_UPD  16 // ei
+
+#define SRT_LOGFA_API_RECV   21 // ar
+#define SRT_LOGFA_BUF_RECV   22 // br
+#define SRT_LOGFA_QUE_RECV   23 // qr
+#define SRT_LOGFA_CHN_RECV   24 // kr
+#define SRT_LOGFA_GRP_RECV   25 // gr
+
+#define SRT_LOGFA_API_SEND   31 // as
+#define SRT_LOGFA_BUF_SEND   32 // bs
+#define SRT_LOGFA_QUE_SEND   33 // qs
+#define SRT_LOGFA_CHN_SEND   34 // ks
+#define SRT_LOGFA_GRP_SEND   35 // gs
+
+#define SRT_LOGFA_INTERNAL   41 // ip
+
+#define SRT_LOGFA_QUE_MGMT   43 // qm
+
+#define SRT_LOGFA_GRP_MGMT   45 // gm
+#define SRT_LOGFA_EPOLL_API  46 // ea
+
+
+// To make a typical int64_t size, although still use std::bitset.
 // C API will carry it over.
-#define SRT_LOGFA_LASTNONE 31
+#define SRT_LOGFA_LASTNONE 63
 
 enum SRT_KM_STATE
 {

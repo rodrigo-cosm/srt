@@ -75,16 +75,12 @@ modified by
 
 namespace srt_logging
 {
+#define LOGGER(upname, loname, logval) extern Logger loname##log
+#define LOGGER_H(upname, logname, logval) 
 
-extern Logger
-    glog,
-//    blog,
-    mglog,
-    dlog,
-    tslog,
-    rxlog,
-    cclog;
-
+#include "logging_defs.inc.cpp"
+#undef LOGGER
+#undef LOGGER_H
 }
 
 
@@ -682,7 +678,7 @@ public:
 
     bool applyGroupTime(time_point& w_start_time, time_point& w_peer_start_time)
     {
-        using srt_logging::mglog;
+        using srt_logging::gmlog;
         if (m_tsStartTime == steady_clock::zero())
         {
             // The first socket, defines the group time for the whole group.
@@ -694,7 +690,7 @@ public:
         // Sanity check. This should never happen, fix the bug if found!
         if (m_tsRcvPeerStartTime == steady_clock::zero())
         {
-            LOGC(mglog.Error, log << "IPE: only StartTime is set, RcvPeerStartTime still 0!");
+            LOGC(gmlog.Error, log << "IPE: only StartTime is set, RcvPeerStartTime still 0!");
             // Kinda fallback, but that's not too safe.
             m_tsRcvPeerStartTime = w_peer_start_time;
         }

@@ -59,10 +59,10 @@ modified by
 // Use "inline namespace" in C++11
 namespace srt_logging
 {
-extern Logger dlog, mglog;
+extern Logger qrlog;
 }
 
-using srt_logging::mglog;
+using srt_logging::qrlog;
 
 using namespace srt::sync;
 
@@ -485,7 +485,7 @@ void CRcvLossList::insert(int32_t seqno1, int32_t seqno2)
     int offset = CSeqNo::seqoff(m_caSeq[m_iHead].seqstart, seqno1);
     if (offset < 0)
     {
-        LOGC(mglog.Error,
+        LOGC(qrlog.Error,
              log << "RCV-LOSS/insert: IPE: new LOSS %(" << seqno1 << "-" << seqno2 << ") PREDATES HEAD %"
                  << m_caSeq[m_iHead].seqstart << " -- REJECTING");
         return;

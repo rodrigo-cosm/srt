@@ -416,7 +416,7 @@ void CChannel::getPeerAddr(sockaddr_any& w_addr) const
 
 int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
 {
-    HLOGC(mglog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
+    HLOGC(kslog.Debug, log << "CChannel::sendto: SENDING NOW DST=" << SockaddrToString(addr)
         << " target=@" << packet.m_iID
         << " size=" << packet.getLength()
         << " pkt.ts=" << packet.m_iTimeStamp
@@ -461,7 +461,7 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
         {
             // This is a counter of how many packets in a row shall be lost
             --flwcounter;
-            HLOGC(mglog.Debug, log << "CChannel: TEST: FAKE LOSS OF %" << packet.getSeqNo() << " (" << flwcounter << " more to drop)");
+            HLOGC(kslog.Debug, log << "CChannel: TEST: FAKE LOSS OF %" << packet.getSeqNo() << " (" << flwcounter << " more to drop)");
             return packet.getLength(); // fake successful sendinf
         }
 
@@ -473,7 +473,7 @@ int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
             if (dcounter > rnd)
             {
                 dcounter = 1;
-                HLOGC(mglog.Debug, log << "CChannel: TEST: FAKE LOSS OF %" << packet.getSeqNo() << " (will drop " << fakeloss.config.first << " more)");
+                HLOGC(kslog.Debug, log << "CChannel: TEST: FAKE LOSS OF %" << packet.getSeqNo() << " (will drop " << fakeloss.config.first << " more)");
                 flwcounter = fakeloss.config.first;
                 return packet.getLength(); // fake successful sendinf
             }
@@ -579,7 +579,7 @@ EReadStatus CChannel::recvfrom(sockaddr_any& w_addr, CPacket& w_packet) const
         }
         else
         {
-            HLOGC(mglog.Debug, log << CONID() << "(sys)recvmsg: " << SysStrError(err) << " [" << err << "]");
+            HLOGC(krlog.Debug, log << CONID() << "(sys)recvmsg: " << SysStrError(err) << " [" << err << "]");
             status = RST_ERROR;
         }
 
@@ -639,7 +639,7 @@ EReadStatus CChannel::recvfrom(sockaddr_any& w_addr, CPacket& w_packet) const
         const int err = NET_ERROR;
         if (std::find(fatals, fatals_end, err) != fatals_end)
         {
-            HLOGC(mglog.Debug, log << CONID() << "(sys)WSARecvFrom: " << SysStrError(err) << " [" << err << "]");
+            HLOGC(krlog.Debug, log << CONID() << "(sys)WSARecvFrom: " << SysStrError(err) << " [" << err << "]");
             status = RST_ERROR;
         }
         else
@@ -660,7 +660,7 @@ EReadStatus CChannel::recvfrom(sockaddr_any& w_addr, CPacket& w_packet) const
     if (size_t(recv_size) < CPacket::HDR_SIZE)
     {
         status = RST_AGAIN;
-        HLOGC(mglog.Debug, log << CONID() << "POSSIBLE ATTACK: received too short packet with " << recv_size << " bytes");
+        HLOGC(krlog.Debug, log << CONID() << "POSSIBLE ATTACK: received too short packet with " << recv_size << " bytes");
         goto Return_error;
     }
 
@@ -683,7 +683,7 @@ EReadStatus CChannel::recvfrom(sockaddr_any& w_addr, CPacket& w_packet) const
     // packet was received, so the packet will be then retransmitted.
     if ( msg_flags != 0 )
     {
-        HLOGC(mglog.Debug, log << CONID() << "NET ERROR: packet size=" << recv_size
+        HLOGC(krlog.Debug, log << CONID() << "NET ERROR: packet size=" << recv_size
             << " msg_flags=0x" << hex << msg_flags << ", possibly MSG_TRUNC (0x" << hex << int(MSG_TRUNC) << ")");
         status = RST_AGAIN;
         goto Return_error;
