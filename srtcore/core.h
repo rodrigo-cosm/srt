@@ -732,7 +732,7 @@ public:
         // this is going to be past the ISN, at worst it will be caused
         // by TLPKTDROP.
         m_RcvBaseSeqNo = SRT_SEQNO_NONE;
-        m_RcvBaseMsgNo = -1;
+        m_RcvBaseMsgNo = SRT_MSGNO_NONE;
     }
     int baseOffset(SRT_MSGCTRL& mctrl);
     int baseOffset(ReadPos& pos);

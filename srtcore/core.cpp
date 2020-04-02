@@ -11125,7 +11125,7 @@ CUDTGroup::SocketData CUDTGroup::prepareData(CUDTSocket* s)
         false, false, false,
         0.0, // load factor: no load in the beginning
         1.0, // unit load: how much one packet would increase the load
-        0 // priority
+        0 // weight
     };
     return sd;
 }
@@ -11734,7 +11734,6 @@ int CUDTGroup::send(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     case SRT_GTYPE_BALANCING:
         return sendBalancing(buf, len, (w_mc));
-        //return old_sendBalancing(buf, len, r_mc);
 
         /* to be implemented
     case SRT_GTYPE_MULTICAST:
@@ -14734,7 +14733,6 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                     // achieves CONNECTING state, then it's added to write.
                     // Or gets broken and closed in the next step.
                     continue;
-
                 }
 
                 still_alive = true;
@@ -14761,7 +14759,6 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 read_ready.push_back(gi->id);
                 HCLOG(ds << "@" << gi->id << "[READ] ");
             }
-
         }
 
         int read_modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
@@ -14834,7 +14831,6 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
             // non-blocking mode.
             throw CUDTException(MJ_AGAIN, MN_RDAVAIL, 0);
         }
-
 
         // Handle sockets of pending connection and with errors.
 
