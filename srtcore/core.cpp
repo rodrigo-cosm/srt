@@ -6162,13 +6162,26 @@ bool CUDT::close()
     {
         const steady_clock::time_point entertime = steady_clock::now();
 
-        HLOGC(mglog.Debug, log << CONID() << " ... (linger)");
-        while (!m_bBroken && m_bConnected && (m_pSndBuffer->getCurrBufSize() > 0) &&
+#define FLAG(name) (name ? "+" : "-") << #name
+
+        HLOGC(mglog.Debug, log << CONID() << " ... (linger): "
+                << FLAG(m_bBroken) << " " << FLAG(m_bConnected)
+                << " SENDER BUFFER:" << (m_pSndBuffer ? m_pSndBuffer->getCurrBufSize() : -1)
+                << " LINGER: " << m_Linger.l_linger);
+#undef FLAG
+
+        bool did_linger ATR_UNUSED = false;
+
+        while (/*!m_bBroken && */ m_bConnected && (m_pSndBuffer->getCurrBufSize() > 0) &&
                (steady_clock::now() - entertime < seconds_from(m_Linger.l_linger)))
         {
             // linger has been checked by previous close() call and has expired
             if (m_tsLingerExpiration >= entertime)
+            {
+                HLOGC(mglog.Debug, log << "CUDT::close: linger set previously to T="
+                        << FormatTime(m_tsLingerExpiration));
                 break;
+            }
 
             if (!m_bSynSending)
             {
@@ -6183,6 +6196,13 @@ bool CUDT::close()
                 return false;
             }
 
+            if (!did_linger)
+            {
+                HLOGC(mglog.Debug, log << "CUDT::close: linger mandates to sleep for re-check, still "
+                        << FormatDuration<DUNIT_MS>(steady_clock::now() - entertime) << " < LINGER:" << (m_Linger.l_linger*1000) << "ms");
+            }
+
+            did_linger = true;
 #ifndef _WIN32
             timespec ts;
             ts.tv_sec  = 0;
@@ -6191,6 +6211,17 @@ bool CUDT::close()
 #else
             Sleep(1);
 #endif
+        }
+
+        if (!did_linger)
+        {
+            HLOGC(mglog.Debug, log << "CUDT::close: lingering not necessary");
+        }
+        else
+        {
+            HLOGC(mglog.Debug, log << "CUDT::close: exit lingering after "
+                    << FormatDuration<DUNIT_MS>(steady_clock::now() - entertime)
+                    << " SENDER BUFFER: " << (m_pSndBuffer ? m_pSndBuffer->getCurrBufSize() : -1));
         }
     }
 

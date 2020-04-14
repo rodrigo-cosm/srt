@@ -304,6 +304,10 @@ bool DoUpload(UriParser& ut, string path, string filename)
             this_thread::sleep_for(chrono::milliseconds(250));
         }
     }
+    else
+    {
+        Verb() << "SENDING DONE. CLOSING SOCKET WITHOUT FLUSHING.";
+    }
 
     return true;
 }

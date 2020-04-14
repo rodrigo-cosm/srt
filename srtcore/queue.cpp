@@ -1367,6 +1367,13 @@ EConnectStatus CRcvQueue::worker_ProcessAddressedPacket(int32_t id, CUnit* unit,
 
     if (!u->m_bConnected || u->m_bBroken || u->m_bClosing)
     {
+#define FLAG(name) (name ? "+" : "-") << #name
+        HLOGC(calog.Debug,
+             log << CONID() << "Packet for SID=" << id << " REJECTED: "
+                 << FLAG(u->m_bConnected) << " "
+                 << FLAG(u->m_bBroken) << " "
+                 << FLAG(u->m_bClosing));
+
         u->m_RejectReason = SRT_REJ_CLOSE;
         // The socket is currently in the process of being disconnected
         // or destroyed. Ignore.
