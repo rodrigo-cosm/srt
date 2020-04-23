@@ -3323,8 +3323,8 @@ bool CUDT::interpretGroup(const int32_t groupdata[], size_t data_size, int hsreq
 
     // Optional in this version
     int link_weight = 0;
-    if (data_size > GRPD_PRIORITY)
-        link_weight = groupdata[GRPD_PRIORITY];
+    if (data_size > GRPD_WEIGHT)
+        link_weight = groupdata[GRPD_WEIGHT];
 
     if (m_OPT_GroupConnect == 0)
     {
