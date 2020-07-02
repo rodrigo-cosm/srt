@@ -13,8 +13,8 @@ written by
    Haivision Systems Inc.
  *****************************************************************************/
 
-#ifndef INC__SRT_LOGGING_H
-#define INC__SRT_LOGGING_H
+#ifndef INC_SRT_LOGGING_H
+#define INC_SRT_LOGGING_H
 
 
 #include <iostream>
@@ -28,16 +28,13 @@ written by
 #else
 #include <sys/time.h>
 #endif
-#include <pthread.h>
-#if HAVE_CXX11
-#include <mutex>
-#endif
 
 #include "srt.h"
 #include "utilities.h"
 #include "threadname.h"
 #include "logging_api.h"
 #include "srt_compat.h"
+#include "sync.h"
 
 #ifdef __GNUC__
 #define PRINTF_LIKE __attribute__((format(printf,2,3)))
@@ -54,7 +51,12 @@ written by
 // LOGC uses an iostream-like syntax, using the special 'log' symbol.
 // This symbol isn't visible outside the log macro parameters.
 // Usage: LOGC(mglog.Debug, log << param1 << param2 << param3);
-#define LOGC(logdes, args) if (logdes.CheckEnabled()) { logging::LogDispatcher::Proxy log(logdes); log.setloc(__FILE__, __LINE__, __FUNCTION__); args; }
+#define LOGC(logdes, args) if (logdes.CheckEnabled()) \
+{ \
+    srt_logging::LogDispatcher::Proxy log(logdes); \
+    log.setloc(__FILE__, __LINE__, __FUNCTION__); \
+    const srt_logging::LogDispatcher::Proxy& log_prox SRT_ATR_UNUSED = args; \
+}
 
 // LOGF uses printf-like style formatting.
 // Usage: LOGF(mglog.Debug, "%s: %d", param1.c_str(), int(param2));
@@ -70,11 +72,15 @@ written by
 #define HLOGP LOGP
 #define HLOGF LOGF
 
+#define IF_HEAVY_LOGGING(instr) instr
+
 #else
 
 #define HLOGC(...)
 #define HLOGF(...)
 #define HLOGP(...)
+
+#define IF_HEAVY_LOGGING(instr) (void)0
 
 #endif
 
@@ -88,9 +94,11 @@ written by
 #define HLOGF(...)
 #define HLOGP(...)
 
+#define IF_HEAVY_LOGGING(instr) (void)0
+
 #endif
 
-namespace logging
+namespace srt_logging
 {
 
 struct LogConfig
@@ -101,29 +109,27 @@ struct LogConfig
     std::ostream* log_stream;
     SRT_LOG_HANDLER_FN* loghandler_fn;
     void* loghandler_opaque;
-    pthread_mutex_t mutex;
+    srt::sync::Mutex mutex;
     int flags;
 
-    LogConfig(const fa_bitset_t& initial_fa):
-        enabled_fa(initial_fa),
-        max_level(LogLevel::warning),
-        log_stream(&std::cerr)
+    LogConfig(const fa_bitset_t& efa,
+            LogLevel::type l = LogLevel::warning,
+            std::ostream* ls = &std::cerr)
+        : enabled_fa(efa)
+        , max_level(l)
+        , log_stream(ls)
+        , loghandler_fn()
+        , loghandler_opaque()
+        , flags()
     {
-        pthread_mutex_init(&mutex, 0);
-    }
-    LogConfig(const fa_bitset_t& efa, LogLevel::type l, std::ostream* ls):
-        enabled_fa(efa), max_level(l), log_stream(ls)
-    {
-        pthread_mutex_init(&mutex, 0);
     }
 
     ~LogConfig()
     {
-        pthread_mutex_destroy(&mutex);
     }
 
-    void lock() { pthread_mutex_lock(&mutex); }
-    void unlock() { pthread_mutex_unlock(&mutex); }
+    void lock() { mutex.lock(); }
+    void unlock() { mutex.unlock(); }
 };
 
 // The LogDispatcher class represents the object that is responsible for
@@ -133,27 +139,39 @@ struct SRT_API LogDispatcher
 private:
     int fa;
     LogLevel::type level;
-    std::string prefix;
+    static const size_t MAX_PREFIX_SIZE = 32;
+    char prefix[MAX_PREFIX_SIZE+1];
     LogConfig* src_config;
-    pthread_mutex_t mutex;
 
     bool isset(int flg) { return (src_config->flags & flg) != 0; }
 
 public:
 
-    LogDispatcher(int functional_area, LogLevel::type log_level, const std::string& pfx, LogConfig& config):
+    LogDispatcher(int functional_area, LogLevel::type log_level, const char* your_pfx,
+            const char* logger_pfx /*[[nullable]]*/, LogConfig& config):
         fa(functional_area),
         level(log_level),
-        prefix(pfx),
-        //enabled(false),
         src_config(&config)
     {
-        pthread_mutex_init(&mutex, 0);
+        // XXX stpcpy desired, but not enough portable
+        // Composing the exact prefix is not critical, so simply
+        // cut the prefix, if the length is exceeded
+
+        // See Logger::Logger; we know this has normally 2 characters,
+        // except !!FATAL!!, which has 9. Still less than 32.
+        strcpy(prefix, your_pfx);
+
+        // If the size of the FA name together with severity exceeds the size,
+        // just skip the former.
+        if (logger_pfx && strlen(prefix) + strlen(logger_pfx) + 1 < MAX_PREFIX_SIZE)
+        {
+            strcat(prefix, ":");
+            strcat(prefix, logger_pfx);
+        }
     }
 
     ~LogDispatcher()
     {
-        pthread_mutex_destroy(&mutex);
     }
 
     bool CheckEnabled();
@@ -271,7 +289,7 @@ struct LogDispatcher::Proxy
     // or better __func__.
     std::string ExtractName(std::string pretty_function);
 
-	Proxy(LogDispatcher& guy);
+    Proxy(LogDispatcher& guy);
 
     // Copy constructor is needed due to noncopyable ostringstream.
     // This is used only in creation of the default object, so just
@@ -346,7 +364,6 @@ struct LogDispatcher::Proxy
 
 class Logger
 {
-    std::string m_prefix;
     int m_fa;
     LogConfig& m_config;
 
@@ -358,15 +375,14 @@ public:
     LogDispatcher Error;
     LogDispatcher Fatal;
 
-    Logger(int functional_area, LogConfig& config, std::string globprefix = std::string()):
-        m_prefix( globprefix == "" ? globprefix : ": " + globprefix),
+    Logger(int functional_area, LogConfig& config, const char* logger_pfx = NULL):
         m_fa(functional_area),
         m_config(config),
-        Debug ( m_fa, LogLevel::debug, " D" + m_prefix, m_config ),
-        Note  ( m_fa, LogLevel::note,  ".N" + m_prefix, m_config ),
-        Warn  ( m_fa, LogLevel::warning, "!W" + m_prefix, m_config ),
-        Error ( m_fa, LogLevel::error, "*E" + m_prefix, m_config ),
-        Fatal ( m_fa, LogLevel::fatal, "!!FATAL!!" + m_prefix, m_config )
+        Debug ( m_fa, LogLevel::debug, " D", logger_pfx, m_config ),
+        Note  ( m_fa, LogLevel::note,  ".N", logger_pfx, m_config ),
+        Warn  ( m_fa, LogLevel::warning, "!W", logger_pfx, m_config ),
+        Error ( m_fa, LogLevel::error, "*E", logger_pfx, m_config ),
+        Fatal ( m_fa, LogLevel::fatal, "!!FATAL!!", logger_pfx, m_config )
     {
     }
 
@@ -388,7 +404,6 @@ inline bool LogDispatcher::CheckEnabled()
     return configured_enabled_fa && level <= configured_maxlevel;
 }
 
-SRT_API std::string FormatTime(uint64_t time);
 
 #if HAVE_CXX11
 

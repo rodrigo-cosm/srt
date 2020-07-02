@@ -44,9 +44,9 @@ map<string, int> srt_level_names
 
 
 
-logging::LogLevel::type SrtParseLogLevel(string level)
+srt_logging::LogLevel::type SrtParseLogLevel(string level)
 {
-    using namespace logging;
+    using namespace srt_logging;
 
     if ( level.empty() )
         return LogLevel::fatal;
@@ -74,9 +74,9 @@ logging::LogLevel::type SrtParseLogLevel(string level)
     return LogLevel::type(i->second);
 }
 
-set<logging::LogFA> SrtParseLogFA(string fa)
+set<srt_logging::LogFA> SrtParseLogFA(string fa, set<string>* punknown)
 {
-    using namespace logging;
+    using namespace srt_logging;
 
     set<LogFA> fas;
 
@@ -84,7 +84,7 @@ set<logging::LogFA> SrtParseLogFA(string fa)
     if ( fa == "" )
         return fas;
 
-    static string names [] = { "general", "bstats", "control", "data", "tsbpd", "rexmit" };
+    static string names [] = { "general", "bstats", "control", "data", "tsbpd", "rexmit", "haicrypt", "cc" };
     size_t names_s = sizeof (names)/sizeof (names[0]);
 
     if ( fa == "all" )
@@ -95,6 +95,7 @@ set<logging::LogFA> SrtParseLogFA(string fa)
         fas.insert(SRT_LOGFA_DATA);
         fas.insert(SRT_LOGFA_TSBPD);
         fas.insert(SRT_LOGFA_REXMIT);
+        fas.insert(SRT_LOGFA_CONGEST);
         return fas;
     }
 
@@ -126,7 +127,10 @@ set<logging::LogFA> SrtParseLogFA(string fa)
         string* names_p = find(names, names + names_s, fa);
         if ( names_p == names + names_s )
         {
-            cerr << "ERROR: Invalid log functional area spec: '" << fa << "' - skipping\n";
+            if (punknown)
+                punknown->insert(fa); // If requested, add it back silently
+            else
+                cerr << "ERROR: Invalid log functional area spec: '" << fa << "' - skipping\n";
             continue;
         }
 

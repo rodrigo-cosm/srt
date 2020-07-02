@@ -8,14 +8,14 @@
  * 
  */
 
-#ifndef INC__LOGSUPPORT_HPP
-#define INC__LOGSUPPORT_HPP
+#ifndef INC_SRT_LOGSUPPORT_HPP
+#define INC_SRT_LOGSUPPORT_HPP
 
 #include "../srtcore/srt.h"
 #include "../srtcore/logging_api.h"
 
-logging::LogLevel::type SrtParseLogLevel(std::string level);
-std::set<logging::LogFA> SrtParseLogFA(std::string fa);
+srt_logging::LogLevel::type SrtParseLogLevel(std::string level);
+std::set<srt_logging::LogFA> SrtParseLogFA(std::string fa, std::set<std::string>* punknown = nullptr);
 
 SRT_API extern std::map<std::string, int> srt_level_names;
 

@@ -13,8 +13,8 @@ written by
    Haivision Systems Inc.
  *****************************************************************************/
 
-#ifndef INC__CRYPTO_H
-#define INC__CRYPTO_H
+#ifndef INC_SRT_CRYPTO_H
+#define INC_SRT_CRYPTO_H
 
 #include <cstring>
 #include <string>
@@ -32,7 +32,10 @@ written by
 
 std::string KmStateStr(SRT_KM_STATE state);
 
-extern logging::Logger mglog;
+namespace srt_logging
+{
+extern Logger mglog;
+}
 
 #endif
 
@@ -66,7 +69,7 @@ private:
 
     HaiCrypt_Secret m_KmSecret;     //Key material shared secret
     // Sender
-    uint64_t        m_SndKmLastTime;
+    srt::sync::steady_clock::time_point     m_SndKmLastTime;
     struct {
         unsigned char Msg[HCRYPT_MSG_KM_MAX_SZ];
         size_t MsgLen;
@@ -104,7 +107,9 @@ public:
 
 private:
 
+#ifdef SRT_ENABLE_ENCRYPTION
     void regenCryptoKm(bool sendit, bool bidirectional);
+#endif
 
 public:
 
@@ -114,7 +119,8 @@ public:
     void updateKmState(int cmd, size_t srtlen);
 
     // Detailed processing
-    int processSrtMsg_KMREQ(const uint32_t* srtdata, size_t len, uint32_t* srtdata_out, ref_t<size_t> r_srtlen, int hsv);
+    int processSrtMsg_KMREQ(const uint32_t* srtdata, size_t len, int hsv,
+            uint32_t srtdata_out[], size_t&);
 
     // This returns:
     // 1 - the given payload is the same as the currently used key
@@ -152,7 +158,11 @@ public:
     ///                during transmission (otherwise it's during the handshake)
     void getKmMsg_markSent(size_t ki, bool runtime)
     {
-        m_SndKmLastTime = CTimer::getTime();
+#if ENABLE_LOGGING
+        using srt_logging::mglog;
+#endif
+
+        m_SndKmLastTime = srt::sync::steady_clock::now();
         if (runtime)
         {
             m_SndKmMsg[ki].iPeerRetry--;
@@ -209,10 +219,11 @@ public:
         m_iRcvKmKeyLen = keylen;
     }
 
-    bool createCryptoCtx(ref_t<HaiCrypt_Handle> rh, size_t keylen, HaiCrypt_CryptoDir tx);
+    bool createCryptoCtx(size_t keylen, HaiCrypt_CryptoDir tx, HaiCrypt_Handle& rh);
 
     int getSndCryptoFlags() const
     {
+#ifdef SRT_ENABLE_ENCRYPTION
         return(m_hSndCrypto ?
                 HaiCrypt_Tx_GetKeyFlags(m_hSndCrypto) :
                 // When encryption isn't on, check if it was required
@@ -220,6 +231,9 @@ public:
                 // encryption was requested and not possible.
                 hasPassphrase() ? -1 :
                 0);
+#else
+        return 0;
+#endif
     }
 
     bool isSndEncryptionOK() const
@@ -240,14 +254,14 @@ public:
     /// the encryption will fail.
     /// XXX Encryption flags in the PH_MSGNO
     /// field in the header must be correctly set before calling.
-    EncryptionStatus encrypt(ref_t<CPacket> r_packet);
+    EncryptionStatus encrypt(CPacket& w_packet);
 
     /// Decrypts the packet. If the packet has ENCKEYSPEC part
     /// in PH_MSGNO set to EK_NOENC, it does nothing. It decrypts
     /// only if the encryption correctly configured, otherwise it
     /// fails. After successful decryption, the ENCKEYSPEC part
     // in PH_MSGNO is set to EK_NOENC.
-    EncryptionStatus decrypt(ref_t<CPacket> r_packet);
+    EncryptionStatus decrypt(CPacket& w_packet);
 
     ~CCryptoControl();
 };

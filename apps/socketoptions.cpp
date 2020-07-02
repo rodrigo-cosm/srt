@@ -9,6 +9,7 @@
  */
 
 #include "socketoptions.hpp"
+#include "verbose.hpp"
 
 using namespace std;
 
@@ -21,39 +22,28 @@ extern const std::map<std::string, int> enummap_transtype = {
     { "file", SRTT_FILE }
 };
 
-SocketOption::Mode SrtConfigurePre(SRTSOCKET socket, string host, map<string, string> options, vector<string>* failures)
+
+const char* const SocketOption::mode_names[3] = {
+    "listener", "caller", "rendezvous"
+};
+
+SocketOption::Mode SrtInterpretMode(const string& modestr, const string& host, const string& adapter)
 {
-    vector<string> dummy;
-    vector<string>& fails = failures ? *failures : dummy;
+    SocketOption::Mode mode = SocketOption::FAILURE;
 
-    if ( options.count("passphrase") )
-    {
-        /*
-        // Insert default
-        if ( options.count("pbkeylen") == 0 )
-        {
-            options["pbkeylen"] = "16"; // m_output_direction ? "16" : "0";
-        }
-        */
-    }
-
-    SocketOption::Mode mode;
-    string modestr = "default";
-
-    if ( options.count("mode") )
-    {
-        modestr = options["mode"];
-    }
-
-    if ( modestr == "client" || modestr == "caller" )
+    if (modestr == "client" || modestr == "caller")
     {
         mode = SocketOption::CALLER;
     }
-    else if ( modestr == "server" || modestr == "listener" )
+    else if (modestr == "server" || modestr == "listener")
     {
         mode = SocketOption::LISTENER;
     }
-    else if ( modestr == "default" )
+    else if (modestr == "rendezvous")
+    {
+        mode = SocketOption::RENDEZVOUS;
+    }
+    else if (modestr == "default")
     {
         // Use the following convention:
         // 1. Server for source, Client for target
@@ -65,7 +55,7 @@ SocketOption::Mode SrtConfigurePre(SRTSOCKET socket, string host, map<string, st
         else
         {
             // Host is given, so check also "adapter"
-            if ( options.count("adapter") )
+            if (adapter != "")
                 mode = SocketOption::RENDEZVOUS;
             else
                 mode = SocketOption::CALLER;
@@ -74,8 +64,42 @@ SocketOption::Mode SrtConfigurePre(SRTSOCKET socket, string host, map<string, st
     else
     {
         mode = SocketOption::FAILURE;
+    }
+
+    return mode;
+}
+
+SocketOption::Mode SrtConfigurePre(SRTSOCKET socket, string host, map<string, string> options, vector<string>* failures)
+{
+    vector<string> dummy;
+    vector<string>& fails = failures ? *failures : dummy;
+
+    string modestr = "default", adapter;
+
+    if (options.count("mode"))
+    {
+        modestr = options["mode"];
+    }
+
+    if (options.count("adapter"))
+    {
+        adapter = options["adapter"];
+    }
+
+    SocketOption::Mode mode = SrtInterpretMode(modestr, host, adapter);
+    if (mode == SocketOption::FAILURE)
+    {
         fails.push_back("mode");
     }
+
+    if (options.count("linger"))
+    {
+        linger lin;
+        lin.l_linger = stoi(options["linger"]);
+        lin.l_onoff  = lin.l_linger > 0 ? 1 : 0;
+        srt_setsockopt(socket, SocketOption::PRE, SRTO_LINGER, &lin, sizeof(linger));
+    }
+
 
     bool all_clear = true;
     for (auto o: srt_options)
@@ -105,11 +129,11 @@ void SrtConfigurePost(SRTSOCKET socket, map<string, string> options, vector<stri
         if ( o.binding == SocketOption::POST && options.count(o.name) )
         {
             string value = options.at(o.name);
+            Verb() << "Setting option: " << o.name << " = " << value;
             bool ok = o.apply<SocketOption::SRT>(socket, value);
             if ( !ok )
                 fails.push_back(o.name);
         }
     }
 }
-
 

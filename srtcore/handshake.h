@@ -43,8 +43,10 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *****************************************************************************/
 
-#ifndef INC__HANDSHAKE_H
-#define INC__HANDSHAKE_H
+#ifndef INC_SRT_HANDSHAKE_H
+#define INC_SRT_HANDSHAKE_H
+
+#include <vector>
 
 #include "crypto.h"
 #include "utilities.h"
@@ -52,17 +54,35 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 typedef Bits<31, 16> HS_CMDSPEC_CMD;
 typedef Bits<15, 0> HS_CMDSPEC_SIZE;
 
+// NOTE: Some of these flags represent CAPABILITIES, that is,
+// as long as these flags are defined, they must be always set
+// (unless they are deprecated).
 enum SrtOptions
 {
     SRT_OPT_TSBPDSND  = BIT(0), /* Timestamp-based Packet delivery real-time data sender */
     SRT_OPT_TSBPDRCV  = BIT(1), /* Timestamp-based Packet delivery real-time data receiver */
-    SRT_OPT_HAICRYPT  = BIT(2), /* HaiCrypt AES-128/192/256-CTR */
+    SRT_OPT_HAICRYPT  = BIT(2), /* CAPABILITY: HaiCrypt AES-128/192/256-CTR */
     SRT_OPT_TLPKTDROP = BIT(3), /* Drop real-time data packets too late to be processed in time */
     SRT_OPT_NAKREPORT = BIT(4), /* Periodic NAK report */
-    SRT_OPT_REXMITFLG = BIT(5), // One bit in payload packet msgno is "retransmitted" flag
+    SRT_OPT_REXMITFLG = BIT(5), // CAPABILITY: One bit in payload packet msgno is "retransmitted" flag
                                 // (this flag can be reused for something else, when pre-1.2.0 versions are all abandoned)
-    SRT_OPT_STREAM    = BIT(6)
+    SRT_OPT_STREAM    = BIT(6), // STREAM MODE (not MESSAGE mode)
+    SRT_OPT_FILTERCAP = BIT(7), // CAPABILITY: Packet filter supported
 };
+
+inline int SrtVersionCapabilities()
+{
+    // NOTE: SRT_OPT_REXMITFLG is not included here because
+    // SRT is prepared to handle also peers that don't have this
+    // capability, so a listener responding to a peer that doesn't
+    // support it should NOT set this flag.
+    //
+    // This state will remain until this backward compatibility is
+    // decided to be broken, in which case this flag will be always
+    // set, and clients that do not support this capability will be
+    // rejected.
+    return SRT_OPT_HAICRYPT | SRT_OPT_FILTERCAP;
+}
 
 
 std::string SrtFlagString(int32_t flags);
@@ -73,7 +93,9 @@ const int SRT_CMD_REJECT = 0, // REJECT is only a symbol for return type
       SRT_CMD_KMREQ = 3,
       SRT_CMD_KMRSP = 4,
       SRT_CMD_SID = 5,
-      SRT_CMD_SMOOTHER = 6,
+      SRT_CMD_CONGESTION = 6,
+      SRT_CMD_FILTER = 7,
+      SRT_CMD_GROUP = 8,
       SRT_CMD_NONE = -1; // for cases when {no pong for ping is required} | {no extension block found}
 
 enum SrtDataStruct
@@ -83,7 +105,7 @@ enum SrtDataStruct
     SRT_HS_LATENCY,
 
     // Keep it always last
-    SRT_HS__SIZE
+    SRT_HS_E_SIZE
 };
 
 // For HSv5 the lo and hi part is used for particular side's latency
@@ -93,30 +115,22 @@ typedef Bits<15, 0> SRT_HS_LATENCY_SND;
 typedef Bits<15, 0> SRT_HS_LATENCY_LEG;
 
 
-// XXX These structures are currently unused. The code can be changed
-// so that these are used instead of manual tailoring of the messages.
 struct SrtHandshakeExtension
 {
-protected:
+    int16_t type;
+    std::vector<uint32_t> contents;
 
-   uint32_t m_SrtCommand; // Used only in extension
-
-public:
-   SrtHandshakeExtension(int cmd)
-   {
-       m_SrtCommand = cmd;
-   }
-
-   void setCommand(int cmd)
-   {
-       m_SrtCommand = cmd;
-   }
-
+    SrtHandshakeExtension(int16_t cmd): type(cmd) {}
 };
+
+// Implemented in core.cpp, so far
+void SrtExtractHandshakeExtensions(const char* bufbegin, size_t size,
+        std::vector<SrtHandshakeExtension>& w_output);
+
+
 
 struct SrtHSRequest: public SrtHandshakeExtension
 {
-
     typedef Bits<31, 16> SRT_HSTYPE_ENCFLAGS;
     typedef Bits<15, 0> SRT_HSTYPE_HSFLAGS;
 
@@ -134,6 +148,19 @@ struct SrtHSRequest: public SrtHandshakeExtension
         int32_t base = withmagic ? SRT_MAGIC_CODE : 0;
         return base | SRT_HSTYPE_ENCFLAGS::wrap( SRT_PBKEYLEN_BITS::unwrap(crypto_keylen) );
     }
+
+    // Group handshake extension layout
+
+    //  0                   1                   2                   3
+    //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |                           Group ID                            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  | Group Type  | Group's Flags |       Group's Weight            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    typedef Bits<31, 24> HS_GROUP_TYPE;
+    typedef Bits<23, 16> HS_GROUP_FLAGS;
+    typedef Bits<15, 0> HS_GROUP_WEIGHT;
 
 private:
     friend class CHandShake;
@@ -210,14 +237,42 @@ enum UDTRequestType
     // --> CONCLUSION (with response extensions, if RESPONDER)
     // <-- AGREEMENT (sent exclusively by INITIATOR upon reception of CONCLUSIOn with response extensions)
 
-    // Errors reported by the peer, also used as useless error codes
-    // in handshake processing functions.
+    // This marks the beginning of values that are error codes.
     URQ_FAILURE_TYPES = 1000,
-    URQ_ERROR_REJECT = 1002,
-    URQ_ERROR_INVALID = 1004
+
+    // NOTE: codes above 1000 are reserved for failure codes for
+    // rejection reason, as per `SRT_REJECT_REASON` enum. The
+    // actual rejection code is the value of the request type
+    // minus URQ_FAILURE_TYPES.
+
+    // This is in order to return standard error codes for server
+    // data retrieval failures.
+    URQ_SERVER_FAILURE_TYPES = URQ_FAILURE_TYPES + SRT_REJC_PREDEFINED,
+
+    // This is for a completely user-defined reject reasons.
+    URQ_USER_FAILURE_TYPES = URQ_FAILURE_TYPES + SRT_REJC_USERDEFINED
 };
 
+inline UDTRequestType URQFailure(int reason)
+{
+    return UDTRequestType(URQ_FAILURE_TYPES + int(reason));
+}
 
+inline int RejectReasonForURQ(UDTRequestType req)
+{
+    if (req < URQ_FAILURE_TYPES)
+        return SRT_REJ_UNKNOWN;
+
+    int reason = req - URQ_FAILURE_TYPES;
+    if (reason < SRT_REJC_PREDEFINED && reason >= SRT_REJ_E_SIZE)
+        return SRT_REJ_UNKNOWN;
+
+    return reason;
+}
+
+// DEPRECATED values. Use URQFailure(SRT_REJECT_REASON).
+const UDTRequestType URQ_ERROR_REJECT SRT_ATR_DEPRECATED = (UDTRequestType)1002; // == 1000 + SRT_REJ_PEER
+const UDTRequestType URQ_ERROR_INVALID SRT_ATR_DEPRECATED = (UDTRequestType)1004; // == 1000 + SRT_REJ_ROGUE
 
 // XXX Change all uses of that field to UDTRequestType when possible
 #if ENABLE_LOGGING
@@ -232,7 +287,7 @@ class CHandShake
 public:
    CHandShake();
 
-   int store_to(char* buf, ref_t<size_t> size);
+   int store_to(char* buf, size_t& size);
    int load_from(const char* buf, size_t size);
 
 public:

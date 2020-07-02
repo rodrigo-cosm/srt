@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <fstream>
 #include <sstream>
+#include <memory>
 #include <string>
 #include <stdexcept>
 #include <iterator>
@@ -35,12 +36,11 @@
 
 using namespace std;
 
+bool g_stats_are_printed_to_stdout = false;
 bool transmit_total_stats = false;
-bool clear_stats = false;
 unsigned long transmit_bw_report = 0;
 unsigned long transmit_stats_report = 0;
-unsigned long transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
-bool printformat_json = false;
+unsigned long transmit_chunk_size = SRT_LIVE_MAX_PLSIZE;
 
 class FileSource: public Source
 {
@@ -54,7 +54,7 @@ public:
             throw std::runtime_error(path + ": Can't open file for reading");
     }
 
-    bool Read(size_t chunk, bytevector& data) override
+    int Read(size_t chunk, bytevector& data, ostream & ignored SRT_ATR_UNUSED = cout) override
     {
         if (data.size() < chunk)
             data.resize(chunk);
@@ -64,17 +64,16 @@ public:
         if ( nread < data.size() )
             data.resize(nread);
 
-        if ( data.empty() )
+        if (data.empty())
         {
-            return false;
+            return 0;
         }
 
-        return true;
+        return (int) nread;
     }
 
     bool IsOpen() override { return bool(ifile); }
     bool End() override { return ifile.eof(); }
-    //~FileSource() { ifile.close(); }
 };
 
 class FileTarget: public Target
@@ -84,10 +83,10 @@ public:
 
     FileTarget(const string& path): ofile(path, ios::out | ios::trunc | ios::binary) {}
 
-    bool Write(const bytevector& data) override
+    int Write(const char* data, size_t size, ostream & ignored SRT_ATR_UNUSED = cout) override
     {
-        ofile.write(data.data(), data.size());
-        return !(ofile.bad());
+        ofile.write(data, size);
+        return !(ofile.bad()) ? (int) size : 0;
     }
 
     bool IsOpen() override { return !!ofile; }
@@ -103,124 +102,49 @@ template <> struct File<Target> { typedef FileTarget type; };
 template <class Iface>
 Iface* CreateFile(const string& name) { return new typename File<Iface>::type (name); }
 
-
-template <class PerfMonType>
-static void PrintSrtStats(int sid, const PerfMonType& mon)
-{
-    std::ostringstream output;
-
-    if (printformat_json)
-    {
-        output << "{";
-        output << "\"sid\":" << sid << ",";
-        output << "\"time\":" << mon.msTimeStamp << ",";
-        output << "\"window\":{";
-        output << "\"flow\":" << mon.pktFlowWindow << ",";
-        output << "\"congestion\":" << mon.pktCongestionWindow << ",";    
-        output << "\"flight\":" << mon.pktFlightSize;    
-        output << "},";
-        output << "\"link\":{";
-        output << "\"rtt\":" << mon.msRTT << ",";
-        output << "\"bandwidth\":" << mon.mbpsBandwidth << ",";
-        output << "\"maxBandwidth\":" << mon.mbpsMaxBW;
-        output << "},";
-        output << "\"send\":{";
-        output << "\"packets\":" << mon.pktSent << ",";
-        output << "\"packetsLost\":" << mon.pktSndLoss << ",";
-        output << "\"packetsDropped\":" << mon.pktSndDrop << ",";
-        output << "\"packetsRetransmitted\":" << mon.pktRetrans << ",";        
-        output << "\"bytes\":" << mon.byteSent << ",";
-        output << "\"bytesDropped\":" << mon.byteSndDrop << ",";
-        output << "\"mbitRate\":" << mon.mbpsSendRate;
-        output << "},";
-        output << "\"recv\": {";
-        output << "\"packets\":" << mon.pktRecv << ",";
-        output << "\"packetsLost\":" << mon.pktRcvLoss << ",";
-        output << "\"packetsDropped\":" << mon.pktRcvDrop << ",";
-        output << "\"packetsRetransmitted\":" << mon.pktRcvRetrans << ",";
-        output << "\"packetsBelated\":" << mon.pktRcvBelated << ",";
-        output << "\"bytes\":" << mon.byteRecv << ",";
-        output << "\"bytesLost\":" << mon.byteRcvLoss << ",";
-        output << "\"bytesDropped\":" << mon.byteRcvDrop << ",";
-        output << "\"mbitRate\":" << mon.mbpsRecvRate;
-        output << "}";
-        output << "}" << endl;
-    }
-    else
-    {
-        output << "======= SRT STATS: sid=" << sid << endl;
-        output << "PACKETS     SENT: " << setw(11) << mon.pktSent            << "  RECEIVED:   " << setw(11) << mon.pktRecv              << endl;
-        output << "LOST PKT    SENT: " << setw(11) << mon.pktSndLoss         << "  RECEIVED:   " << setw(11) << mon.pktRcvLoss           << endl;
-        output << "REXMIT      SENT: " << setw(11) << mon.pktRetrans         << "  RECEIVED:   " << setw(11) << mon.pktRcvRetrans        << endl;
-        output << "DROP PKT    SENT: " << setw(11) << mon.pktSndDrop         << "  RECEIVED:   " << setw(11) << mon.pktRcvDrop           << endl;
-        output << "RATE     SENDING: " << setw(11) << mon.mbpsSendRate       << "  RECEIVING:  " << setw(11) << mon.mbpsRecvRate         << endl;
-        output << "BELATED RECEIVED: " << setw(11) << mon.pktRcvBelated      << "  AVG TIME:   " << setw(11) << mon.pktRcvAvgBelatedTime << endl;
-        output << "REORDER DISTANCE: " << setw(11) << mon.pktReorderDistance << endl;
-        output << "WINDOW      FLOW: " << setw(11) << mon.pktFlowWindow      << "  CONGESTION: " << setw(11) << mon.pktCongestionWindow  << "  FLIGHT: " << setw(11) << mon.pktFlightSize << endl;
-        output << "LINK         RTT: " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s " << endl;
-        output << "BUFFERLEFT:  SND: " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
-    }
-
-    cerr << output.str() << std::flush;
-}
-
-static void PrintSrtBandwidth(double mbpsBandwidth)
-{
-    std::ostringstream output;
-
-    if (printformat_json) {
-        output << "{\"bandwidth\":" << mbpsBandwidth << '}' << endl;
-    } else {
-        output << "+++/+++SRT BANDWIDTH: " << mbpsBandwidth << endl;
-    }
-
-    cerr << output.str() << std::flush;
-}
-
+shared_ptr<SrtStatsWriter> transmit_stats_writer;
 
 void SrtCommon::InitParameters(string host, map<string,string> par)
 {
     // Application-specific options: mode, blocking, timeout, adapter
-    if ( Verbose::on )
+    if (Verbose::on && !par.empty())
     {
-        cerr << "Parameters:\n";
+        Verb() << "SRT parameters specified:\n";
         for (map<string,string>::iterator i = par.begin(); i != par.end(); ++i)
         {
             cerr << "\t" << i->first << " = '" << i->second << "'\n";
         }
     }
 
-    m_mode = "default";
-    if ( par.count("mode") )
-        m_mode = par.at("mode");
-
-    if ( m_mode == "default" )
+    string adapter;
+    if (par.count("adapter"))
     {
-        // Use the following convention:
-        // 1. Server for source, Client for target
-        // 2. If host is empty, then always server.
-        if ( host == "" )
-            m_mode = "listener";
-        //else if ( !dir_output )
-        //m_mode = "server";
-        else
-            m_mode = "caller";
+        adapter = par.at("adapter");
     }
 
-    if ( m_mode == "client" )
-        m_mode = "caller";
-    else if ( m_mode == "server" )
-        m_mode = "listener";
+    m_mode = "default";
+    if (par.count("mode"))
+    {
+        m_mode = par.at("mode");
+    }
+    SocketOption::Mode mode = SrtInterpretMode(m_mode, host, adapter);
+    if (mode == SocketOption::FAILURE)
+    {
+        Error("Invalid mode");
+    }
+
+    // Fix the mode name after successful interpretation
+    m_mode = SocketOption::mode_names[mode];
 
     par.erase("mode");
 
-    if ( par.count("timeout") )
+    if (par.count("timeout"))
     {
         m_timeout = stoi(par.at("timeout"), 0, 0);
         par.erase("timeout");
     }
 
-    if ( par.count("adapter") )
+    if (par.count("adapter"))
     {
         m_adapter = par.at("adapter");
         par.erase("adapter");
@@ -232,7 +156,7 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
         m_adapter = host;
     }
 
-    if ( par.count("tsbpd") && false_names.count(par.at("tsbpd")) )
+    if (par.count("tsbpd") && false_names.count(par.at("tsbpd")))
     {
         m_tsbpdmode = false;
     }
@@ -245,16 +169,13 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
 
     // That's kinda clumsy, but it must rely on the defaults.
     // Default mode is live, so check if the file mode was enforced
-    if (par.count("transtype") == 0 || par["transtype"] != "file")
+    if ((par.count("transtype") == 0 || par["transtype"] != "file")
+        && transmit_chunk_size > SRT_LIVE_DEF_PLSIZE)
     {
-        // If the Live chunk size was nondefault, enforce the size.
-        if (transmit_chunk_size != SRT_LIVE_DEF_PLSIZE)
-        {
-            if (transmit_chunk_size > SRT_LIVE_MAX_PLSIZE)
-                throw std::runtime_error("Chunk size in live mode exceeds 1456 bytes; this is not supported");
+        if (transmit_chunk_size > SRT_LIVE_MAX_PLSIZE)
+            throw std::runtime_error("Chunk size in live mode exceeds 1456 bytes; this is not supported");
 
-            par["payloadsize"] = Sprint(transmit_chunk_size);
-        }
+        par["payloadsize"] = Sprint(transmit_chunk_size);
     }
 
     // Assign the others here.
@@ -263,32 +184,32 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
 
 void SrtCommon::PrepareListener(string host, int port, int backlog)
 {
-    m_bindsock = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    m_bindsock = srt_create_socket();
     if ( m_bindsock == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_socket");
+        Error("srt_create_socket");
 
     int stat = ConfigurePre(m_bindsock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePre");
+        Error("ConfigurePre");
 
-    sockaddr_in sa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&sa;
+    sockaddr_any sa = CreateAddr(host, port);
+    sockaddr* psa = sa.get();
     Verb() << "Binding a server on " << host << ":" << port << " ...";
 
     stat = srt_bind(m_bindsock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
     {
         srt_close(m_bindsock);
-        Error(UDT::getlasterror(), "srt_bind");
+        Error("srt_bind");
     }
 
-    Verb() << " listen...\n";
+    Verb() << " listen...";
 
     stat = srt_listen(m_bindsock, backlog);
     if ( stat == SRT_ERROR )
     {
         srt_close(m_bindsock);
-        Error(UDT::getlasterror(), "srt_listen");
+        Error("srt_listen");
     }
 }
 
@@ -308,17 +229,15 @@ void SrtCommon::StealFrom(SrtCommon& src)
 
 bool SrtCommon::AcceptNewClient()
 {
-    sockaddr_in scl;
-    int sclen = sizeof scl;
-
+    sockaddr_any scl;
     Verb() << " accept... ";
 
-    m_sock = srt_accept(m_bindsock, (sockaddr*)&scl, &sclen);
+    m_sock = srt_accept(m_bindsock, scl.get(), &scl.len);
     if ( m_sock == SRT_INVALID_SOCK )
     {
         srt_close(m_bindsock);
         m_bindsock = SRT_INVALID_SOCK;
-        Error(UDT::getlasterror(), "srt_accept");
+        Error("srt_accept");
     }
 
     // we do one client connection at a time,
@@ -326,13 +245,13 @@ bool SrtCommon::AcceptNewClient()
     srt_close(m_bindsock);
     m_bindsock = SRT_INVALID_SOCK;
 
-    Verb() << " connected.\n";
+    Verb() << " connected.";
 
     // ConfigurePre is done on bindsock, so any possible Pre flags
     // are DERIVED by sock. ConfigurePost is done exclusively on sock.
     int stat = ConfigurePost(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePost");
+        Error("ConfigurePost");
 
     return true;
 }
@@ -343,7 +262,7 @@ void SrtCommon::Init(string host, int port, map<string,string> par, bool dir_out
     InitParameters(host, par);
 
     Verb() << "Opening SRT " << (dir_output ? "target" : "source") << " " << m_mode
-        << " on " << host << ":" << port << "\n";
+        << " on " << host << ":" << port;
 
     if ( m_mode == "caller" )
         OpenClient(host, port);
@@ -391,9 +310,9 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
             if ( !ok )
                 Verb() << "WARNING: failed to set '" << o.name << "' (post, "
                     << (m_output_direction? "target":"source") << ") to "
-                    << value << "\n";
+                    << value;
             else
-                Verb() << "NOTE: SRT/post::" << o.name << "=" << value << "\n";
+                Verb() << "NOTE: SRT/post::" << o.name << "=" << value;
         }
     }
 
@@ -443,11 +362,11 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
 
 void SrtCommon::SetupAdapter(const string& host, int port)
 {
-    sockaddr_in localsa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&localsa;
+    sockaddr_any localsa = CreateAddr(host, port);
+    sockaddr* psa = localsa.get();
     int stat = srt_bind(m_sock, psa, sizeof localsa);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_bind");
+        Error("srt_bind");
 }
 
 void SrtCommon::OpenClient(string host, int port)
@@ -464,90 +383,92 @@ void SrtCommon::OpenClient(string host, int port)
 
 void SrtCommon::PrepareClient()
 {
-    m_sock = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_socket");
+        Error("srt_create_socket");
 
     int stat = ConfigurePre(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePre");
+        Error("ConfigurePre");
 }
 
 
 void SrtCommon::ConnectClient(string host, int port)
 {
 
-    sockaddr_in sa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&sa;
+    sockaddr_any sa = CreateAddr(host, port);
+	sockaddr* psa = sa.get();
 
-    Verb() << "Connecting to " << host << ":" << port << "\n";
+    Verb() << "Connecting to " << host << ":" << port;
 
     int stat = srt_connect(m_sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
     {
         srt_close(m_sock);
-        Error(UDT::getlasterror(), "UDT::connect");
+        Error("srt_connect");
     }
 
     stat = ConfigurePost(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePost");
+        Error("ConfigurePost");
 }
 
-void SrtCommon::Error(UDT::ERRORINFO& udtError, string src)
+void SrtCommon::Error(string src)
 {
-    int udtResult = udtError.getErrorCode();
-    string message = udtError.getErrorMessage();
-    Verb() << "\nERROR #" << udtResult << ": " << message << "\n";
+    int errnov = 0;
+    int result = srt_getlasterror(&errnov);
+    string message = srt_getlasterror_str();
+    Verb() << "\nERROR #" << result << "." << errnov << ": " << message;
 
-    udtError.clear();
     throw TransmissionError("error: " + src + ": " + message);
 }
 
 void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 {
-    m_sock = srt_socket(AF_INET, SOCK_DGRAM, 0);
+    m_sock = srt_create_socket();
     if ( m_sock == SRT_ERROR )
-        Error(UDT::getlasterror(), "srt_socket");
+        Error("srt_create_socket");
 
     bool yes = true;
     srt_setsockopt(m_sock, 0, SRTO_RENDEZVOUS, &yes, sizeof yes);
 
     int stat = ConfigurePre(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePre");
+        Error("ConfigurePre");
 
-    sockaddr_in localsa = CreateAddrInet(adapter, port);
-    sockaddr* plsa = (sockaddr*)&localsa;
+    const int outport = m_outgoing_port ? m_outgoing_port : port;
 
-    Verb() << "Binding a server on " << adapter << ":" << port << "\n";
+    sockaddr_any localsa = CreateAddr(adapter, outport);
+	sockaddr* plsa = localsa.get();
+
+    Verb() << "Binding a server on " << adapter << ":" << outport;
 
     stat = srt_bind(m_sock, plsa, sizeof localsa);
     if ( stat == SRT_ERROR )
     {
         srt_close(m_sock);
-        Error(UDT::getlasterror(), "srt_bind");
+        Error("srt_bind");
     }
 
-    sockaddr_in sa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&sa;
-    Verb() << "Connecting to " << host << ":" << port << "\n";
+    sockaddr_any sa = CreateAddr(host, port);
+	sockaddr* psa = sa.get();
+    Verb() << "Connecting to " << host << ":" << port;
 
     stat = srt_connect(m_sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
     {
         srt_close(m_sock);
-        Error(UDT::getlasterror(), "srt_connect");
+        Error("srt_connect");
     }
 
     stat = ConfigurePost(m_sock);
     if ( stat == SRT_ERROR )
-        Error(UDT::getlasterror(), "ConfigurePost");
+        Error("ConfigurePost");
 }
 
 void SrtCommon::Close()
 {
-    Verb() << "SrtCommon: DESTROYING CONNECTION, closing sockets (rt%" << m_sock << " ls%" << m_bindsock << ")...\n";
+    Verb() << "SrtCommon: DESTROYING CONNECTION, closing sockets (rt%" << m_sock << " ls%" << m_bindsock << ")...";
 
     if ( m_sock != SRT_INVALID_SOCK )
     {
@@ -561,7 +482,7 @@ void SrtCommon::Close()
         m_bindsock = SRT_INVALID_SOCK ;
     }
 
-    Verb() << "SrtCommon: ... done.\n";
+    Verb() << "SrtCommon: ... done.";
 }
 
 SrtCommon::~SrtCommon()
@@ -578,56 +499,41 @@ SrtSource::SrtSource(string host, int port, const map<string,string>& par)
     hostport_copy = os.str();
 }
 
-bool SrtSource::Read(size_t chunk, bytevector& data)
+int SrtSource::Read(size_t chunk, bytevector& data, ostream &out_stats)
 {
     static unsigned long counter = 1;
 
     if (data.size() < chunk)
         data.resize(chunk);
 
-    bool ready = true;
-    int stat;
-    do
+    const int stat = srt_recvmsg(m_sock, data.data(), (int) chunk);
+    if (stat <= 0)
     {
-        stat = srt_recvmsg(m_sock, data.data(), chunk);
-        if ( stat == SRT_ERROR )
-        {
-            // EAGAIN for SRT READING
-            if ( srt_getlasterror(NULL) == SRT_EASYNCRCV )
-            {
-                data.clear();
-                return false;
-            }
-            Error(UDT::getlasterror(), "recvmsg");
-        }
-
-        if ( stat == 0 )
-        {
-            throw ReadEOF(hostport_copy);
-        }
+        data.clear();
+        return stat;
     }
-    while (!ready);
 
     chunk = size_t(stat);
-    if ( chunk < data.size() )
+    if (chunk < data.size())
         data.resize(chunk);
 
-    CBytePerfMon perf;
-    srt_bstats(m_sock, &perf, clear_stats);
-    clear_stats = false;
-    if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
-    {
-        PrintSrtBandwidth(perf.mbpsBandwidth);
-    }
-    if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
-    {
-        PrintSrtStats(m_sock, perf);
-        clear_stats = !transmit_total_stats;
-    }
+    const bool need_bw_report = transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1;
+    const bool need_stats_report = transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1;
 
+    if (need_bw_report || need_stats_report)
+    {
+        CBytePerfMon perf;
+        srt_bstats(m_sock, &perf, need_stats_report && !transmit_total_stats);
+        if (transmit_stats_writer != nullptr) 
+        {
+            if (need_bw_report)
+                cerr << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth) << std::flush;
+            if (need_stats_report)
+                out_stats << transmit_stats_writer->WriteStats(m_sock, perf) << std::flush;
+        }
+    }
     ++counter;
-
-    return true;
+    return stat;
 }
 
 int SrtTarget::ConfigurePre(SRTSOCKET sock)
@@ -648,33 +554,35 @@ int SrtTarget::ConfigurePre(SRTSOCKET sock)
     return 0;
 }
 
-bool SrtTarget::Write(const bytevector& data) 
+int SrtTarget::Write(const char* data, size_t size, ostream &out_stats)
 {
     static unsigned long counter = 1;
 
-    int stat = srt_sendmsg2(m_sock, data.data(), data.size(), nullptr);
-    if ( stat == SRT_ERROR )
+    int stat = srt_sendmsg2(m_sock, data, (int) size, nullptr);
+    if (stat == SRT_ERROR)
     {
-        return false;
+        return stat;
     }
 
-    CBytePerfMon perf;
-    srt_bstats(m_sock, &perf, clear_stats);
-    clear_stats = false;
-    if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
-    {
-        PrintSrtBandwidth(perf.mbpsBandwidth);
-    }
-    if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
-    {
-        PrintSrtStats(m_sock, perf);
-        clear_stats = !transmit_total_stats;
-    }
+    const bool need_bw_report = transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1;
+    const bool need_stats_report = transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1;
 
+    if (need_bw_report || need_stats_report)
+    {
+        CBytePerfMon perf;
+        srt_bstats(m_sock, &perf, need_stats_report && !transmit_total_stats);
+        if (transmit_stats_writer != nullptr)
+        {
+            if (need_bw_report)
+                cerr << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth) << std::flush;
+            if (need_stats_report)
+                out_stats << transmit_stats_writer->WriteStats(m_sock, perf) << std::flush;
+        }
+    }
     ++counter;
-
-    return true;
+    return stat;
 }
+
 
 SrtModel::SrtModel(string host, int port, map<string,string> par)
 {
@@ -688,7 +596,7 @@ SrtModel::SrtModel(string host, int port, map<string,string> par)
     m_port = port;
 }
 
-void SrtModel::Establish(ref_t<std::string> name)
+void SrtModel::Establish(std::string& w_name)
 {
     // This does connect or accept.
     // When this returned true, the caller should create
@@ -704,10 +612,10 @@ void SrtModel::Establish(ref_t<std::string> name)
 
         PrepareClient();
 
-        if (name.get() != "")
+        if (w_name != "")
         {
-            Verb() << "Connect with requesting stream [" << name.get() << "]";
-            UDT::setstreamid(m_sock, *name);
+            Verb() << "Connect with requesting stream [" << w_name << "]";
+            UDT::setstreamid(m_sock, w_name);
         }
         else
         {
@@ -728,9 +636,9 @@ void SrtModel::Establish(ref_t<std::string> name)
             // so that it will be reused next time.
             sockaddr_any s(AF_INET);
             int namelen = s.size();
-            if ( srt_getsockname(Socket(), &s, &namelen) == SRT_ERROR )
+            if ( srt_getsockname(Socket(), s.get(), &namelen) == SRT_ERROR )
             {
-                Error(UDT::getlasterror(), "srt_getsockname");
+                Error("srt_getsockname");
             }
 
             m_outgoing_port = s.hport();
@@ -750,8 +658,8 @@ void SrtModel::Establish(ref_t<std::string> name)
         Verb() << "Accepting a client...";
         AcceptNewClient();
         // This rewrites m_sock with a new SRT socket ("accepted" socket)
-        *name = UDT::getstreamid(m_sock);
-        Verb() << "... GOT CLIENT for stream [" << name.get() << "]";
+        w_name = UDT::getstreamid(m_sock);
+        Verb() << "... GOT CLIENT for stream [" << w_name << "]";
     }
 }
 
@@ -776,30 +684,28 @@ public:
 #endif
     }
 
-    bool Read(size_t chunk, bytevector& data) override
+    int Read(size_t chunk, bytevector& data, ostream & ignored SRT_ATR_UNUSED = cout) override
     {
         if (data.size() < chunk)
             data.resize(chunk);
 
         bool st = cin.read(data.data(), chunk).good();
         chunk = cin.gcount();
-        if ( chunk == 0 && !st )
+        if (chunk == 0 || !st)
         {
             data.clear();
-            return false;
+            return 0;
         }
 
-        if ( chunk < data.size() )
+        if (chunk < data.size())
             data.resize(chunk);
-        if ( data.empty() )
-            return false;
 
-        return true;
+        return (int) chunk;
     }
 
     bool IsOpen() override { return cin.good(); }
     bool End() override { return cin.eof(); }
-    int GetSysSocket() { return 0; };
+    int GetSysSocket() const override { return 0; };
 };
 
 class ConsoleTarget: public Target
@@ -815,15 +721,20 @@ public:
 #endif
     }
 
-    bool Write(const bytevector& data) override
+    virtual ~ConsoleTarget()
     {
-        cout.write(data.data(), data.size());
-        return true;
+        cout.flush();
+    }
+
+    int Write(const char* data, size_t len, ostream & ignored SRT_ATR_UNUSED = cout) override
+    {
+        cout.write(data, len);
+        return (int) len;
     }
 
     bool IsOpen() override { return cout.good(); }
     bool Broken() override { return cout.eof(); }
-    int GetSysSocket() { return 0; };
+    int GetSysSocket() const override { return 0; };
 };
 
 template <class Iface> struct Console;
@@ -838,7 +749,9 @@ Iface* CreateConsole() { return new typename Console<Iface>::type (); }
 SocketOption udp_options [] {
     { "iptos", IPPROTO_IP, IP_TOS, SocketOption::PRE, SocketOption::INT, nullptr },
     // IP_TTL and IP_MULTICAST_TTL are handled separately by a common option, "ttl".
-    { "mcloop", IPPROTO_IP, IP_MULTICAST_LOOP, SocketOption::PRE, SocketOption::INT, nullptr }
+    { "mcloop", IPPROTO_IP, IP_MULTICAST_LOOP, SocketOption::PRE, SocketOption::INT, nullptr },
+    { "sndbuf", SOL_SOCKET, SO_SNDBUF, SocketOption::PRE, SocketOption::INT, nullptr},
+    { "rcvbuf", SOL_SOCKET, SO_RCVBUF, SocketOption::PRE, SocketOption::INT, nullptr}
 };
 
 static inline bool IsMulticast(in_addr adr)
@@ -853,7 +766,7 @@ class UdpCommon
 {
 protected:
     int m_sock = -1;
-    sockaddr_in sadr;
+    sockaddr_any sadr;
     string adapter;
     map<string, string> m_options;
 
@@ -877,19 +790,19 @@ protected:
             Error(SysError(), "UdpCommon::Setup: ioctl FIONBIO");
         }
 
-        sadr = CreateAddrInet(host, port);
+        sadr = CreateAddr(host, port);
 
         bool is_multicast = false;
 
         if ( attr.count("multicast") )
         {
-            if (!IsMulticast(sadr.sin_addr))
+            if (!IsMulticast(sadr.sin.sin_addr))
             {
                 throw std::runtime_error("UdpCommon: requested multicast for a non-multicast-type IP address");
             }
             is_multicast = true;
         }
-        else if (IsMulticast(sadr.sin_addr))
+        else if (IsMulticast(sadr.sin.sin_addr))
         {
             is_multicast = true;
         }
@@ -898,7 +811,7 @@ protected:
         {
             ip_mreq_source mreq_ssm;
             ip_mreq mreq;
-            sockaddr_in maddr;
+            sockaddr_any maddr (AF_INET);
             int opt_name;
             void* mreq_arg_ptr;
             socklen_t mreq_arg_size;
@@ -907,31 +820,35 @@ protected:
             if ( adapter == "" )
             {
                 Verb() << "Multicast: home address: INADDR_ANY:" << port;
-                maddr.sin_family = AF_INET;
-                maddr.sin_addr.s_addr = htonl(INADDR_ANY);
-                maddr.sin_port = htons(port); // necessary for temporary use
+                maddr.sin.sin_family = AF_INET;
+                maddr.sin.sin_addr.s_addr = htonl(INADDR_ANY);
+                maddr.sin.sin_port = htons(port); // necessary for temporary use
             }
             else
             {
                 Verb() << "Multicast: home address: " << adapter << ":" << port;
-                maddr = CreateAddrInet(adapter, port);
+                maddr = CreateAddr(adapter, port);
             }
 
             if (attr.count("source"))
             {
+#ifdef IP_ADD_SOURCE_MEMBERSHIP
                 /* this is an ssm.  we need to use the right struct and opt */
                 opt_name = IP_ADD_SOURCE_MEMBERSHIP;
-                mreq_ssm.imr_multiaddr.s_addr = sadr.sin_addr.s_addr;
-                mreq_ssm.imr_interface.s_addr = maddr.sin_addr.s_addr;
+                mreq_ssm.imr_multiaddr.s_addr = sadr.sin.sin_addr.s_addr;
+                mreq_ssm.imr_interface.s_addr = maddr.sin.sin_addr.s_addr;
                 inet_pton(AF_INET, attr.at("source").c_str(), &mreq_ssm.imr_sourceaddr);
                 mreq_arg_size = sizeof(mreq_ssm);
                 mreq_arg_ptr = &mreq_ssm;
+#else
+                throw std::runtime_error("UdpCommon: source-filter multicast not supported by OS");
+#endif
             }
             else
             {
                 opt_name = IP_ADD_MEMBERSHIP;
-                mreq.imr_multiaddr.s_addr = sadr.sin_addr.s_addr;
-                mreq.imr_interface.s_addr = maddr.sin_addr.s_addr;
+                mreq.imr_multiaddr.s_addr = sadr.sin.sin_addr.s_addr;
+                mreq.imr_interface.s_addr = maddr.sin.sin_addr.s_addr;
                 mreq_arg_size = sizeof(mreq);
                 mreq_arg_ptr = &mreq;
             }
@@ -964,8 +881,9 @@ protected:
 
             if ( res == status_error )
             {
-                throw runtime_error("adding to multicast membership failed");
+                Error(errno, "adding to multicast membership failed");
             }
+
             attr.erase("multicast");
             attr.erase("adapter");
         }
@@ -977,10 +895,10 @@ protected:
             int ttl = stoi(attr.at("ttl"));
             int res = setsockopt(m_sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                Verb() << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl << "\n";
+                Verb() << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl;
             res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                Verb() << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl << "\n";
+                Verb() << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl;
 
             attr.erase("ttl");
         }
@@ -995,7 +913,7 @@ protected:
                 string value = m_options.at(o.name);
                 bool ok = o.apply<SocketOption::SYSTEM>(m_sock, value);
                 if ( !ok )
-                    Verb() << "WARNING: failed to set '" << o.name << "' to " << value << "\n";
+                    Verb() << "WARNING: failed to set '" << o.name << "' to " << value;
             }
         }
     }
@@ -1040,33 +958,33 @@ public:
         eof = false;
     }
 
-    bool Read(size_t chunk, bytevector& data) override
+    int Read(size_t chunk, bytevector& data, ostream & ignored SRT_ATR_UNUSED = cout) override
     {
         if (data.size() < chunk)
             data.resize(chunk);
 
         sockaddr_in sa;
         socklen_t si = sizeof(sockaddr_in);
-        int stat = recvfrom(m_sock, data.data(), chunk, 0, (sockaddr*)&sa, &si);
-        if ( stat < 1 )
+        int stat = recvfrom(m_sock, data.data(), (int) chunk, 0, (sockaddr*)&sa, &si);
+        if (stat < 1)
         {
             if (SysError() != EWOULDBLOCK)
                 eof = true;
             data.clear();
-            return false;
+            return stat;
         }
 
         chunk = size_t(stat);
         if ( chunk < data.size() )
             data.resize(chunk);
 
-        return true;
+        return stat;
     }
 
     bool IsOpen() override { return m_sock != -1; }
     bool End() override { return eof; }
 
-    int GetSysSocket() { return m_sock; };
+    int GetSysSocket() const override { return m_sock; };
 };
 
 class UdpTarget: public Target, public UdpCommon
@@ -1075,24 +993,41 @@ public:
     UdpTarget(string host, int port, const map<string,string>& attr )
     {
         Setup(host, port, attr);
+        if (adapter != "")
+        {
+            sockaddr_any maddr = CreateAddr(adapter, 0);
+            if (maddr.family() != AF_INET)
+            {
+                Error(0, "UDP/target: IPv6 multicast not supported in the application");
+            }
+
+            in_addr addr = maddr.sin.sin_addr;
+
+            int res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&addr), sizeof(addr));
+            if (res == -1)
+            {
+                Error(SysError(), "setsockopt/IP_MULTICAST_IF: " + adapter);
+            }
+        }
+
     }
 
-    bool Write(const bytevector& data) override
+    int Write(const char* data, size_t len, ostream & ignored SRT_ATR_UNUSED = cout) override
     {
-        int stat = sendto(m_sock, data.data(), data.size(), 0, (sockaddr*)&sadr, sizeof sadr);
+        int stat = sendto(m_sock, data, (int) len, 0, (sockaddr*)&sadr, sizeof sadr);
         if ( stat == -1 )
         {
             if ((false))
                 Error(SysError(), "UDP Write/sendto");
-            return false;
+            return stat;
         }
-        return true;
+        return stat;
     }
 
     bool IsOpen() override { return m_sock != -1; }
     bool Broken() override { return false; }
 
-    int GetSysSocket() { return m_sock; };
+    int GetSysSocket() const override { return m_sock; };
 };
 
 template <class Iface> struct Udp;
@@ -1121,8 +1056,18 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
     default:
         break; // do nothing, return nullptr
     case UriParser::FILE:
-        if ( u.host() == "con" || u.host() == "console" )
-            ptr.reset( CreateConsole<Base>() );
+        if (u.host() == "con" || u.host() == "console")
+        {
+            if (IsOutput<Base>() && (
+                (Verbose::on && Verbose::cverb == &cout)
+                || g_stats_are_printed_to_stdout))
+            {
+                cerr << "ERROR: file://con with -v or -r or -s would result in mixing the data and text info.\n";
+                cerr << "ERROR: HINT: you can stream through a FIFO (named pipe)\n";
+                throw invalid_argument("incorrect parameter combination");
+            }
+            ptr.reset(CreateConsole<Base>());
+        }
 // Disable regular file support for the moment
 #if 0
         else
@@ -1132,9 +1077,9 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
 
     case UriParser::SRT:
         iport = atoi(u.port().c_str());
-        if ( iport <= 1024 )
+        if ( iport < 1024 )
         {
-            cerr << "Port value invalid: " << iport << " - must be >1024\n";
+            cerr << "Port value invalid: " << iport << " - must be >=1024\n";
             throw invalid_argument("Invalid port number");
         }
         ptr.reset( CreateSrt<Base>(u.host(), iport, u.parameters()) );
@@ -1143,9 +1088,9 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
 
     case UriParser::UDP:
         iport = atoi(u.port().c_str());
-        if ( iport <= 1024 )
+        if ( iport < 1024 )
         {
-            cerr << "Port value invalid: " << iport << " - must be >1024\n";
+            cerr << "Port value invalid: " << iport << " - must be >=1024\n";
             throw invalid_argument("Invalid port number");
         }
         ptr.reset( CreateUdp<Base>(u.host(), iport, u.parameters()) );

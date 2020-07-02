@@ -8,8 +8,8 @@
  * 
  */
 
-#ifndef INC__COMMON_TRANSMITMEDIA_HPP
-#define INC__COMMON_TRANSMITMEDIA_HPP
+#ifndef INC_SRT_COMMON_TRANSMITMEDIA_HPP
+#define INC_SRT_COMMON_TRANSMITMEDIA_HPP
 
 #include <string>
 #include <map>
@@ -53,14 +53,14 @@ public:
     void StealFrom(SrtCommon& src);
     bool AcceptNewClient();
 
-    SRTSOCKET Socket() { return m_sock; }
-    SRTSOCKET Listener() { return m_bindsock; }
+    SRTSOCKET Socket() const { return m_sock; }
+    SRTSOCKET Listener() const { return m_bindsock; }
 
     virtual void Close();
 
 protected:
 
-    void Error(UDT::ERRORINFO& udtError, string src);
+    void Error(string src);
     void Init(string host, int port, map<string,string> par, bool dir_output);
 
     virtual int ConfigurePost(SRTSOCKET sock);
@@ -84,7 +84,6 @@ protected:
 
 class SrtSource: public Source, public SrtCommon
 {
-    int srt_epoll = -1;
     std::string hostport_copy;
 public:
 
@@ -94,7 +93,7 @@ public:
         // Do nothing - create just to prepare for use
     }
 
-    bool Read(size_t chunk, bytevector& data) override;
+    int Read(size_t chunk, bytevector& data, ostream& out_stats = cout) override;
 
     /*
        In this form this isn't needed.
@@ -112,14 +111,15 @@ public:
     bool End() override { return IsBroken(); }
     void Close() override { return SrtCommon::Close(); }
 
-    SRTSOCKET GetSRTSocket()
+    SRTSOCKET GetSRTSocket() const override
     { 
         SRTSOCKET socket = SrtCommon::Socket();
         if (socket == SRT_INVALID_SOCK)
             socket = SrtCommon::Listener();
         return socket;
     }
-    bool AcceptNewClient() { return SrtCommon::AcceptNewClient(); }
+
+    bool AcceptNewClient() override { return SrtCommon::AcceptNewClient(); }
 };
 
 class SrtTarget: public Target, public SrtCommon
@@ -134,7 +134,7 @@ public:
     SrtTarget() {}
 
     int ConfigurePre(SRTSOCKET sock) override;
-    bool Write(const bytevector& data) override;
+    int Write(const char* data, size_t size, ostream &out_stats = cout) override;
     bool IsOpen() override { return IsUsable(); }
     bool Broken() override { return IsBroken(); }
     void Close() override { return SrtCommon::Close(); }
@@ -148,14 +148,14 @@ public:
         return bytes;
     }
 
-    SRTSOCKET GetSRTSocket()
+    SRTSOCKET GetSRTSocket() const override
     { 
         SRTSOCKET socket = SrtCommon::Socket();
         if (socket == SRT_INVALID_SOCK)
             socket = SrtCommon::Listener();
         return socket;
     }
-    bool AcceptNewClient() { return SrtCommon::AcceptNewClient(); }
+    bool AcceptNewClient() override { return SrtCommon::AcceptNewClient(); }
 };
 
 
@@ -183,7 +183,7 @@ public:
 
 
     SrtModel(string host, int port, map<string,string> par);
-    void Establish(ref_t<std::string> name);
+    void Establish(std::string& name);
 
     void Close()
     {

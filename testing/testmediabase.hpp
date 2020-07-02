@@ -8,8 +8,8 @@
  * 
  */
 
-#ifndef INC__COMMON_TRANMITBASE_HPP
-#define INC__COMMON_TRANMITBASE_HPP
+#ifndef INC_SRT_COMMON_TRANMITBASE_HPP
+#define INC_SRT_COMMON_TRANMITBASE_HPP
 
 #include <string>
 #include <memory>
@@ -22,6 +22,7 @@ extern volatile bool transmit_throw_on_interrupt;
 extern int transmit_bw_report;
 extern unsigned transmit_stats_report;
 extern size_t transmit_chunk_size;
+extern bool transmit_printformat_json;
 
 
 class Location

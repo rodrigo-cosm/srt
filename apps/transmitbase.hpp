@@ -8,22 +8,27 @@
  * 
  */
 
-#ifndef INC__COMMON_TRANMITBASE_HPP
-#define INC__COMMON_TRANMITBASE_HPP
+#ifndef INC_SRT_COMMON_TRANMITBASE_HPP
+#define INC_SRT_COMMON_TRANMITBASE_HPP
 
 #include <string>
 #include <memory>
 #include <vector>
 #include <iostream>
 #include <stdexcept>
+#include "srt.h"
+#include "uriparser.hpp"
+#include "apputil.hpp"
 
 typedef std::vector<char> bytevector;
 extern bool transmit_total_stats;
+extern bool g_stats_are_printed_to_stdout;
 extern volatile bool transmit_throw_on_interrupt;
 extern unsigned long transmit_bw_report;
 extern unsigned long transmit_stats_report;
 extern unsigned long transmit_chunk_size;
-extern bool printformat_json;
+
+extern std::shared_ptr<SrtStatsWriter> transmit_stats_writer;
 
 class Location
 {
@@ -35,7 +40,7 @@ public:
 class Source: public Location
 {
 public:
-    virtual bool Read(size_t chunk, bytevector& data) = 0;
+    virtual int  Read(size_t chunk, bytevector& data, std::ostream &out_stats = std::cout) = 0;
     virtual bool IsOpen() = 0;
     virtual bool End() = 0;
     static std::unique_ptr<Source> Create(const std::string& url);
@@ -50,15 +55,15 @@ public:
         }
     };
 
-    virtual SRTSOCKET GetSRTSocket() { return SRT_INVALID_SOCK; };
-    virtual int GetSysSocket() { return -1; };
+    virtual SRTSOCKET GetSRTSocket() const { return SRT_INVALID_SOCK; };
+    virtual int GetSysSocket() const { return -1; };
     virtual bool AcceptNewClient() { return false; }
 };
 
 class Target: public Location
 {
 public:
-    virtual bool Write(const bytevector& portion) = 0;
+    virtual int  Write(const char* data, size_t size, std::ostream &out_stats = std::cout) = 0;
     virtual bool IsOpen() = 0;
     virtual bool Broken() = 0;
     virtual void Close() {}
@@ -66,11 +71,9 @@ public:
     static std::unique_ptr<Target> Create(const std::string& url);
     virtual ~Target() {}
 
-    virtual SRTSOCKET GetSRTSocket() { return SRT_INVALID_SOCK; }
-    virtual int GetSysSocket() { return -1; }
+    virtual SRTSOCKET GetSRTSocket() const { return SRT_INVALID_SOCK; }
+    virtual int GetSysSocket() const { return -1; }
     virtual bool AcceptNewClient() { return false; }
 };
-
-
 
 #endif

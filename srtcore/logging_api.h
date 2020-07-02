@@ -13,8 +13,8 @@ written by
    Haivision Systems Inc.
  *****************************************************************************/
 
-#ifndef INC__SRT_LOGGING_API_H
-#define INC__SRT_LOGGING_API_H
+#ifndef INC_SRT_LOGGING_API_H
+#define INC_SRT_LOGGING_API_H
 
 // These are required for access functions:
 // - adding FA (requires set)
@@ -24,7 +24,6 @@ written by
 #include <iostream>
 #endif
 
-#include <pthread.h>
 #ifdef _WIN32
 #include "win/syslog_defs.h"
 #else
@@ -50,7 +49,7 @@ written by
 typedef void SRT_LOG_HANDLER_FN(void* opaque, int level, const char* file, int line, const char* area, const char* message);
 
 #ifdef __cplusplus
-namespace logging
+namespace srt_logging
 {
 
 

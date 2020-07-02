@@ -13,8 +13,18 @@ written by
    Haivision Systems Inc.
  *****************************************************************************/
 
-#ifndef INC__SRT_UTILITIES_H
-#define INC__SRT_UTILITIES_H
+#ifndef INC_SRT_UTILITIES_H
+#define INC_SRT_UTILITIES_H
+
+// ATTRIBUTES:
+//
+// ATR_UNUSED: declare an entity ALLOWED to be unused (prevents warnings)
+// ATR_DEPRECATED: declare an entity deprecated (compiler should warn when used)
+// ATR_NOEXCEPT: The true `noexcept` from C++11, or nothing if compiling in pre-C++11 mode
+// ATR_NOTHROW: In C++11: `noexcept`. In pre-C++11: `throw()`. Required for GNU libstdc++.
+// ATR_CONSTEXPR: In C++11: `constexpr`. Otherwise empty.
+// ATR_OVERRIDE: In C++11: `override`. Otherwise empty.
+// ATR_FINAL: In C++11: `final`. Otherwise empty.
 
 
 #ifdef __GNUG__
@@ -27,32 +37,58 @@ written by
 
 #if defined(__cplusplus) && __cplusplus > 199711L
 #define HAVE_CXX11 1
+
+// For gcc 4.7, claim C++11 is supported, as long as experimental C++0x is on,
+// however it's only the "most required C++11 support".
+#if defined(__GXX_EXPERIMENTAL_CXX0X__) && __GNUC__ == 4 && __GNUC_MINOR__ >= 7 // 4.7 only!
+#define ATR_NOEXCEPT
+#define ATR_NOTHROW throw()
+#define ATR_CONSTEXPR
+#define ATR_OVERRIDE
+#define ATR_FINAL
+#else
+#define HAVE_FULL_CXX11 1
 #define ATR_NOEXCEPT noexcept
+#define ATR_NOTHROW noexcept
 #define ATR_CONSTEXPR constexpr
 #define ATR_OVERRIDE override
 #define ATR_FINAL final
+#endif
+
 // Microsoft Visual Studio supports C++11, but not fully,
 // and still did not change the value of __cplusplus. Treat
 // this special way.
 // _MSC_VER == 1800  means Microsoft Visual Studio 2013.
 #elif defined(_MSC_VER) && _MSC_VER >= 1800
 #define HAVE_CXX11 1
+#if defined(_MSC_FULL_VER) && _MSC_FULL_VER >= 190023026
+#define HAVE_FULL_CXX11 1
+#define ATR_NOEXCEPT noexcept
+#define ATR_NOTHROW noexcept
+#define ATR_CONSTEXPR constexpr
+#define ATR_OVERRIDE override
+#define ATR_FINAL final
+#else
 #define ATR_NOEXCEPT
+#define ATR_NOTHROW throw()
 #define ATR_CONSTEXPR
 #define ATR_OVERRIDE
 #define ATR_FINAL
+#endif
 #else
 #define HAVE_CXX11 0
-#define ATR_NOEXCEPT // throw() - bad idea
+#define ATR_NOEXCEPT
+#define ATR_NOTHROW throw()
 #define ATR_CONSTEXPR
 #define ATR_OVERRIDE
 #define ATR_FINAL
 
-#if defined(REQUIRE_CXX11) && REQUIRE_CXX11 == 1
+#endif
+
+#if !HAVE_CXX11 && defined(REQUIRE_CXX11) && REQUIRE_CXX11 == 1
 #error "The currently compiled application required C++11, but your compiler doesn't support it."
 #endif
 
-#endif
 
 // Windows warning disabler
 #define _CRT_SECURE_NO_WARNINGS 1
@@ -69,12 +105,194 @@ written by
 #include <map>
 #include <functional>
 #include <memory>
+#include <iomanip>
 #include <sstream>
+#include <iomanip>
+
+#if HAVE_CXX11
+#include <type_traits>
+#endif
+
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
 
 // -------------- UTILITIES ------------------------
+
+// --- ENDIAN ---
+// Copied from: https://gist.github.com/panzi/6856583
+// License: Public Domain.
+
+#if (defined(_WIN16) || defined(_WIN32) || defined(_WIN64)) && !defined(__WINDOWS__)
+
+#	define __WINDOWS__
+
+#endif
+
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__GNU__)
+
+#	include <endian.h>
+
+// GLIBC-2.8 and earlier does not provide these macros.
+// See http://linux.die.net/man/3/endian
+// From https://gist.github.com/panzi/6856583
+#   if defined(__GLIBC__) \
+      && ( !defined(__GLIBC_MINOR__) \
+         || ((__GLIBC__ < 2) \
+         || ((__GLIBC__ == 2) && (__GLIBC_MINOR__ < 9))) )
+#       include <arpa/inet.h>
+#       if defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)
+
+#           define htole32(x) (x)
+#           define le32toh(x) (x)
+
+#       elif defined(__BYTE_ORDER) && (__BYTE_ORDER == __BIG_ENDIAN)
+
+#           define htole16(x) ((((((uint16_t)(x)) >> 8))|((((uint16_t)(x)) << 8)))
+#           define le16toh(x) ((((((uint16_t)(x)) >> 8))|((((uint16_t)(x)) << 8)))
+
+#           define htole32(x) (((uint32_t)htole16(((uint16_t)(((uint32_t)(x)) >> 16)))) | (((uint32_t)htole16(((uint16_t)(x)))) << 16))
+#           define le32toh(x) (((uint32_t)le16toh(((uint16_t)(((uint32_t)(x)) >> 16)))) | (((uint32_t)le16toh(((uint16_t)(x)))) << 16))
+
+#       else
+#           error Byte Order not supported or not defined.
+#       endif
+#   endif
+
+#elif defined(__APPLE__)
+
+#	include <libkern/OSByteOrder.h>
+
+#	define htobe16(x) OSSwapHostToBigInt16(x)
+#	define htole16(x) OSSwapHostToLittleInt16(x)
+#	define be16toh(x) OSSwapBigToHostInt16(x)
+#	define le16toh(x) OSSwapLittleToHostInt16(x)
+ 
+#	define htobe32(x) OSSwapHostToBigInt32(x)
+#	define htole32(x) OSSwapHostToLittleInt32(x)
+#	define be32toh(x) OSSwapBigToHostInt32(x)
+#	define le32toh(x) OSSwapLittleToHostInt32(x)
+ 
+#	define htobe64(x) OSSwapHostToBigInt64(x)
+#	define htole64(x) OSSwapHostToLittleInt64(x)
+#	define be64toh(x) OSSwapBigToHostInt64(x)
+#	define le64toh(x) OSSwapLittleToHostInt64(x)
+
+#	define __BYTE_ORDER    BYTE_ORDER
+#	define __BIG_ENDIAN    BIG_ENDIAN
+#	define __LITTLE_ENDIAN LITTLE_ENDIAN
+#	define __PDP_ENDIAN    PDP_ENDIAN
+
+#elif defined(__OpenBSD__)
+
+#	include <sys/endian.h>
+
+#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__DragonFly__)
+
+#	include <sys/endian.h>
+
+#ifndef be16toh
+#	define be16toh(x) betoh16(x)
+#endif
+#ifndef le16toh
+#	define le16toh(x) letoh16(x)
+#endif
+
+#ifndef be32toh
+#	define be32toh(x) betoh32(x)
+#endif
+#ifndef le32toh
+#	define le32toh(x) letoh32(x)
+#endif
+
+#ifndef be64toh
+#	define be64toh(x) betoh64(x)
+#endif
+#ifndef le64toh
+#	define le64toh(x) letoh64(x)
+#endif
+
+#elif defined(__WINDOWS__)
+
+#	include <winsock2.h>
+
+#	if BYTE_ORDER == LITTLE_ENDIAN
+
+#		define htobe16(x) htons(x)
+#		define htole16(x) (x)
+#		define be16toh(x) ntohs(x)
+#		define le16toh(x) (x)
+ 
+#		define htobe32(x) htonl(x)
+#		define htole32(x) (x)
+#		define be32toh(x) ntohl(x)
+#		define le32toh(x) (x)
+ 
+#		define htobe64(x) htonll(x)
+#		define htole64(x) (x)
+#		define be64toh(x) ntohll(x)
+#		define le64toh(x) (x)
+
+#	elif BYTE_ORDER == BIG_ENDIAN
+
+		/* that would be xbox 360 */
+#		define htobe16(x) (x)
+#		define htole16(x) __builtin_bswap16(x)
+#		define be16toh(x) (x)
+#		define le16toh(x) __builtin_bswap16(x)
+ 
+#		define htobe32(x) (x)
+#		define htole32(x) __builtin_bswap32(x)
+#		define be32toh(x) (x)
+#		define le32toh(x) __builtin_bswap32(x)
+ 
+#		define htobe64(x) (x)
+#		define htole64(x) __builtin_bswap64(x)
+#		define be64toh(x) (x)
+#		define le64toh(x) __builtin_bswap64(x)
+
+#	else
+
+#		error byte order not supported
+
+#	endif
+
+#	define __BYTE_ORDER    BYTE_ORDER
+#	define __BIG_ENDIAN    BIG_ENDIAN
+#	define __LITTLE_ENDIAN LITTLE_ENDIAN
+#	define __PDP_ENDIAN    PDP_ENDIAN
+
+#else
+
+#	error Endian: platform not supported
+
+#endif
+
+// Hardware <--> Network (big endian) convention
+inline void HtoNLA(uint32_t* dst, const uint32_t* src, size_t size)
+{
+    for (size_t i = 0; i < size; ++ i)
+        dst[i] = htonl(src[i]);
+}
+
+inline void NtoHLA(uint32_t* dst, const uint32_t* src, size_t size)
+{
+    for (size_t i = 0; i < size; ++ i)
+        dst[i] = ntohl(src[i]);
+}
+
+// Hardware <--> Intel (little endian) convention
+inline void HtoILA(uint32_t* dst, const uint32_t* src, size_t size)
+{
+    for (size_t i = 0; i < size; ++ i)
+        dst[i] = htole32(src[i]);
+}
+
+inline void ItoHLA(uint32_t* dst, const uint32_t* src, size_t size)
+{
+    for (size_t i = 0; i < size; ++ i)
+        dst[i] = le32toh(src[i]);
+}
 
 // Bit numbering utility.
 //
@@ -130,8 +348,8 @@ struct BitsetMask<L, R, false>
 template <size_t L, size_t R = L>
 struct Bits
 {
-    // DID YOU GET kind-of error: ‘mask’ is not a member of ‘Bits<3u, 5u, false>’ ?
-    // See the the above declaration of 'correct' !
+    // DID YOU GET a kind-of error: 'mask' is not a member of 'Bits<3u, 5u, false>'?
+    // See the the above declaration of 'correct'!
     static const uint32_t mask = BitsetMask<L, R>::value;
     static const uint32_t offset = R;
     static const size_t size = L - R + 1;
@@ -233,72 +451,40 @@ inline bool IsSet(int32_t bitset, int32_t flagset)
     return (bitset & flagset) == flagset;
 }
 
-inline void HtoNLA(uint32_t* dst, const uint32_t* src, size_t size)
+// std::addressof in C++11,
+// needs to be provided for C++03
+template <class RefType>
+inline RefType* AddressOf(RefType& r)
 {
-    for (size_t i = 0; i < size; ++ i)
-        dst[i] = htonl(src[i]);
+    return (RefType*)(&(unsigned char&)(r));
 }
 
-inline void NtoHLA(uint32_t* dst, const uint32_t* src, size_t size)
+template <class T>
+struct explicit_t
 {
-    for (size_t i = 0; i < size; ++ i)
-        dst[i] = ntohl(src[i]);
-}
+    T inobject;
+    explicit_t(const T& uo): inobject(uo) {}
 
-// Homecooked version of ref_t. It's a copy of std::reference_wrapper
-// voided of unwanted properties and renamed to ref_t.
+    operator T() const { return inobject; }
 
-
-#if HAVE_CXX11
-#include <functional>
-#endif
-
-template<typename Type>
-class ref_t
-{
-    Type* m_data;
-
-public:
-    typedef Type type;
-
-#if HAVE_CXX11
-    explicit ref_t(Type& __indata)
-        : m_data(std::addressof(__indata))
-        { }
-#else
-    explicit ref_t(Type& __indata)
-        : m_data((Type*)(&(char&)(__indata)))
-        { }
-#endif
-
-    ref_t(const ref_t<Type>& inref)
-        : m_data(inref.m_data)
-    { }
-
-#if HAVE_CXX11
-    ref_t(const std::reference_wrapper<Type>& i): m_data(std::addressof(i.get())) {}
-#endif
-
-    Type& operator*() { return *m_data; }
-
-    Type& get() const
-    { return *m_data; }
-
-    Type operator->() const
-    { return *m_data; }
+private:
+    template <class X>
+    explicit_t(const X& another);
 };
 
+// This is required for Printable function if you have a container of pairs,
+// but this function has a different definition for C++11 and C++03.
+namespace srt_pair_op
+{
+    template <class Value1, class Value2>
+    std::ostream& operator<<(std::ostream& s, const std::pair<Value1, Value2>& v)
+    {
+        s << "{" << v.first << " " << v.second << "}";
+        return s;
+    }
+}
 
 #if HAVE_CXX11
-
-// This alias was created so that 'Ref' (not 'ref') is used everywhere.
-// Normally the C++11 'ref' fits perfectly here, however in C++03 mode
-// it would have to be newly created. This would then cause a conflict
-// between C++03 SRT and C++11 applications as well as between C++ standard
-// library and SRT when SRT is compiled in C++11 mode (as it happens on
-// Darwin/clang).
-template <class In>
-inline auto Ref(In& i) -> decltype(std::ref(i)) { return std::ref(i); }
 
 template <class In>
 inline auto Move(In& i) -> decltype(std::move(i)) { return std::move(i); }
@@ -329,11 +515,10 @@ inline std::string Sprint(Args&&... args)
 template <class T>
 using UniquePtr = std::unique_ptr<T>;
 
-// Some utilities borrowed from tumux, as this is using options
-// similar way.
 template <class Container, class Value = typename Container::value_type, typename... Args> inline
 std::string Printable(const Container& in, Value /*pseudoargument*/, Args&&... args)
 {
+    using namespace srt_pair_op;
     std::ostringstream os;
     Print(os, args...);
     os << "[ ";
@@ -346,6 +531,7 @@ std::string Printable(const Container& in, Value /*pseudoargument*/, Args&&... a
 template <class Container> inline
 std::string Printable(const Container& in)
 {
+    using namespace srt_pair_op;
     using Value = typename Container::value_type;
     return Printable(in, Value());
 }
@@ -364,14 +550,15 @@ auto map_getp(Map& m, const Key& key) -> typename Map::mapped_type*
     return it == m.end() ? nullptr : std::addressof(it->second);
 }
 
+template<typename Map, typename Key>
+auto map_getp(const Map& m, const Key& key) -> typename Map::mapped_type const*
+{
+    auto it = m.find(key);
+    return it == m.end() ? nullptr : std::addressof(it->second);
+}
+
 
 #else
-
-template <class Type>
-ref_t<Type> Ref(Type& arg)
-{
-    return ref_t<Type>(arg);
-}
 
 // The unique_ptr requires C++11, and the rvalue-reference feature,
 // so here we're simulate the behavior using the old std::auto_ptr.
@@ -400,14 +587,14 @@ public:
 
     // All constructor declarations must be repeated.
     // "Constructor delegation" is also only C++11 feature.
-    explicit UniquePtr(element_type* __p = 0) throw() : Base(__p) {}
-    UniquePtr(UniquePtr& __a) throw() : Base(__a) { }
-    template<typename _Tp1>
-    UniquePtr(UniquePtr<_Tp1>& __a) throw() : Base(__a) {}
+    explicit UniquePtr(element_type* p = 0) throw() : Base(p) {}
+    UniquePtr(UniquePtr& a) throw() : Base(a) { }
+    template<typename Type1>
+    UniquePtr(UniquePtr<Type1>& a) throw() : Base(a) {}
 
-    UniquePtr& operator=(UniquePtr& __a) throw() { return Base::operator=(__a); }
-    template<typename _Tp1>
-    UniquePtr& operator=(UniquePtr<_Tp1>& __a) throw() { return Base::operator=(__a); }
+    UniquePtr& operator=(UniquePtr& a) throw() { return Base::operator=(a); }
+    template<typename Type1>
+    UniquePtr& operator=(UniquePtr<Type1>& a) throw() { return Base::operator=(a); }
 
     // Good, now we need to add some parts of the API of unique_ptr.
 
@@ -420,8 +607,118 @@ public:
     operator bool () { return 0!= get(); }
 };
 
+// A primitive one-argument versions of Sprint and Printable
+template <class Arg1>
+inline std::string Sprint(const Arg1& arg)
+{
+    std::ostringstream sout;
+    sout << arg;
+    return sout.str();
+}
+
+template <class Container> inline
+std::string Printable(const Container& in)
+{
+    using namespace srt_pair_op;
+    typedef typename Container::value_type Value;
+    std::ostringstream os;
+    os << "[ ";
+    for (typename Container::const_iterator i = in.begin(); i != in.end(); ++i)
+        os << Value(*i) << " ";
+    os << "]";
+
+    return os.str();
+}
+
+template<typename Map, typename Key>
+typename Map::mapped_type map_get(Map& m, const Key& key, typename Map::mapped_type def = typename Map::mapped_type())
+{
+    typename Map::iterator it = m.find(key);
+    return it == m.end() ? def : it->second;
+}
+
+template<typename Map, typename Key>
+typename Map::mapped_type map_get(const Map& m, const Key& key, typename Map::mapped_type def = typename Map::mapped_type())
+{
+    typename Map::const_iterator it = m.find(key);
+    return it == m.end() ? def : it->second;
+}
+
+template<typename Map, typename Key>
+typename Map::mapped_type* map_getp(Map& m, const Key& key)
+{
+    typename Map::iterator it = m.find(key);
+    return it == m.end() ? (typename Map::mapped_type*)0 : &(it->second);
+}
+
+template<typename Map, typename Key>
+typename Map::mapped_type const* map_getp(const Map& m, const Key& key)
+{
+    typename Map::const_iterator it = m.find(key);
+    return it == m.end() ? (typename Map::mapped_type*)0 : &(it->second);
+}
 
 #endif
+
+// Printable with prefix added for every element.
+// Useful when printing a container of sockets or sequence numbers.
+template <class Container> inline
+std::string PrintableMod(const Container& in, const std::string& prefix)
+{
+    using namespace srt_pair_op;
+    typedef typename Container::value_type Value;
+    std::ostringstream os;
+    os << "[ ";
+    for (typename Container::const_iterator y = in.begin(); y != in.end(); ++y)
+        os << prefix << Value(*y) << " ";
+    os << "]";
+    return os.str();
+}
+
+template<typename InputIterator, typename OutputIterator, typename TransFunction>
+void FilterIf(InputIterator bg, InputIterator nd,
+        OutputIterator out, TransFunction fn)
+{
+    for (InputIterator i = bg; i != nd; ++i)
+    {
+        std::pair<typename TransFunction::result_type, bool> result = fn(*i);
+        if (!result.second)
+            continue;
+        *out++ = result.first;
+    }
+}
+
+template <class Signature>
+struct CallbackHolder
+{
+    void* opaque;
+    Signature* fn;
+
+    CallbackHolder(): opaque(NULL), fn(NULL)  {}
+
+    void set(void* o, Signature* f)
+    {
+        // Test if the pointer is a pointer to function. Don't let
+        // other type of pointers here.
+#if HAVE_CXX11
+        static_assert(std::is_function<Signature>::value, "CallbackHolder is for functions only!");
+#else
+        // This is a poor-man's replacement, which should in most compilers
+        // generate a warning, if `Signature` resolves to a value type.
+        // This would make an illegal pointer cast from a value to a function type.
+        // Casting function-to-function, however, should not. Unfortunately
+        // newer compilers disallow that, too (when a signature differs), but
+        // then they should better use the C++11 way, much more reliable and safer.
+        void* (*testfn)(void*) ATR_UNUSED = (void*(*)(void*))f;
+#endif
+        opaque = o;
+        fn = f;
+    }
+
+    operator bool() { return fn != NULL; }
+};
+
+#define CALLBACK_CALL(holder,...) (*holder.fn)(holder.opaque, __VA_ARGS__)
 
 template<class T>
 struct DestructorVarHook
@@ -471,24 +768,24 @@ inline std::string FormatBinaryString(const uint8_t* bytes, size_t size)
 }
 
 
-// This function is useful in multiple uses where
-// the time drift should be traced. It's currently in use in every
-// solution that implements any kind of TSBPD (AKA Stower).
+/// This class is useful in every place where
+/// the time drift should be traced. It's currently in use in every
+/// solution that implements any kind of TSBPD.
 template<unsigned MAX_SPAN, int MAX_DRIFT, bool CLEAR_ON_UPDATE = true>
 class DriftTracer
 {
-    int64_t m_qDrift;
-    int64_t m_qOverdrift;
+    int64_t  m_qDrift;
+    int64_t  m_qOverdrift;
 
-    int64_t m_qDriftSum;
+    int64_t  m_qDriftSum;
     unsigned m_uDriftSpan;
 
 public:
     DriftTracer()
-        : m_qDrift(),
-        m_qOverdrift(),
-        m_qDriftSum(),
-        m_uDriftSpan()
+        : m_qDrift(0)
+        , m_qOverdrift(0)
+        , m_qDriftSum(0)
+        , m_uDriftSpan(0)
     {}
 
     bool update(int64_t driftval)
@@ -496,37 +793,42 @@ public:
         m_qDriftSum += driftval;
         ++m_uDriftSpan;
 
-        if ( m_uDriftSpan >= MAX_SPAN )
+        if (m_uDriftSpan < MAX_SPAN)
+            return false;
+
+        if (CLEAR_ON_UPDATE)
+            m_qOverdrift = 0;
+
+        // Calculate the median of all drift values.
+        // In most cases, the divisor should be == MAX_SPAN.
+        m_qDrift = m_qDriftSum / m_uDriftSpan;
+
+        // And clear the collection
+        m_qDriftSum = 0;
+        m_uDriftSpan = 0;
+
+        // In case of "overdrift", save the overdriven value in 'm_qOverdrift'.
+        // In clear mode, you should add this value to the time base when update()
+        // returns true. The drift value will be since now measured with the
+        // overdrift assumed to be added to the base.
+        if (std::abs(m_qDrift) > MAX_DRIFT)
         {
-            if ( CLEAR_ON_UPDATE )
-                m_qOverdrift = 0;
-
-            // Calculate the median of all drift values.
-            // In most cases, the divisor should be == MAX_SPAN.
-            m_qDrift = m_qDriftSum / m_uDriftSpan;
-
-            // And clear the collection
-            m_qDriftSum = 0;
-            m_uDriftSpan = 0;
-
-            // In case of "overdrift", save the overdriven value in 'm_qOverdrift'.
-            // In clear mode, you should add this value to the time base when update()
-            // returns true. The drift value will be since now measured with the
-            // overdrift assumed to be added to the base.
-            if (std::abs(m_qDrift) > MAX_DRIFT)
-            {
-                m_qOverdrift = m_qDrift < 0 ? -MAX_DRIFT : MAX_DRIFT;
-                m_qDrift -= m_qOverdrift;
-            }
-
-            // printDriftOffset(m_qOverdrift, m_qDrift);
-
-            // Timebase is separate
-            // m_qTimeBase += m_qOverdrift;
-
-            return true;
+            m_qOverdrift = m_qDrift < 0 ? -MAX_DRIFT : MAX_DRIFT;
+            m_qDrift -= m_qOverdrift;
         }
-        return false;
+
+        // printDriftOffset(m_qOverdrift, m_qDrift);
+
+        // Timebase is separate
+        // m_qTimeBase += m_qOverdrift;
+
+        return true;
+    }
+
+    // For group overrides
+    void forceDrift(int64_t driftval)
+    {
+        m_qDrift = driftval;
     }
 
     // These values can be read at any time, however if you want
@@ -550,8 +852,8 @@ public:
     // any changes in overdrift. By manipulating the MAX_DRIFT parameter
     // you can decide how high the drift can go relatively to stay below
     // overdrift.
-    int64_t drift() { return m_qDrift; }
-    int64_t overdrift() { return m_qOverdrift; }
+    int64_t drift() const { return m_qDrift; }
+    int64_t overdrift() const { return m_qOverdrift; }
 };
 
 template <class KeyType, class ValueType>
@@ -562,7 +864,7 @@ struct MapProxy
 
     MapProxy(std::map<KeyType, ValueType>& m, const KeyType& k): mp(m), key(k) {}
 
-    void operator=(const KeyType& val)
+    void operator=(const ValueType& val)
     {
         mp[key] = val;
     }
@@ -585,12 +887,52 @@ struct MapProxy
         return p->second;
     }
 
+    ValueType deflt(const ValueType& defval) const
+    {
+        typename std::map<KeyType, ValueType>::const_iterator p = find();
+        if (p == mp.end())
+            return defval;
+        return p->second;
+    }
+
     bool exists() const
     {
         return find() != mp.end();
     }
 };
 
+inline std::string BufferStamp(const char* mem, size_t size)
+{
+    using namespace std;
+    char spread[16];
+
+    int n = 16-size;
+    if (n > 0)
+        memset((spread + 16 - n), 0, n);
+    memcpy((spread), mem, min(size_t(16), size));
+
+    // Now prepare 4 cells for uint32_t.
+    union
+    {
+        uint32_t sum;
+        char cells[4];
+    };
+    memset((cells), 0, 4);
+
+    for (size_t x = 0; x < 4; ++x)
+        for (size_t y = 0; y < 4; ++y)
+        {
+            cells[x] += spread[x+4*y];
+        }
+
+    // Convert to hex string
+
+    ostringstream os;
+
+    os << hex << uppercase << setfill('0') << setw(8) << sum;
+
+    return os.str();
+}
 
 template <class OutputIterator>
 inline void Split(const std::string & str, char delimiter, OutputIterator tokens)
@@ -612,6 +954,28 @@ inline void Split(const std::string & str, char delimiter, OutputIterator tokens
     } while (end != std::string::npos);
 }
 
+inline std::string SelectNot(const std::string& unwanted, const std::string& s1, const std::string& s2)
+{
+    if (s1 == unwanted)
+        return s2; // might be unwanted, too, but then, there's nothing you can do anyway
+    if (s2 == unwanted)
+        return s1;
+
+    // Both have wanted values, so now compare if they are same
+    if (s1 == s2)
+        return s1; // occasionally there's a winner
+
+    // Irresolvable situation.
+    return std::string();
+}
+
+inline std::string SelectDefault(const std::string& checked, const std::string& def)
+{
+    if (checked == "")
+        return def;
+    return checked;
+}
+
 template <class It>
 inline size_t safe_advance(It& it, size_t num, It end)
 {
@@ -631,7 +995,56 @@ ATR_CONSTEXPR size_t Size(const V (&)[N]) ATR_NOEXCEPT { return N; }
 template <size_t DEPRLEN, typename ValueType>
 inline ValueType avg_iir(ValueType old_value, ValueType new_value)
 {
-    return (old_value*(DEPRLEN-1) + new_value)/DEPRLEN;
+    return (old_value * (DEPRLEN - 1) + new_value) / DEPRLEN;
 }
+
+template <size_t DEPRLEN, typename ValueType>
+inline ValueType avg_iir_w(ValueType old_value, ValueType new_value, size_t new_val_weight)
+{
+    return (old_value * (DEPRLEN - new_val_weight) + new_value * new_val_weight) / DEPRLEN;
+}
+
+// Property accessor definitions
+//
+// "Property" is a special method that accesses given field.
+// This relies only on a convention, which is the following:
+//
+// V x = object.prop(); <-- get the property's value
+// object.prop(x); <-- set the property a value
+//
+// Properties might be also chained when setting:
+//
+// object.prop1(v1).prop2(v2).prop3(v3);
+//
+// Properties may be defined various even very complicated
+// ways, which is simply providing a method with body. In order
+// to define a property simplest possible way, that is, refer
+// directly to the field that keeps it, here are the following macros:
+//
+// Prefix: SRTU_PROPERTY_
+// Followed by:
+//  - access type: RO, WO, RW, RR, RRW
+//  - chain flag: optional _CHAIN
+// Where access type is:
+// - RO - read only. Defines reader accessor. The accessor method will be const.
+// - RR - read reference. The accessor isn't const to allow reference passthrough.
+// - WO - write only. Defines writer accessor.
+// - RW - combines RO and WO.
+// - RRW - combines RR and WO.
+//
+// The _CHAIN marker is optional for macros providing writable accessors
+// for properties. The difference is that while simple write accessors return
+// void, the chaining accessors return the reference to the object for which
+// the write accessor was called so that you can call the next accessor (or
+// any other method as well) for the result.
+
+#define SRTU_PROPERTY_RR(type, name, field) type name() { return field; }
+#define SRTU_PROPERTY_RO(type, name, field) type name() const { return field; }
+#define SRTU_PROPERTY_WO(type, name, field) void set_##name(type arg) { field = arg; }
+#define SRTU_PROPERTY_WO_CHAIN(otype, type, name, field) otype& set_##name(type arg) { field = arg; return *this; }
+#define SRTU_PROPERTY_RW(type, name, field) SRTU_PROPERTY_RO(type, name, field); SRTU_PROPERTY_WO(type, name, field)
+#define SRTU_PROPERTY_RRW(type, name, field) SRTU_PROPERTY_RR(type, name, field); SRTU_PROPERTY_WO(type, name, field)
+#define SRTU_PROPERTY_RW_CHAIN(otype, type, name, field) SRTU_PROPERTY_RO(type, name, field); SRTU_PROPERTY_WO_CHAIN(otype, type, name, field)
+#define SRTU_PROPERTY_RRW_CHAIN(otype, type, name, field) SRTU_PROPERTY_RR(type, name, field); SRTU_PROPERTY_WO_CHAIN(otype, type, name, field)
 
 #endif

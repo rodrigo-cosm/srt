@@ -31,7 +31,7 @@ int main(int argc, char* argv[])
    // use this function to initialize the UDT library
    srt_startup();
 
-   srt_setloglevel(logging::LogLevel::debug);
+   srt_setloglevel(srt_logging::LogLevel::debug);
 
    addrinfo hints;
    addrinfo* res;
@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
       return 0;
    }
 
-   SRTSOCKET serv = srt_socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+   SRTSOCKET serv = srt_create_socket();
 
    // SRT requires that third argument is always SOCK_DGRAM. The Stream API is set by an option,
    // although there's also lots of other options to be set, for which there's a convenience option,

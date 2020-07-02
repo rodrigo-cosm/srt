@@ -159,21 +159,28 @@ modified by
 //      For any single loss or consectutive loss less than 2 packets, use
 //      the original sequence numbers in the field.
 
+#include "platform_sys.h"
 
 #include <cstring>
 #include "packet.h"
+#include "handshake.h"
 #include "logging.h"
+#include "handshake.h"
 
-extern logging::Logger mglog;
+namespace srt_logging
+{
+    extern Logger mglog;
+}
+using namespace srt_logging;
 
 // Set up the aliases in the constructure
 CPacket::CPacket():
-__pad(),
+m_extra_pad(),
 m_data_owned(false),
-m_iSeqNo((int32_t&)(m_nHeader[PH_SEQNO])),
-m_iMsgNo((int32_t&)(m_nHeader[PH_MSGNO])),
-m_iTimeStamp((int32_t&)(m_nHeader[PH_TIMESTAMP])),
-m_iID((int32_t&)(m_nHeader[PH_ID])),
+m_iSeqNo((int32_t&)(m_nHeader[SRT_PH_SEQNO])),
+m_iMsgNo((int32_t&)(m_nHeader[SRT_PH_MSGNO])),
+m_iTimeStamp((int32_t&)(m_nHeader[SRT_PH_TIMESTAMP])),
+m_iID((int32_t&)(m_nHeader[SRT_PH_ID])),
 m_pcData((char*&)(m_PacketVector[PV_DATA].dataRef()))
 {
     m_nHeader.clear();
@@ -188,8 +195,21 @@ m_pcData((char*&)(m_PacketVector[PV_DATA].dataRef()))
     m_PacketVector[PV_DATA].set(NULL, 0);
 }
 
+char* CPacket::getData()
+{
+    return (char*)m_PacketVector[PV_DATA].dataRef();
+}
+
 void CPacket::allocate(size_t alloc_buffer_size)
 {
+    if (m_data_owned)
+    {
+        if (getLength() == alloc_buffer_size)
+            return; // already allocated
+
+        // Would be nice to reallocate; for now just allocate again.
+        delete [] m_pcData;
+    }
     m_PacketVector[PV_DATA].set(new char[alloc_buffer_size], alloc_buffer_size);
     m_data_owned = true;
 }
@@ -199,6 +219,20 @@ void CPacket::deallocate()
     if (m_data_owned)
         delete [] (char*)m_PacketVector[PV_DATA].data();
     m_PacketVector[PV_DATA].set(NULL, 0);
+}
+
+char* CPacket::release()
+{
+    // When not owned, release returns NULL.
+    char* buffer = NULL;
+    if (m_data_owned)
+    {
+        buffer = getData();
+        m_data_owned = false;
+    }
+
+    deallocate(); // won't delete because m_data_owned == false
+    return buffer;
 }
 
 CPacket::~CPacket()
@@ -220,10 +254,13 @@ void CPacket::setLength(size_t len)
    m_PacketVector[PV_DATA].setLength(len);
 }
 
-void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
+void CPacket::pack(UDTMessageType pkttype, const int32_t* lparam, void* rparam, int size)
 {
     // Set (bit-0 = 1) and (bit-1~15 = type)
     setControl(pkttype);
+    HLOGC(mglog.Debug, log << "pack: type=" << MessageTypeStr(pkttype)
+            << " ARG=" << (lparam ? Sprint(*lparam) : std::string("NULL"))
+            << " [ " << (rparam ? Sprint(*(int32_t*)rparam) : std::string()) << " ]");
 
    // Set additional information and control information field
    switch (pkttype)
@@ -231,7 +268,7 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
    case UMSG_ACK: //0010 - Acknowledgement (ACK)
       // ACK packet seq. no.
       if (NULL != lparam)
-         m_nHeader[PH_MSGNO] = *(int32_t *)lparam;
+         m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // data ACK seq. no. 
       // optional: RTT (microsends), RTT variance (microseconds) advertised flow window size (packets), and estimated link capacity (packets per second)
@@ -241,11 +278,11 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
 
    case UMSG_ACKACK: //0110 - Acknowledgement of Acknowledgement (ACK-2)
       // ACK packet seq. no.
-      m_nHeader[PH_MSGNO] = *(int32_t *)lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // control info field should be none
       // but "writev" does not allow this
-      m_PacketVector[PV_DATA].set((void *)&__pad, 4);
+      m_PacketVector[PV_DATA].set((void *)&m_extra_pad, 4);
 
       break;
 
@@ -258,14 +295,19 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
    case UMSG_CGWARNING: //0100 - Congestion Warning
       // control info field should be none
       // but "writev" does not allow this
-      m_PacketVector[PV_DATA].set((void *)&__pad, 4);
+      m_PacketVector[PV_DATA].set((void *)&m_extra_pad, 4);
   
       break;
 
    case UMSG_KEEPALIVE: //0001 - Keep-alive
+      if (lparam)
+      {
+          // XXX EXPERIMENTAL. Pass the 32-bit integer here.
+          m_nHeader[SRT_PH_MSGNO] = *lparam;
+      }
       // control info field should be none
       // but "writev" does not allow this
-      m_PacketVector[PV_DATA].set((void *)&__pad, 4);
+      m_PacketVector[PV_DATA].set((void *)&m_extra_pad, 4);
 
       break;
 
@@ -278,13 +320,13 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
    case UMSG_SHUTDOWN: //0101 - Shutdown
       // control info field should be none
       // but "writev" does not allow this
-      m_PacketVector[PV_DATA].set((void *)&__pad, 4);
+      m_PacketVector[PV_DATA].set((void *)&m_extra_pad, 4);
 
       break;
 
    case UMSG_DROPREQ: //0111 - Message Drop Request
       // msg id 
-      m_nHeader[PH_MSGNO] = *(int32_t *)lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       //first seq no, last seq no
       m_PacketVector[PV_DATA].set(rparam, size);
@@ -293,11 +335,11 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
 
    case UMSG_PEERERROR: //1000 - Error Signal from the Peer Side
       // Error type
-      m_nHeader[PH_MSGNO] = *(int32_t *)lparam;
+      m_nHeader[SRT_PH_MSGNO] = *lparam;
 
       // control info field should be none
       // but "writev" does not allow this
-      m_PacketVector[PV_DATA].set((void *)&__pad, 4);
+      m_PacketVector[PV_DATA].set((void *)&m_extra_pad, 4);
 
       break;
 
@@ -305,7 +347,7 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
       // for extended control packet
       // "lparam" contains the extended type information for bit 16 - 31
       // "rparam" is the control information
-      m_nHeader[PH_SEQNO] |= *(int32_t *)lparam;
+      m_nHeader[SRT_PH_SEQNO] |= *lparam;
 
       if (NULL != rparam)
       {
@@ -313,7 +355,7 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
       }
       else
       {
-         m_PacketVector[PV_DATA].set((void *)&__pad, 4);
+         m_PacketVector[PV_DATA].set((void *)&m_extra_pad, 4);
       }
 
       break;
@@ -323,6 +365,42 @@ void CPacket::pack(UDTMessageType pkttype, void* lparam, void* rparam, int size)
    }
 }
 
+void CPacket::toNL()
+{
+    // XXX USE HtoNLA!
+    if (isControl())
+    {
+        for (ptrdiff_t i = 0, n = getLength() / 4; i < n; ++i)
+            *((uint32_t*)m_pcData + i) = htonl(*((uint32_t*)m_pcData + i));
+    }
+
+    // convert packet header into network order
+    uint32_t* p = m_nHeader;
+    for (int j = 0; j < 4; ++j)
+    {
+        *p = htonl(*p);
+        ++p;
+    }
+}
+
+void CPacket::toHL()
+{
+    // convert back into local host order
+    uint32_t* p = m_nHeader;
+    for (int k = 0; k < 4; ++k)
+    {
+        *p = ntohl(*p);
+        ++p;
+    }
+
+    if (isControl())
+    {
+        for (ptrdiff_t l = 0, n = getLength() / 4; l < n; ++l)
+            *((uint32_t*) m_pcData + l) = ntohl(*((uint32_t*) m_pcData + l));
+    }
+}
+
+
 IOVector* CPacket::getPacketVector()
 {
    return m_PacketVector;
@@ -330,12 +408,12 @@ IOVector* CPacket::getPacketVector()
 
 UDTMessageType CPacket::getType() const
 {
-    return UDTMessageType(SEQNO_MSGTYPE::unwrap(m_nHeader[PH_SEQNO]));
+    return UDTMessageType(SEQNO_MSGTYPE::unwrap(m_nHeader[SRT_PH_SEQNO]));
 }
 
 int CPacket::getExtendedType() const
 {
-    return SEQNO_EXTTYPE::unwrap(m_nHeader[PH_SEQNO]);
+    return SEQNO_EXTTYPE::unwrap(m_nHeader[SRT_PH_SEQNO]);
 }
 
 int32_t CPacket::getAckSeqNo() const
@@ -344,7 +422,7 @@ int32_t CPacket::getAckSeqNo() const
    // This field is used only in UMSG_ACK and UMSG_ACKACK,
    // so 'getAckSeqNo' symbolically defines the only use of it
    // in case of CONTROL PACKET.
-   return m_nHeader[PH_MSGNO];
+   return m_nHeader[SRT_PH_MSGNO];
 }
 
 uint16_t CPacket::getControlFlags() const
@@ -353,40 +431,40 @@ uint16_t CPacket::getControlFlags() const
     // which is not used at all in case when the standard
     // type message is interpreted. This can be used to pass
     // additional special flags.
-    return SEQNO_EXTTYPE::unwrap(m_nHeader[PH_SEQNO]);
+    return SEQNO_EXTTYPE::unwrap(m_nHeader[SRT_PH_SEQNO]);
 }
 
 PacketBoundary CPacket::getMsgBoundary() const
 {
-    return PacketBoundary(MSGNO_PACKET_BOUNDARY::unwrap(m_nHeader[PH_MSGNO]));
+    return PacketBoundary(MSGNO_PACKET_BOUNDARY::unwrap(m_nHeader[SRT_PH_MSGNO]));
 }
 
 bool CPacket::getMsgOrderFlag() const
 {
-    return 0!=  MSGNO_PACKET_INORDER::unwrap(m_nHeader[PH_MSGNO]);
+    return 0!=  MSGNO_PACKET_INORDER::unwrap(m_nHeader[SRT_PH_MSGNO]);
 }
 
 int32_t CPacket::getMsgSeq(bool has_rexmit) const
 {
     if ( has_rexmit )
     {
-        return MSGNO_SEQ::unwrap(m_nHeader[PH_MSGNO]);
+        return MSGNO_SEQ::unwrap(m_nHeader[SRT_PH_MSGNO]);
     }
     else
     {
-        return MSGNO_SEQ_OLD::unwrap(m_nHeader[PH_MSGNO]);
+        return MSGNO_SEQ_OLD::unwrap(m_nHeader[SRT_PH_MSGNO]);
     }
 }
 
 bool CPacket::getRexmitFlag() const
 {
     // return false; //
-    return 0 !=  MSGNO_REXMIT::unwrap(m_nHeader[PH_MSGNO]);
+    return 0 !=  MSGNO_REXMIT::unwrap(m_nHeader[SRT_PH_MSGNO]);
 }
 
 EncryptionKeySpec CPacket::getMsgCryptoFlags() const
 {
-    return EncryptionKeySpec(MSGNO_ENCKEYSPEC::unwrap(m_nHeader[PH_MSGNO]));
+    return EncryptionKeySpec(MSGNO_ENCKEYSPEC::unwrap(m_nHeader[SRT_PH_MSGNO]));
 }
 
 // This is required as the encryption/decryption happens in place.
@@ -394,98 +472,110 @@ EncryptionKeySpec CPacket::getMsgCryptoFlags() const
 // crypto flags after encrypting a packet.
 void CPacket::setMsgCryptoFlags(EncryptionKeySpec spec)
 {
-    int32_t clr_msgno = m_nHeader[PH_MSGNO] & ~MSGNO_ENCKEYSPEC::mask;
-    m_nHeader[PH_MSGNO] = clr_msgno | EncryptionKeyBits(spec);
+    int32_t clr_msgno = m_nHeader[SRT_PH_MSGNO] & ~MSGNO_ENCKEYSPEC::mask;
+    m_nHeader[SRT_PH_MSGNO] = clr_msgno | EncryptionKeyBits(spec);
 }
-
-/*
-   Leaving old code for historical reasons. This is moved to CSRTCC.
-EncryptionStatus CPacket::encrypt(HaiCrypt_Handle hcrypto)
-{
-    if ( !hcrypto )
-    {
-        LOGC(mglog.Error, log << "IPE: NULL crypto passed to CPacket::encrypt!");
-        return ENCS_FAILED;
-    }
-
-   int rc = HaiCrypt_Tx_Data(hcrypto, (uint8_t *)m_nHeader.raw(), (uint8_t *)m_pcData, m_PacketVector[PV_DATA].iov_len);
-   if ( rc < 0 )
-   {
-       // -1: encryption failure
-       // 0: key not received yet
-       return ENCS_FAILED;
-   } else if (rc > 0) {
-       m_PacketVector[PV_DATA].iov_len = rc;
-   }
-   return ENCS_CLEAR;
-}
-
-EncryptionStatus CPacket::decrypt(HaiCrypt_Handle hcrypto)
-{
-   if (getMsgCryptoFlags() == EK_NOENC)
-   {
-       //HLOGC(mglog.Debug, log << "CPacket::decrypt: packet not encrypted");
-       return ENCS_CLEAR; // not encrypted, no need do decrypt, no flags to be modified
-   }
-
-   if (!hcrypto)
-   {
-        LOGC(mglog.Error, log << "IPE: NULL crypto passed to CPacket::decrypt!");
-        return ENCS_FAILED; // "invalid argument" (leave encryption flags untouched)
-   }
-
-   int rc = HaiCrypt_Rx_Data(hcrypto, (uint8_t *)m_nHeader.raw(), (uint8_t *)m_pcData, m_PacketVector[PV_DATA].iov_len);
-   if ( rc <= 0 )
-   {
-       // -1: decryption failure
-       // 0: key not received yet
-       return ENCS_FAILED;
-   }
-   // Otherwise: rc == decrypted text length.
-   m_PacketVector[PV_DATA].iov_len = rc; // In case clr txt size is different from cipher txt
-
-   // Decryption succeeded. Update flags.
-   m_nHeader[PH_MSGNO] &= ~MSGNO_ENCKEYSPEC::mask; // sets EK_NOENC to ENCKEYSPEC bits.
-
-   return ENCS_CLEAR;
-}
-
-*/
 
 uint32_t CPacket::getMsgTimeStamp() const
 {
    // SRT_DEBUG_TSBPD_WRAP may enable smaller timestamp for faster wraparoud handling tests
-   return (uint32_t)m_nHeader[PH_TIMESTAMP] & TIMESTAMP_MASK;
+   return (uint32_t)m_nHeader[SRT_PH_TIMESTAMP] & TIMESTAMP_MASK;
 }
 
 CPacket* CPacket::clone() const
 {
    CPacket* pkt = new CPacket;
-   memcpy(pkt->m_nHeader, m_nHeader, HDR_SIZE);
+   memcpy((pkt->m_nHeader), m_nHeader, HDR_SIZE);
    pkt->m_pcData = new char[m_PacketVector[PV_DATA].size()];
-   memcpy(pkt->m_pcData, m_pcData, m_PacketVector[PV_DATA].size());
+   memcpy((pkt->m_pcData), m_pcData, m_PacketVector[PV_DATA].size());
    pkt->m_PacketVector[PV_DATA].setLength(m_PacketVector[PV_DATA].size());
 
    return pkt;
 }
 
-#if ENABLE_LOGGING
-std::string CPacket::MessageFlagStr()
+// Useful for debugging
+std::string PacketMessageFlagStr(uint32_t msgno_field)
 {
     using namespace std;
 
     stringstream out;
 
-    static const string boundary [] = { "PB_SUBSEQUENT", "PB_LAST", "PB_FIRST", "PB_SOLO" };
-    static const string order [] = { "ORD_RELAXED", "ORD_REQUIRED" };
-    static const string crypto [] = { "EK_NOENC", "EK_EVEN", "EK_ODD", "EK*ERROR" };
-    static const string rexmit [] = { "SN_ORIGINAL", "SN_REXMIT" };
+    static const char* const boundary [] = { "PB_SUBSEQUENT", "PB_LAST", "PB_FIRST", "PB_SOLO" };
+    static const char* const order [] = { "ORD_RELAXED", "ORD_REQUIRED" };
+    static const char* const crypto [] = { "EK_NOENC", "EK_EVEN", "EK_ODD", "EK*ERROR" };
+    static const char* const rexmit [] = { "SN_ORIGINAL", "SN_REXMIT" };
 
-    out << boundary[int(getMsgBoundary())] << " ";
-    out << order[int(getMsgOrderFlag())] << " ";
-    out << crypto[int(getMsgCryptoFlags())] << " ";
-    out << rexmit[int(getRexmitFlag())];
+    out << boundary[MSGNO_PACKET_BOUNDARY::unwrap(msgno_field)] << " ";
+    out << order[MSGNO_PACKET_INORDER::unwrap(msgno_field)] << " ";
+    out << crypto[MSGNO_ENCKEYSPEC::unwrap(msgno_field)] << " ";
+    out << rexmit[MSGNO_REXMIT::unwrap(msgno_field)];
 
     return out.str();
+}
+
+inline void SprintSpecialWord(std::ostream& os, int32_t val)
+{
+    if (val & LOSSDATA_SEQNO_RANGE_FIRST)
+        os << "<" << (val & (~LOSSDATA_SEQNO_RANGE_FIRST)) << ">";
+    else
+        os << val;
+}
+
+#if ENABLE_LOGGING
+std::string CPacket::Info()
+{
+    std::ostringstream os;
+    os << "TARGET=@" << m_iID << " ";
+
+    if (isControl())
+    {
+        os << "CONTROL: size=" << getLength() << " type=" << MessageTypeStr(getType(), getExtendedType());
+
+        if (getType() == UMSG_HANDSHAKE)
+        {
+            os << " HS: ";
+            // For handshake we already have a parsing method
+            CHandShake hs;
+            hs.load_from(m_pcData, getLength());
+            os << hs.show();
+        }
+        else
+        {
+            // This is a value that some messages use for some purposes.
+            // The "ack seq no" is one of the purposes, used by UMSG_ACK and UMSG_ACKACK.
+            // This is simply the SRT_PH_MSGNO field used as a message number in data packets.
+            os << " ARG: 0x";
+            os << std::hex << getAckSeqNo() << " ";
+            os << std::dec << getAckSeqNo();
+
+            // It would be nice to see the extended packet data, but this
+            // requires strictly a message-dependent interpreter. So let's simply
+            // display all numbers in the array with the following restrictions:
+            // - all data contained in the buffer are considered 32-bit integer
+            // - sign flag will be cleared before displaying, with additional mark
+            size_t wordlen = getLength()/4; // drop any remainder if present
+            int32_t* array = (int32_t*)m_pcData;
+            os << " [ ";
+            for (size_t i = 0; i < wordlen; ++i)
+            {
+                SprintSpecialWord(os, array[i]);
+                os << " ";
+            }
+            os << "]";
+        }
+    }
+    else
+    {
+        // It's hard to extract the information about peer's supported rexmit flag.
+        // This is only a log, nothing crucial, so we can risk displaying incorrect message number.
+        // Declaring that the peer supports rexmit flag cuts off the highest bit from
+        // the displayed number.
+        os << "DATA: size=" << getLength()
+            << " " << BufferStamp(m_pcData, getLength())
+            << " #" << getMsgSeq(true) << " %" << getSeqNo()
+            << " " << MessageFlagStr();
+    }
+
+    return os.str();
 }
 #endif

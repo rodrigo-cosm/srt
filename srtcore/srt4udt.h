@@ -13,11 +13,11 @@ written by
    Haivision Systems Inc.
  *****************************************************************************/
 
-#ifndef SRT4UDT_H
-#define SRT4UDT_H
+#ifndef INC_SRT_SRT4UDT_H
+#define INC_SRT_SRT4UDT_H
 
-#ifndef INC__SRTC_H
-#error "This is protected header, used by udt.h. This shouldn't be included directly"
+#ifndef INC_SRTC_H
+#error "This is protected header, used by srt.h. This shouldn't be included directly"
 #endif
 
 //undef SRT_ENABLE_ECN 1                /* Early Congestion Notification (for source bitrate control) */
