@@ -9305,6 +9305,7 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet)
             {
                 setPacketTS(w_packet, steady_clock::now());
                 LOGC(qslog.Warn, log << "packData: reference time=" << FormatTime(origintime)
+                        << " is in the past towards start time=" << FormatTime(m_stats.tsStartTime)
                         << " - setting NOW as reference time for the data packet");
             }
         }
@@ -11548,7 +11549,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
         //m_bSynchOnMsgNo = true;
         m_selfManaged = true;
         m_bSyncOnMsgNo = true;
-//        m_cbSelectLink.set(this, &CUDTGroup::linkSelect_window_fw);
+        m_cbSelectLink.set(this, &CUDTGroup::linkSelect_window_fw);
         break;
 
     case SRT_GTYPE_MULTICAST:
@@ -12129,7 +12130,6 @@ int CUDTGroup::send(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     case SRT_GTYPE_BALANCING:
         return sendBalancing(buf, len, (w_mc));
-        //return old_sendBalancing(buf, len, r_mc);
 
         /* to be implemented
     case SRT_GTYPE_MULTICAST:
@@ -12810,37 +12810,6 @@ void CUDTGroup::getGroupCount(size_t& w_size, bool& w_still_alive)
     // If no socket is found connected, don't update any status.
     w_size = group_list_size;
     w_still_alive = still_alive;
-}
-
-void CUDTGroup::getMemberStatus(std::vector<SRT_SOCKGROUPDATA>& w_gd, SRTSOCKET wasread, int result, bool again)
-{
-    CGuard gg (m_GroupLock);
-
-    for (gli_t ig = m_Group.begin(); ig != m_Group.end(); ++ig)
-    {
-        SRT_SOCKGROUPDATA grpdata;
-
-        grpdata.id = ig->id;
-        grpdata.sockstate = ig->ps->getStatus();
-        const sockaddr_any& padr = ig->ps->core().peerAddr();
-        memcpy(&grpdata.peeraddr, &padr, padr.size());
-
-        if (!again && ig->id == wasread)
-        {
-            grpdata.result = result;
-        }
-        else if (ig->ready_error)
-        {
-            grpdata.result = -1;
-            ig->ready_error = false;
-        }
-        else
-        {
-            // 0 simply means "nothing was done, but no error occurred"
-            grpdata.result = 0;
-        }
-        w_gd.push_back(grpdata);
-    }
 }
 
 
@@ -13639,13 +13608,13 @@ CUDTGroup::ReadPos* CUDTGroup::checkPacketAheadMsgno()
         if (ndiff == 1)
         {
             // The very next packet. Return it.
-            HLOGC(grlog.Debug, log << "recvBalancing/checkPacketAhead: Base: #" << m_RcvBaseMsgNo << " ahead delivery POSSIBLE #"
+            HLOGC(grlog.Debug, log << "group/recvBalancing/checkPacketAhead: Base: #" << m_RcvBaseMsgNo << " ahead delivery POSSIBLE #"
                     << a.mctrl.msgno << " from @" << i->first);
             out = &a;
         }
         else if (ndiff < 1 && !a.packet.empty())
         {
-            HLOGC(grlog.Debug, log << "recvBalancing/checkPacketAhead: @" << i->first << " dropping collected ahead #"
+            HLOGC(grlog.Debug, log << "group/recvBalancing/checkPacketAhead: @" << i->first << " dropping collected ahead #"
                     << a.mctrl.msgno << " with base #" << m_RcvBaseMsgNo);
             a.packet.clear();
         }
@@ -15133,11 +15102,11 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
     {
         if (!m_bOpened || !m_bConnected)
         {
-            LOGC(grlog.Error, log << boolalpha << "recvBalancing: ERROR opened=" << m_bOpened << " connected=" << m_bConnected);
+            LOGC(grlog.Error, log << boolalpha << "group/recvBalancing: ERROR opened=" << m_bOpened << " connected=" << m_bConnected);
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
         }
 
-        HLOGC(grlog.Debug, log << "recvBalancing: START. Buffer size=" << len);
+        HLOGC(grlog.Debug, log << "group/recvBalancing: START. Buffer size=" << len);
 
         // Check first the ahead packets if you have any to deliver.
         if (m_RcvBaseMsgNo != -1 && !m_Positions.empty())
@@ -15149,7 +15118,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 if (size_t(len) < pos->packet.size())
                     throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
 
-                HLOGC(grlog.Debug, log << "recvBalancing: delivering AHEAD packet %" << pos->mctrl.pktseq << " #" << pos->mctrl.msgno
+                HLOGC(grlog.Debug, log << "group/recvBalancing: delivering AHEAD packet %" << pos->mctrl.pktseq << " #" << pos->mctrl.msgno
                         << ": " << BufferStamp(&pos->packet[0], pos->packet.size()) << " - updating base");
                 memcpy(buf, &pos->packet[0], pos->packet.size());
                 fillGroupData((w_mctrl), pos->mctrl, (out_grpdata), out_grpdata_size);
@@ -15232,7 +15201,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
         vector<SRTSOCKET> read_ready, connect_pending;
 
         {
-            HLOGC(grlog.Debug, log << "recvBalancing: Reviewing member sockets to epoll-add (locking)");
+            HLOGC(grlog.Debug, log << "group/recvBalancing: Reviewing member sockets to epoll-add (locking)");
             CGuard glock (m_GroupLock);
             for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
             {
@@ -15265,7 +15234,6 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                     // achieves CONNECTING state, then it's added to write.
                     // Or gets broken and closed in the next step.
                     continue;
-
                 }
 
                 still_alive = true;
@@ -15292,7 +15260,6 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 read_ready.push_back(gi->id);
                 HCLOG(ds << "@" << gi->id << "[READ] ");
             }
-
         }
 
         int read_modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
@@ -15318,12 +15285,12 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
             srt_epoll_add_usock(m_RcvEID, *i, &read_modes);
         }
 
-        HLOGC(grlog.Debug, log << "recvBalancing: " << ds.str() << " --> EPOLL/SWAIT");
+        HLOGC(grlog.Debug, log << "group/recvBalancing: " << ds.str() << " --> EPOLL/SWAIT");
 #undef HCLOG
 
         if (!still_alive)
         {
-            LOGC(grlog.Error, log << "recvBalancing: all links broken");
+            LOGC(grlog.Error, log << "group/recvBalancing: all links broken");
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
         }
 
@@ -15356,7 +15323,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
         int timeout = m_bSynRecving ? m_iRcvTimeOut : 0;
         int nready = m_pGlobal->m_EPoll.swait(*m_RcvEpolld, sready, timeout, false /*report by retval*/);
 
-        HLOGC(grlog.Debug, log << "recvBalancing: RDY: " << DisplayEpollResults(sready));
+        HLOGC(grlog.Debug, log << "group/recvBalancing: RDY: " << DisplayEpollResults(sready));
 
         if (nready == 0)
         {
@@ -15365,7 +15332,6 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
             // non-blocking mode.
             throw CUDTException(MJ_AGAIN, MN_RDAVAIL, 0);
         }
-
 
         // Handle sockets of pending connection and with errors.
 
@@ -15399,7 +15365,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
         // will be surely empty. This will be checked then same way as when
         // reading from every socket resulted in error.
 
-        HLOGC(grlog.Debug, log << "recvBalancing: Reviewing read-ready sockets: " << DisplayEpollResults(sready));
+        HLOGC(grlog.Debug, log << "group/recvBalancing: Reviewing read-ready sockets: " << DisplayEpollResults(sready));
 
         for (CEPoll::fmap_t::const_iterator i = sready.begin(); i != sready.end(); ++i)
         {
@@ -15427,7 +15393,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 int ndiff = MsgNo(p->mctrl.msgno) - MsgNo(m_RcvBaseMsgNo);
                 if (ndiff > 1)
                 {
-                    HLOGC(grlog.Debug, log << "recvBalancing: EPOLL: @" << id << " #" << p->mctrl.msgno
+                    HLOGC(grlog.Debug, log << "group/recvBalancing: EPOLL: @" << id << " #" << p->mctrl.msgno
                             << " AHEAD #" << m_RcvBaseMsgNo << ", not reading.");
                     continue;
                 }
@@ -15438,7 +15404,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 // the socket is currently standing. Could be unknown, too.
                 pair<pit_t, bool> ee = m_Positions.insert(make_pair(id, ReadPos(ps->core().m_pRcvBuffer->getTopMsgno(), SRT_GTYPE_BALANCING)));
                 p = &(ee.first->second);
-                HLOGC(grlog.Debug, log << "recvBalancing: EPOLL: @" << id << " #" << p->mctrl.msgno << " NEW SOCKET INSERTED");
+                HLOGC(grlog.Debug, log << "group/recvBalancing: EPOLL: @" << id << " #" << p->mctrl.msgno << " NEW SOCKET INSERTED");
             }
 
             // Read from this socket stubbornly, until:
@@ -15460,20 +15426,20 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 {
                     // We have already the data, so this must fall on the floor
                     stat = ps->core().receiveMessage((lostbuf), SRT_LIVE_MAX_PLSIZE, (mctrl), CUDTUnited::ERH_RETURN);
-                    HLOGC(grlog.Debug, log << "recvBalancing: @" << id << " IGNORED data with %" << mctrl.pktseq << " #" << mctrl.msgno
+                    HLOGC(grlog.Debug, log << "group/recvBalancing: @" << id << " IGNORED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                             << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(lostbuf, stat)));
                     used_output = lostbuf;
                 }
                 else
                 {
                     stat = ps->core().receiveMessage((buf), len, (mctrl), CUDTUnited::ERH_RETURN);
-                    HLOGC(grlog.Debug, log << "recvBalancing: @" << id << " EXTRACTED data with %" << mctrl.pktseq << " #" << mctrl.msgno
+                    HLOGC(grlog.Debug, log << "group/recvBalancing: @" << id << " EXTRACTED data with %" << mctrl.pktseq << " #" << mctrl.msgno
                             << ": " << (stat <= 0 ? "(NOTHING)" : BufferStamp(buf, stat)));
                     used_output = buf;
                 }
                 if (stat == 0)
                 {
-                    HLOGC(grlog.Debug, log << "recvBalancing: SPURIOUS epoll, ignoring");
+                    HLOGC(grlog.Debug, log << "group/recvBalancing: SPURIOUS epoll, ignoring");
                     // This is returned in case of "again". In case of errors, we have SRT_ERROR.
                     // Do not treat this as spurious, just stop reading.
                     break;
@@ -15481,7 +15447,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
 
                 if (stat == SRT_ERROR)
                 {
-                    HLOGC(grlog.Debug, log << "recvBalancing: @" << id << ": " << srt_getlasterror_str());
+                    HLOGC(grlog.Debug, log << "group/recvBalancing: @" << id << ": " << srt_getlasterror_str());
                     broken.insert(ps);
                     break;
                 }
@@ -15506,7 +15472,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                     // This error should be returned if the link turns out
                     // to be the only one, or set to the group data.
                     // err = SRT_ESECFAIL;
-                    LOGC(grlog.Error, log << "recvBalancing: @" << id << ": SEQUENCE DISCREPANCY: base=%"
+                    LOGC(grlog.Error, log << "group/recvBalancing: @" << id << ": SEQUENCE DISCREPANCY: base=%"
                             << m_RcvBaseSeqNo << " vs pkt=%" << mctrl.pktseq << ", setting ESECFAIL");
                     broken.insert(ps);
                     break;
@@ -15524,7 +15490,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                     int ndiff = MsgNo(mctrl.msgno) - MsgNo(m_RcvBaseMsgNo);
                     if (ndiff <= 0)
                     {
-                        HLOGC(grlog.Debug, log << "recvBalancing: @" << id << " #" << mctrl.msgno
+                        HLOGC(grlog.Debug, log << "group/recvBalancing: @" << id << " #" << mctrl.msgno
                                 << " BEHIND base=#" << m_RcvBaseMsgNo << " - discarding");
                         // The sequence is recorded, the packet has to be discarded.
                         // That's all.
@@ -15547,7 +15513,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 }
                 else
                 {
-                    HLOGC(grlog.Debug, log << "recvBalancing: base not yet set; predicted #" << mctrl.msgno);
+                    HLOGC(grlog.Debug, log << "group/recvBalancing: base not yet set; predicted #" << mctrl.msgno);
                 }
 
                 // We have seqdiff = 1, or we simply have the very first packet
@@ -15556,11 +15522,11 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
 
                 if (output_size)
                 {
-                    HLOGC(grlog.Debug, log << "recvBalancing: @" << id << " #" << mctrl.msgno << " REDUNDANT");
+                    HLOGC(grlog.Debug, log << "group/recvBalancing: @" << id << " #" << mctrl.msgno << " REDUNDANT");
                     break;
                 }
 
-                HLOGC(grlog.Debug, log << "recvBalancing: @" << id << " #" << mctrl.msgno
+                HLOGC(grlog.Debug, log << "group/recvBalancing: @" << id << " #" << mctrl.msgno
                         << " DELIVERING; next msgno will be #" << mctrl.msgno);
                 output_size = stat;
                 fillGroupData((w_mctrl), mctrl, (out_grpdata), out_grpdata_size);
@@ -15577,7 +15543,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
             std::ostringstream brks;
             for (set<CUDTSocket*>::iterator b = broken.begin(); b != broken.end(); ++b)
                 brks << "@" << (*b)->m_SocketID << " ";
-            LOGC(grlog.Debug, log << "recvBalancing: REMOVING BROKEN: " << brks.str());
+            LOGC(grlog.Debug, log << "group/recvBalancing: REMOVING BROKEN: " << brks.str());
         }
 #endif
 
@@ -15593,7 +15559,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
         if (broken.size() >= size) // This > is for sanity check
         {
             // All broken
-            HLOGC(grlog.Debug, log << "recvBalancing: All sockets broken");
+            HLOGC(grlog.Debug, log << "group/recvBalancing: All sockets broken");
             m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
 
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -15620,7 +15586,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
             }
             else
             {
-                HLOGC(grlog.Debug, log << "recvBalancing: new base #" << next_msgno << " - replacing previous #" << m_RcvBaseMsgNo);
+                HLOGC(grlog.Debug, log << "group/recvBalancing: new base #" << next_msgno << " - replacing previous #" << m_RcvBaseMsgNo);
                 m_RcvBaseMsgNo = next_msgno;
             }
 
@@ -15632,11 +15598,11 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
             }
 
-            HLOGC(grlog.Debug, log << "recvBalancing: successfully extacted packet size=" << output_size << " - returning");
+            HLOGC(grlog.Debug, log << "group/recvBalancing: successfully extacted packet size=" << output_size << " - returning");
             return output_size;
         }
 
-        HLOGC(grlog.Debug, log << "recvBalancing: NOT extracted anything - checking for a need to kick kangaroos");
+        HLOGC(grlog.Debug, log << "group/recvBalancing: NOT extracted anything - checking for a need to kick kangaroos");
 
         // Check if we have any sockets left :D
 
@@ -15727,13 +15693,13 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
                 return len;
             }
 
-            HLOGC(grlog.Debug, log << "recvBalancing: "
+            HLOGC(grlog.Debug, log << "group/recvBalancing: "
                     << (elephants.empty() ? "NO LINKS REPORTED ANY FRESHER PACKET." : "ALL LINKS ELEPHANTS.")
                     << " Re-polling.");
         }
         else
         {
-            HLOGC(grlog.Debug, log << "recvBalancing: POSITIONS EMPTY - Re-polling.");
+            HLOGC(grlog.Debug, log << "group/recvBalancing: POSITIONS EMPTY - Re-polling.");
         }
     }
 }
@@ -16075,8 +16041,9 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_UpdateAndReport(CUDTGroup::gli_t this_lin
 
     this_link->load_factor += this_link->unit_load;
 
-    HLOGC(gslog.Debug, log << "linkSelect_window: link #" << distance(m_Group.begin(), this_link)
-            << " selected, upd load_factor=" << this_link->load_factor);
+    HLOGC(gslog.Debug, log << "linkSelect(any): link #" << distance(m_Group.begin(), this_link)
+            << " selected, upd load_factor=" << this_link->load_factor
+            << " from unit-load=" << this_link->unit_load);
     return this_link;
 }
 
@@ -16269,7 +16236,6 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
 {
     gli_t this_link = gli_NULL();
 
-    vector<LinkCapableData> linkdata;
     int total_weight = 0;
     int total_links = 0;
 
@@ -16310,9 +16276,13 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
     if (state.ilink == gli_NULL())
         return this_link; // either first found or gli_NULL().
 
-    int avg_weight = total_weight/total_links;
-    if (avg_weight == 0)
-        avg_weight = 1; // Fix for a case when some1 set weight 1 on 1 link and 0 on other 2.
+    int avg_weight = 1;
+    if (total_links) // Fix for a case when weight wasn't set on any link
+    {
+        int avg = total_weight/total_links;
+        if (avg) // Fix for a case when some1 set weight 1 on 1 link and 0 on other 2.
+            avg_weight = avg;
+    }
 
     for (vector<gli_t>::iterator i = equi_links.begin(); i != equi_links.end(); ++i)
     {
@@ -16349,7 +16319,7 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
     // Sanity check
     if (linkorder.empty())
     {
-        LOGC(gslog.Error, log << "linkSelect_window: IPE: no links???");
+        LOGC(gslog.Error, log << "linkSelect_fixed: IPE: no links???");
         return gli_NULL();
     }
 
@@ -16359,7 +16329,7 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
     double least_load = this_link->load_factor;
     double biggest_unit_load = 0;
 
-    HLOGC(gslog.Debug, log << "linkSelect_window: total_weight= " << total_weight
+    HLOGC(gslog.Debug, log << "linkSelect_fixed: total_weight= " << total_weight
             << " avg=" << avg_weight
             << " - updating link load factors:");
     // Now that linkdata list is ready, update the link span values
@@ -16367,6 +16337,10 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
     for (vector<gli_t>::iterator i = linkorder.begin(); i != linkorder.end(); ++i)
     {
         gli_t li = *i;
+        if (li->sndstate != SRT_GST_RUNNING)
+        {
+            continue;
+        }
 
         // Here update the unit load basing on the percentage
         // of the link's weight.
@@ -16383,22 +16357,35 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
         // deviation = (average - link_weight) / average
         // unit_load = 1 + deviation;
         //
-        // Here `deviation` should have a value between -1 and 1.
-        // By adding 1 we get the range between 0 and 2, with 1
-        // being at average.
+        // The rule for unit_load is such that a sum of all unit_loads
+        // from all active links must be equal to the number of links.
+        // 
+        // Also, the declared weight is the number of packets sent through
+        // particular link when there's been sent overall the number of
+        // packets equal to the sum of all weights.
         //
-        // Example: we have three links with weights: 10, 20, 30
-        // Sum: 60
+        // Example 1
+        //
+        // We have three links with weights: 10, 20, 30
+        //
         // Average: 60/3 = 20
         // deviation[10] = (20-10)/20 = 1/2   -> unit_load = 1.5
         // deviation[20] = (20-20)/20 = 0     -> unit_load = 1
         // deviation[30] = (20-30)/20 = -1/2  -> unit_load = 0.5
         //
+        // Example 2
+        //
+        // We have two links with weights: 80, 20
+        //
+        // Average: 100/2 = 50
+        // deviation[20] = (50-20)/50 = 3/5   -> unit_load = 1 + 0.6 = 1.6
+        // deviation[80] = (50-80)/50 = -3/5  -> unit_load = 1 - 0.6 = 0.4
+
         double average = avg_weight;
         double deviation = (average - li->weight) / average;
         li->unit_load = 1 + deviation;
 
-        HLOGC(gslog.Debug, log << "linkSelect_window: ... #" << distance(m_Group.begin(), li)
+        HLOGC(gslog.Debug, log << "linkSelect_fixed: ... #" << distance(m_Group.begin(), li)
                 << " weight=" << li->weight << " deviation=" << (100*deviation) << "% unit-load="
                 << li->unit_load << " current-load:" << li->load_factor);
 
@@ -16407,13 +16394,13 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
 
         if (li->load_factor < least_load)
         {
-            HLOGC(gslog.Debug, log << "linkSelect_window: ... this link has currently smallest load");
+            HLOGC(gslog.Debug, log << "linkSelect_fixed: ... this link has currently smallest load");
             this_link = li;
             least_load = li->load_factor;
         }
     }
 
-    HLOGC(gslog.Debug, log << "linkSelect_window: selecting link #" << distance(m_Group.begin(), this_link));
+    HLOGC(gslog.Debug, log << "linkSelect_fixed: selecting link #" << distance(m_Group.begin(), this_link));
     // Now that a link is selected and all load factors updated,
     // do a CUTOFF by the value of at least one size of unit load.
 
@@ -16422,13 +16409,24 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_fixed(const CUDTGroup::BalancingLinkState
     // result in a cutoff.
     if (biggest_unit_load > 0 && least_load > 2 * biggest_unit_load)
     {
-        for (vector<LinkCapableData>::iterator i = linkdata.begin();
-                i != linkdata.end(); ++i)
+        for (gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
         {
-            i->link->load_factor -= biggest_unit_load;
+            if (i->sndstate != SRT_GST_RUNNING)
+            {
+                continue;
+            }
+            i->load_factor -= biggest_unit_load;
+            if (i->load_factor < 0)
+                i->load_factor = 0;
+            HLOGC(gslog.Debug, log << "linkSelect_fixed: cutting off value of " << biggest_unit_load
+                    << " from load-factor:" << i->load_factor);
         }
-        HLOGC(gslog.Debug, log << "linkSelect_window: cutting off value of " << biggest_unit_load
-                << " from all load factors");
+    }
+    else
+    {
+        HLOGC(gslog.Debug, log << "linkSelect_fixed: not cutting off yet, biggest_unit_load="
+                << biggest_unit_load << " (exp >0) && least_load=" << least_load << " (exp > 2 * "
+                << biggest_unit_load << ")");
     }
 
     // The above loop certainly found something.
