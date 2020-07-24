@@ -116,27 +116,25 @@ void SrtCommon::InitParameters(string host, map<string,string> par)
         }
     }
 
-    m_mode = "default";
-    if (par.count("mode"))
-        m_mode = par.at("mode");
-
-    if (m_mode == "default")
+    string adapter;
+    if (par.count("adapter"))
     {
-        // Use the following convention:
-        // 1. Server for source, Client for target
-        // 2. If host is empty, then always server.
-        if ( host == "" )
-            m_mode = "listener";
-        //else if ( !dir_output )
-        //m_mode = "server";
-        else
-            m_mode = "caller";
+        adapter = par.at("adapter");
     }
 
-    if ( m_mode == "client" )
-        m_mode = "caller";
-    else if ( m_mode == "server" )
-        m_mode = "listener";
+    m_mode = "default";
+    if (par.count("mode"))
+    {
+        m_mode = par.at("mode");
+    }
+    SocketOption::Mode mode = SrtInterpretMode(m_mode, host, adapter);
+    if (mode == SocketOption::FAILURE)
+    {
+        Error("Invalid mode");
+    }
+
+    // Fix the mode name after successful interpretation
+    m_mode = SocketOption::mode_names[mode];
 
     par.erase("mode");
 
@@ -194,8 +192,8 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
     if ( stat == SRT_ERROR )
         Error("ConfigurePre");
 
-    sockaddr_in sa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&sa;
+    sockaddr_any sa = CreateAddr(host, port);
+    sockaddr* psa = sa.get();
     Verb() << "Binding a server on " << host << ":" << port << " ...";
 
     stat = srt_bind(m_bindsock, psa, sizeof sa);
@@ -231,12 +229,10 @@ void SrtCommon::StealFrom(SrtCommon& src)
 
 bool SrtCommon::AcceptNewClient()
 {
-    sockaddr_in scl;
-    int sclen = sizeof scl;
-
+    sockaddr_any scl;
     Verb() << " accept... ";
 
-    m_sock = srt_accept(m_bindsock, (sockaddr*)&scl, &sclen);
+    m_sock = srt_accept(m_bindsock, scl.get(), &scl.len);
     if ( m_sock == SRT_INVALID_SOCK )
     {
         srt_close(m_bindsock);
@@ -366,8 +362,8 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
 
 void SrtCommon::SetupAdapter(const string& host, int port)
 {
-    sockaddr_in localsa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&localsa;
+    sockaddr_any localsa = CreateAddr(host, port);
+    sockaddr* psa = localsa.get();
     int stat = srt_bind(m_sock, psa, sizeof localsa);
     if ( stat == SRT_ERROR )
         Error("srt_bind");
@@ -400,8 +396,8 @@ void SrtCommon::PrepareClient()
 void SrtCommon::ConnectClient(string host, int port)
 {
 
-    sockaddr_in sa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&sa;
+    sockaddr_any sa = CreateAddr(host, port);
+	sockaddr* psa = sa.get();
 
     Verb() << "Connecting to " << host << ":" << port;
 
@@ -440,10 +436,12 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
     if ( stat == SRT_ERROR )
         Error("ConfigurePre");
 
-    sockaddr_in localsa = CreateAddrInet(adapter, port);
-    sockaddr* plsa = (sockaddr*)&localsa;
+    const int outport = m_outgoing_port ? m_outgoing_port : port;
 
-    Verb() << "Binding a server on " << adapter << ":" << port;
+    sockaddr_any localsa = CreateAddr(adapter, outport);
+	sockaddr* plsa = localsa.get();
+
+    Verb() << "Binding a server on " << adapter << ":" << outport;
 
     stat = srt_bind(m_sock, plsa, sizeof localsa);
     if ( stat == SRT_ERROR )
@@ -452,8 +450,8 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
         Error("srt_bind");
     }
 
-    sockaddr_in sa = CreateAddrInet(host, port);
-    sockaddr* psa = (sockaddr*)&sa;
+    sockaddr_any sa = CreateAddr(host, port);
+	sockaddr* psa = sa.get();
     Verb() << "Connecting to " << host << ":" << port;
 
     stat = srt_connect(m_sock, psa, sizeof sa);
@@ -768,7 +766,7 @@ class UdpCommon
 {
 protected:
     int m_sock = -1;
-    sockaddr_in sadr;
+    sockaddr_any sadr;
     string adapter;
     map<string, string> m_options;
 
@@ -792,19 +790,19 @@ protected:
             Error(SysError(), "UdpCommon::Setup: ioctl FIONBIO");
         }
 
-        sadr = CreateAddrInet(host, port);
+        sadr = CreateAddr(host, port);
 
         bool is_multicast = false;
 
         if ( attr.count("multicast") )
         {
-            if (!IsMulticast(sadr.sin_addr))
+            if (!IsMulticast(sadr.sin.sin_addr))
             {
                 throw std::runtime_error("UdpCommon: requested multicast for a non-multicast-type IP address");
             }
             is_multicast = true;
         }
-        else if (IsMulticast(sadr.sin_addr))
+        else if (IsMulticast(sadr.sin.sin_addr))
         {
             is_multicast = true;
         }
@@ -813,7 +811,7 @@ protected:
         {
             ip_mreq_source mreq_ssm;
             ip_mreq mreq;
-            sockaddr_in maddr;
+            sockaddr_any maddr (AF_INET);
             int opt_name;
             void* mreq_arg_ptr;
             socklen_t mreq_arg_size;
@@ -822,14 +820,14 @@ protected:
             if ( adapter == "" )
             {
                 Verb() << "Multicast: home address: INADDR_ANY:" << port;
-                maddr.sin_family = AF_INET;
-                maddr.sin_addr.s_addr = htonl(INADDR_ANY);
-                maddr.sin_port = htons(port); // necessary for temporary use
+                maddr.sin.sin_family = AF_INET;
+                maddr.sin.sin_addr.s_addr = htonl(INADDR_ANY);
+                maddr.sin.sin_port = htons(port); // necessary for temporary use
             }
             else
             {
                 Verb() << "Multicast: home address: " << adapter << ":" << port;
-                maddr = CreateAddrInet(adapter, port);
+                maddr = CreateAddr(adapter, port);
             }
 
             if (attr.count("source"))
@@ -837,8 +835,8 @@ protected:
 #ifdef IP_ADD_SOURCE_MEMBERSHIP
                 /* this is an ssm.  we need to use the right struct and opt */
                 opt_name = IP_ADD_SOURCE_MEMBERSHIP;
-                mreq_ssm.imr_multiaddr.s_addr = sadr.sin_addr.s_addr;
-                mreq_ssm.imr_interface.s_addr = maddr.sin_addr.s_addr;
+                mreq_ssm.imr_multiaddr.s_addr = sadr.sin.sin_addr.s_addr;
+                mreq_ssm.imr_interface.s_addr = maddr.sin.sin_addr.s_addr;
                 inet_pton(AF_INET, attr.at("source").c_str(), &mreq_ssm.imr_sourceaddr);
                 mreq_arg_size = sizeof(mreq_ssm);
                 mreq_arg_ptr = &mreq_ssm;
@@ -849,8 +847,8 @@ protected:
             else
             {
                 opt_name = IP_ADD_MEMBERSHIP;
-                mreq.imr_multiaddr.s_addr = sadr.sin_addr.s_addr;
-                mreq.imr_interface.s_addr = maddr.sin_addr.s_addr;
+                mreq.imr_multiaddr.s_addr = sadr.sin.sin_addr.s_addr;
+                mreq.imr_interface.s_addr = maddr.sin.sin_addr.s_addr;
                 mreq_arg_size = sizeof(mreq);
                 mreq_arg_ptr = &mreq;
             }
@@ -997,8 +995,13 @@ public:
         Setup(host, port, attr);
         if (adapter != "")
         {
-            sockaddr_in maddr = CreateAddrInet(adapter, 0);
-            in_addr addr = maddr.sin_addr;
+            sockaddr_any maddr = CreateAddr(adapter, 0);
+            if (maddr.family() != AF_INET)
+            {
+                Error(0, "UDP/target: IPv6 multicast not supported in the application");
+            }
+
+            in_addr addr = maddr.sin.sin_addr;
 
             int res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&addr), sizeof(addr));
             if (res == -1)

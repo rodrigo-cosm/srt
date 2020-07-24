@@ -66,7 +66,7 @@
 #include <list>
 
 
-#include "apputil.hpp"  // CreateAddrInet
+#include "apputil.hpp"  // CreateAddr
 #include "uriparser.hpp"  // UriParser
 #include "socketoptions.hpp"
 #include "logsupport.hpp"
@@ -709,7 +709,7 @@ int main(int argc, char** argv)
                 // note that this implies live streams and does not
                 // work for cached/file sources
                 std::list<std::shared_ptr<bytevector>> dataqueue;
-                if (src.get() && (srtrfdslen || sysrfdslen))
+                if (src.get() && src->IsOpen() && (srtrfdslen || sysrfdslen))
                 {
                     while (dataqueue.size() < 10)
                     {

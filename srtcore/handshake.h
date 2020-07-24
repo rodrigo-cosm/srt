@@ -43,8 +43,10 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *****************************************************************************/
 
-#ifndef INC__HANDSHAKE_H
-#define INC__HANDSHAKE_H
+#ifndef INC_SRT_HANDSHAKE_H
+#define INC_SRT_HANDSHAKE_H
+
+#include <vector>
 
 #include "crypto.h"
 #include "utilities.h"
@@ -103,7 +105,7 @@ enum SrtDataStruct
     SRT_HS_LATENCY,
 
     // Keep it always last
-    SRT_HS__SIZE
+    SRT_HS_E_SIZE
 };
 
 // For HSv5 the lo and hi part is used for particular side's latency
@@ -113,30 +115,22 @@ typedef Bits<15, 0> SRT_HS_LATENCY_SND;
 typedef Bits<15, 0> SRT_HS_LATENCY_LEG;
 
 
-// XXX These structures are currently unused. The code can be changed
-// so that these are used instead of manual tailoring of the messages.
 struct SrtHandshakeExtension
 {
-protected:
+    int16_t type;
+    std::vector<uint32_t> contents;
 
-   uint32_t m_SrtCommand; // Used only in extension
-
-public:
-   SrtHandshakeExtension(int cmd)
-   {
-       m_SrtCommand = cmd;
-   }
-
-   void setCommand(int cmd)
-   {
-       m_SrtCommand = cmd;
-   }
-
+    SrtHandshakeExtension(int16_t cmd): type(cmd) {}
 };
+
+// Implemented in core.cpp, so far
+void SrtExtractHandshakeExtensions(const char* bufbegin, size_t size,
+        std::vector<SrtHandshakeExtension>& w_output);
+
+
 
 struct SrtHSRequest: public SrtHandshakeExtension
 {
-
     typedef Bits<31, 16> SRT_HSTYPE_ENCFLAGS;
     typedef Bits<15, 0> SRT_HSTYPE_HSFLAGS;
 
@@ -154,6 +148,19 @@ struct SrtHSRequest: public SrtHandshakeExtension
         int32_t base = withmagic ? SRT_MAGIC_CODE : 0;
         return base | SRT_HSTYPE_ENCFLAGS::wrap( SRT_PBKEYLEN_BITS::unwrap(crypto_keylen) );
     }
+
+    // Group handshake extension layout
+
+    //  0                   1                   2                   3
+    //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  |                           Group ID                            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    //  | Group Type  | Group's Flags |       Group's Weight            |
+    //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    typedef Bits<31, 24> HS_GROUP_TYPE;
+    typedef Bits<23, 16> HS_GROUP_FLAGS;
+    typedef Bits<15, 0> HS_GROUP_WEIGHT;
 
 private:
     friend class CHandShake;
@@ -230,20 +237,20 @@ enum UDTRequestType
     // --> CONCLUSION (with response extensions, if RESPONDER)
     // <-- AGREEMENT (sent exclusively by INITIATOR upon reception of CONCLUSIOn with response extensions)
 
-    // Errors reported by the peer, also used as useless error codes
-    // in handshake processing functions.
+    // This marks the beginning of values that are error codes.
     URQ_FAILURE_TYPES = 1000,
 
     // NOTE: codes above 1000 are reserved for failure codes for
-    // rejection reason, as per `SRT_REJECT_REASON` enum. DO NOT
-    // add any new values here (below 1000).
+    // rejection reason, as per `SRT_REJECT_REASON` enum. The
+    // actual rejection code is the value of the request type
+    // minus URQ_FAILURE_TYPES.
 
     // This is in order to return standard error codes for server
     // data retrieval failures.
-    URQ_SERVER_FAILURE_TYPES = 2000,
+    URQ_SERVER_FAILURE_TYPES = URQ_FAILURE_TYPES + SRT_REJC_PREDEFINED,
 
     // This is for a completely user-defined reject reasons.
-    URQ_USER_FAILURE_TYPES = 3000
+    URQ_USER_FAILURE_TYPES = URQ_FAILURE_TYPES + SRT_REJC_USERDEFINED
 };
 
 inline UDTRequestType URQFailure(int reason)
@@ -256,10 +263,11 @@ inline int RejectReasonForURQ(UDTRequestType req)
     if (req < URQ_FAILURE_TYPES)
         return SRT_REJ_UNKNOWN;
 
-    if (req < URQ_SERVER_FAILURE_TYPES && req - URQ_FAILURE_TYPES >= SRT_REJ__SIZE)
+    int reason = req - URQ_FAILURE_TYPES;
+    if (reason < SRT_REJC_PREDEFINED && reason >= SRT_REJ_E_SIZE)
         return SRT_REJ_UNKNOWN;
 
-    return req - URQ_FAILURE_TYPES;
+    return reason;
 }
 
 // DEPRECATED values. Use URQFailure(SRT_REJECT_REASON).

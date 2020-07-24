@@ -1,30 +1,19 @@
 /*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2018 Haivision Systems Inc.
+ * Copyright (c) 2020 Haivision Systems Inc.
  * 
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * Submited by: Russell Greene (Issue #440)
+ * Based on the proposal by Russell Greene (Issue #440)
  *
  */
 
 #include <gtest/gtest.h>
 
 #ifdef _WIN32
-#define _WINSOCKAPI_ // to include Winsock2.h instead of Winsock.h from windows.h
-#include <winsock2.h>
-
-//#define _WINSOCK_DEPRECATED_NO_WARNINGS
-#if defined(__GNUC__) || defined(__MINGW32__)
-extern "C" {
-    WINSOCK_API_LINKAGE  INT WSAAPI inet_pton(INT Family, PCSTR pszAddrString, PVOID pAddrBuf);
-    WINSOCK_API_LINKAGE  PCSTR WSAAPI inet_ntop(INT  Family, PVOID pAddr, PSTR pStringBuf, size_t StringBufSize);
-}
-#endif
-
-#define INC__WIN_WINTIME // exclude gettimeofday from srt headers
+#define INC_SRT_WIN_WINTIME // exclude gettimeofday from srt headers
 #endif
 
 #include "srt.h"
@@ -39,7 +28,6 @@ extern "C" {
 TEST(Transmission, FileUpload)
 {
     srt_startup();
-    //srt_setloglevel(SRT_LOG_LEVEL_MAX);
 
     // Generate the source file
     // We need a file that will contain more data
@@ -65,7 +53,8 @@ TEST(Transmission, FileUpload)
     size_t filesize = 7 * optval;
 
     {
-        std::ofstream outfile("file.source");
+        std::cout << "WILL CREATE source file with size=" << filesize << " (= 7 * " << optval << "[sndbuf])\n";
+        std::ofstream outfile("file.source", std::ios::out | std::ios::binary);
         ASSERT_EQ(!!outfile, true);
 
         srand(time(0));
@@ -128,7 +117,7 @@ TEST(Transmission, FileUpload)
 
     std::cout << "Connection initialized" << std::endl;
 
-    std::ifstream ifile("file.source");
+    std::ifstream ifile("file.source", std::ios::in | std::ios::binary);
     std::vector<char> buf(1456);
 
     for (;;)
@@ -138,14 +127,16 @@ TEST(Transmission, FileUpload)
         while (n > 0)
         {
             int st = srt_send(sock_clr, buf.data()+shift, n);
-            ASSERT_NE(st, SRT_ERROR);
+            ASSERT_GT(st, 0);
 
             n -= st;
             shift += st;
         }
 
         if (ifile.eof())
+        {
             break;
+        }
 
         ASSERT_EQ(ifile.good(), true);
     }
