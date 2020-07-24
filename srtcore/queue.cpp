@@ -164,7 +164,7 @@ int CUnitQueue::increase()
     char *   tempb = NULL;
 
     // all queues have the same size
-    int size = m_pQEntry->m_iSize;
+    const int size = m_pQEntry->m_iSize;
 
     try
     {
@@ -178,6 +178,9 @@ int CUnitQueue::increase()
         delete[] tempu;
         delete[] tempb;
 
+        LOGC(mglog.Error,
+            log << "CUnitQueue:increase: failed to allocate " << size << " new units."
+                << " Current size=" << m_iSize);
         return -1;
     }
 
@@ -213,24 +216,21 @@ CUnit *CUnitQueue::getNextAvailUnit()
     if (m_iCount >= m_iSize)
         return NULL;
 
-    CQEntry *entrance = m_pCurrQueue;
-
+    int units_checked = 0;
     do
     {
-        for (CUnit *sentinel = m_pCurrQueue->m_pUnit + m_pCurrQueue->m_iSize - 1; m_pAvailUnit != sentinel;
-             ++m_pAvailUnit)
-            if (m_pAvailUnit->m_iFlag == CUnit::FREE)
-                return m_pAvailUnit;
-
-        if (m_pCurrQueue->m_pUnit->m_iFlag == CUnit::FREE)
+        const CUnit *end = m_pCurrQueue->m_pUnit + m_pCurrQueue->m_iSize;
+        for (; m_pAvailUnit != end; ++m_pAvailUnit, ++units_checked)
         {
-            m_pAvailUnit = m_pCurrQueue->m_pUnit;
-            return m_pAvailUnit;
+            if (m_pAvailUnit->m_iFlag == CUnit::FREE)
+            {
+                return m_pAvailUnit;
+            }
         }
 
         m_pCurrQueue = m_pCurrQueue->m_pNext;
         m_pAvailUnit = m_pCurrQueue->m_pUnit;
-    } while (m_pCurrQueue != entrance);
+    } while (units_checked < m_iSize);
 
     increase();
 
@@ -517,11 +517,9 @@ void CSndQueue::init(CChannel *c, CTimer *t)
         throw CUDTException(MJ_SYSTEMRES, MN_THREAD);
 }
 
-#ifdef SRT_ENABLE_IPOPTS
 int CSndQueue::getIpTTL() const { return m_pChannel ? m_pChannel->getIpTTL() : -1; }
 
 int CSndQueue::getIpToS() const { return m_pChannel ? m_pChannel->getIpToS() : -1; }
-#endif
 
 void *CSndQueue::worker(void *param)
 {
@@ -956,6 +954,7 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                 << "). removing from queue");
             // connection timer expired, acknowledge app via epoll
             i->m_pUDT->m_bConnecting = false;
+            i->m_pUDT->m_RejectReason = SRT_REJ_TIMEOUT;
             CUDT::s_UDTUnited.m_EPoll.update_events(i->m_iID, i->m_pUDT->m_sPollID, SRT_EPOLL_ERR, true);
             /*
              * Setting m_bConnecting to false but keeping socket in rendezvous queue is not a good idea.
@@ -1305,7 +1304,7 @@ EConnectStatus CRcvQueue::worker_ProcessConnectionRequest(CUnit* unit, const soc
     // that another thread could have closed the socket at
     // the same time and inject a bug between checking the
     // pointer for NULL and using it.
-    SRT_REJECT_REASON listener_ret  = SRT_REJ_UNKNOWN;
+    int listener_ret  = SRT_REJ_UNKNOWN;
     bool              have_listener = false;
     {
         CGuard cg(m_LSLock);
