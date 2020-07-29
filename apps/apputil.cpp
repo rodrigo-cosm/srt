@@ -369,6 +369,8 @@ public:
         output << "\"bytesUnique\":" << mon.byteSentUnique << ",";
         output << "\"bytesDropped\":" << mon.byteSndDrop << ",";
         output << "\"mbitRate\":" << mon.mbpsSendRate;
+        output << R"("msAvgResponseTime":)" << mon.msAvgResponseTime;
+        output << R"("msMaxResponseTime":)" << mon.msMaxResponseTime;
         output << "},";
         output << "\"recv\": {";
         output << "\"packets\":" << mon.pktRecv << ",";

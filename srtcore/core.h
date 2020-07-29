@@ -239,6 +239,11 @@ struct MetricOp
     {
         m = 0;
     }
+
+    static bool is_zero(const METRIC_TYPE& m)
+    {
+        return m == 0;
+    }
 };
 
 template <>
@@ -250,6 +255,68 @@ struct MetricOp<PacketMetric>
         p.bytes = 0;
     }
 };
+
+template <>
+struct MetricOp<srt::sync::steady_clock::duration>
+{
+    typedef srt::sync::steady_clock::duration duration;
+    static bool is_zero(const duration& m)
+    {
+        return m == duration::zero();
+    }
+
+    static void Clear(duration& m)
+    {
+        m = duration::zero();
+    }
+};
+
+template <class METRIC_TYPE>
+struct AverageMetricUsage: public MetricUsage<METRIC_TYPE>
+{
+    using MetricUsage<METRIC_TYPE>::Clear;
+    using MetricUsage<METRIC_TYPE>::Init;
+    using MetricUsage<METRIC_TYPE>::local;
+    using MetricUsage<METRIC_TYPE>::total;
+
+    void Update(METRIC_TYPE value)
+    {
+        if (MetricOp<METRIC_TYPE>::is_zero(local))
+            local = value;
+        else
+        {
+            local = (local + value)/2;
+        }
+
+        if (MetricOp<METRIC_TYPE>::is_zero(total))
+            total = value;
+        else
+        {
+            total = (total + value)/2;
+        }
+    }
+};
+
+
+template <class METRIC_TYPE>
+struct MaxMetricUsage: public MetricUsage<METRIC_TYPE>
+{
+    using MetricUsage<METRIC_TYPE>::Clear;
+    using MetricUsage<METRIC_TYPE>::Init;
+    using MetricUsage<METRIC_TYPE>::local;
+    using MetricUsage<METRIC_TYPE>::total;
+
+    void Update(METRIC_TYPE value)
+    {
+        if (value > local)
+            local = value;
+
+        if (value > total)
+            total = value;
+    }
+};
+
+
 
 struct SRT_SocketOptionObject
 {
@@ -537,9 +604,7 @@ public:
     /// the group data array as requested.
     void fillGroupData(
             SRT_MSGCTRL& w_out, //< MSGCTRL to be written
-            const SRT_MSGCTRL& in, //< MSGCTRL read from the data-providing socket
-            SRT_SOCKGROUPDATA* out_grpdata, //< grpdata as passed in MSGCTRL
-            size_t out_grpdata_size  //< grpdata_size as passed in MSGCTRL
+            const SRT_MSGCTRL& in //< MSGCTRL read from the data-providing socket
             );
 
 #if ENABLE_HEAVY_LOGGING
@@ -1497,6 +1562,7 @@ private: // Identification
     std::string m_sStreamName;
     int m_iOPT_PeerIdleTimeout;      // Timeout for hearing anything from the peer.
     uint32_t m_uOPT_StabilityTimeout;
+    int m_iOPT_RexmitAlgo;
 
     int m_iTsbPdDelay_ms;                           // Rx delay to absorb burst in milliseconds
     int m_iPeerTsbPdDelay_ms;                       // Tx delay that the peer uses to absorb burst in milliseconds
@@ -1847,7 +1913,24 @@ private: // Trace
 
         int64_t sndDuration;                // real time for sending
         time_point sndDurationCounter;         // timers to record the sending Duration
+
+        AverageMetricUsage<duration> tdAverageResponseTime;
+        MaxMetricUsage<duration> tdMaxResponseTime;
     } m_stats;
+
+    void calculateResponseTime(const time_point& now)
+    {
+        if (!is_zero(m_tsLastRspTime))
+        {
+            duration td = now - m_tsLastRspTime;
+            enterCS(m_StatsLock);
+            m_stats.tdAverageResponseTime.Update(td);
+            m_stats.tdMaxResponseTime.Update(td);
+            leaveCS(m_StatsLock);
+        }
+
+        m_tsLastRspTime = now;
+    }
 
 public:
     static const int SELF_CLOCK_INTERVAL = 64;  // ACK interval for self-clocking
