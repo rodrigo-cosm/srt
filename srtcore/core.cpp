@@ -13887,8 +13887,12 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
     {
         // If stability is ok, but unstable-since was set before, reset it.
         HLOGC(gslog.Debug, log << "grp/sendBackup: link STABLE: @" << w_d->id
-                << (is_zero(u.m_tsUnstableSince) ? " - RESTORED" : " - CONTINUED")
-                << " TIME now - updated: " << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspTime));
+                << (!is_zero(u.m_tsUnstableSince) ? " - RESTORED" : " - CONTINUED")
+                << " TIMEDIFF {response= " << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspTime)
+                << " activation="
+                << (u.m_tsTmpActiveTime ? FormatDuration<DUNIT_MS>(currtime - u.m_tsTmpActiveTime) : "PAST")
+                << "}");
+
         u.m_tsUnstableSince = steady_clock::time_point();
     }
 
@@ -14467,7 +14471,7 @@ RetryWaitBlocked:
                 continue;
             }
             CUDT& ce = d->ps->core();
-            steady_clock::duration td(0);
+            steady_clock::duration td;
             if (!is_zero(ce.m_tsTmpActiveTime)
                     && count_microseconds(td = currtime - ce.m_tsTmpActiveTime) < ce.m_uOPT_StabilityTimeout)
             {
