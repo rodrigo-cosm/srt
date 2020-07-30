@@ -419,9 +419,9 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
     if (m_bBroken || m_bClosing)
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
 
-    CGuard cg (m_ConnectionLock);
-    CGuard sendguard (m_SendLock);
-    CGuard recvguard (m_RecvLock);
+    ScopedLock cg (m_ConnectionLock);
+    ScopedLock sendguard (m_SendLock);
+    ScopedLock recvguard (m_RecvLock);
 
     HLOGC(aclog.Debug,
           log << CONID() << "OPTION: #" << optName << " value:" << FormatBinaryString((uint8_t*)optval, optlen));
@@ -1016,7 +1016,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
 
 void CUDT::getOpt(SRT_SOCKOPT optName, void *optval, int &optlen)
 {
-    CGuard cg(m_ConnectionLock);
+    ScopedLock cg(m_ConnectionLock);
 
     switch (optName)
     {
@@ -1418,7 +1418,7 @@ void CUDT::clearData()
 
     // trace information
     {
-        CGuard stat_lock(m_StatsLock);
+        ScopedLock stat_lock(m_StatsLock);
 
         m_stats.tsStartTime = steady_clock::now();
         m_stats.sentTotal = m_stats.sentUniqTotal = m_stats.recvTotal = m_stats.recvUniqTotal
@@ -1492,7 +1492,7 @@ void CUDT::clearData()
 
 void CUDT::open()
 {
-    CGuard cg(m_ConnectionLock);
+    ScopedLock cg(m_ConnectionLock);
 
     clearData();
 
@@ -1543,7 +1543,7 @@ void CUDT::open()
 
 void CUDT::setListenState()
 {
-    CGuard cg(m_ConnectionLock);
+    ScopedLock cg(m_ConnectionLock);
 
     if (!m_bOpened)
         throw CUDTException(MJ_NOTSUP, MN_NONE, 0);
@@ -2261,7 +2261,7 @@ bool CUDT::createSrtHandshake(
     // need to be changed for some other types.
     if (have_group)
     {
-        CGuard grd (m_parent->m_ControlLock);
+        ScopedLock grd (m_parent->m_ControlLock);
         if (!m_parent->m_IncludedGroup)
         {
             LOGC(calog.Fatal, log << "GROUP DISAPPEARED. Socket not capable of continuing HS");
@@ -3626,7 +3626,7 @@ bool CUDT::interpretGroup(const int32_t groupdata[], size_t data_size SRT_ATR_UN
 #if ENABLE_HEAVY_LOGGING
 void CUDTGroup::debugGroup()
 {
-    CGuard gg (m_GroupLock);
+    ScopedLock gg (m_GroupLock);
 
     HLOGC(gmlog.Debug, log << "GROUP MEMBER STATUS - $" << id());
 
@@ -3643,7 +3643,7 @@ void CUDTGroup::debugGroup()
 SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t link_flags)
 {
     CUDTSocket* s = m_parent;
-    CGuard cg (s->m_ControlLock);
+    ScopedLock cg (s->m_ControlLock);
     // Check if there exists a group that this one is a peer of.
     CUDTGroup* gp = s_UDTUnited.findPeerGroup(peergroup);
     bool was_empty = true;
@@ -3684,7 +3684,7 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t l
 
     if (was_empty)
     {
-        CGuard glock (*gp->exp_groupLock());
+        ScopedLock glock (*gp->exp_groupLock());
         gp->syncWithSocket(s->core());
     }
 
@@ -3714,7 +3714,7 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t l
 
 void CUDT::synchronizeWithGroup(CUDTGroup* gp)
 {
-    CGuard gl (*gp->exp_groupLock());
+    ScopedLock gl (*gp->exp_groupLock());
 
     // We have blocked here the process of connecting a new
     // socket and adding anything new to the group, so no such
@@ -3935,7 +3935,7 @@ bool CUDTGroup::getMasterData(SRTSOCKET slave, SRTSOCKET& w_mpeer, steady_clock:
     // from within a handshake process, so the socket that undergoes this process is at best
     // currently in SRT_GST_PENDING state and it's going to be in SRT_GST_IDLE state at the
     // time when the connection process is done, until the first reading/writing happens.
-    CGuard cg (m_GroupLock);
+    ScopedLock cg (m_GroupLock);
 
     for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
     {
@@ -3981,7 +3981,7 @@ bool CUDTGroup::getMasterData(SRTSOCKET slave, SRTSOCKET& w_mpeer, steady_clock:
 
 void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
 {
-    CGuard cg (m_ConnectionLock);
+    ScopedLock cg (m_ConnectionLock);
 
     HLOGC(aclog.Debug, log << CONID() << "startConnect: -> " << SockaddrToString(serv_addr)
             << (m_bSynRecving ? " (SYNCHRONOUS)" : " (ASYNCHRONOUS)") << "...");
@@ -4360,7 +4360,7 @@ EConnectStatus CUDT::processAsyncConnectResponse(const CPacket &pkt) ATR_NOEXCEP
     EConnectStatus cst = CONN_CONTINUE;
     CUDTException  e;
 
-    CGuard cg(m_ConnectionLock); // FIX
+    ScopedLock cg(m_ConnectionLock); // FIX
     HLOGC(calog.Debug, log << CONID() << "processAsyncConnectResponse: got response for connect request, processing");
     cst = processConnectResponse(pkt, &e, COM_ASYNCHRO);
 
@@ -5133,7 +5133,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
         CUDTGroup* g = m_parent->m_IncludedGroup;
         if (g)
         {
-            CGuard cl (s_UDTUnited.m_GlobControlLock);
+            ScopedLock cl (s_UDTUnited.m_GlobControlLock);
             // This is the last moment when this can be done.
             // The updateAfterSrtHandshake call will copy the receiver
             // start time to the receiver buffer data, so the correct
@@ -5231,7 +5231,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
     s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_CONNECT, true);
 
     {
-        CGuard cl (s_UDTUnited.m_GlobControlLock);
+        ScopedLock cl (s_UDTUnited.m_GlobControlLock);
         CUDTGroup* g = m_parent->m_IncludedGroup;
         if (g)
         {
@@ -5248,7 +5248,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
 
 void CUDTGroup::setFreshConnected(CUDTSocket* sock)
 {
-    CGuard glock (m_GroupLock);
+    ScopedLock glock (m_GroupLock);
 
     HLOGC(calog.Debug, log << "group: Socket @" << sock->m_SocketID << " fresh connected, setting IDLE");
 
@@ -5680,7 +5680,7 @@ void *CUDT::tsbpd(void *param)
 
     THREAD_STATE_INIT("SRT:TsbPd");
 
-    CGuard recv_lock  (self->m_RecvLock);
+    UniqueLock recv_lock  (self->m_RecvLock);
     CSync recvdata_cc (self->m_RecvDataCond, recv_lock);
     CSync tsbpd_cc    (self->m_RcvTsbPdCond, recv_lock);
 
@@ -5916,7 +5916,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHan
 {
     HLOGC(calog.Debug, log << "acceptAndRespond: setting up data according to handshake");
 
-    CGuard cg(m_ConnectionLock);
+    ScopedLock cg(m_ConnectionLock);
 
     m_tsRcvPeerStartTime = steady_clock::time_point(); // will be set correctly at SRT HS
 
@@ -6011,7 +6011,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHan
        CUDTGroup* g = m_parent->m_IncludedGroup;
        if (g)
        {
-           CGuard cl (s_UDTUnited.m_GlobControlLock);
+           ScopedLock cl (s_UDTUnited.m_GlobControlLock);
            // This is the last moment when this can be done.
            // The updateAfterSrtHandshake call will copy the receiver
            // start time to the receiver buffer data, so the correct
@@ -6412,7 +6412,7 @@ bool CUDT::closeInternal()
 
     HLOGC(mglog.Debug, log << CONID() << "CLOSING STATE. Acquiring connection lock");
 
-    CGuard connectguard(m_ConnectionLock);
+    ScopedLock connectguard(m_ConnectionLock);
 
     // Signal the sender and recver if they are waiting for data.
     releaseSynch();
@@ -6451,8 +6451,8 @@ bool CUDT::closeInternal()
     HLOGC(mglog.Debug, log << "CLOSING, joining send/receive threads");
 
     // waiting all send and recv calls to stop
-    CGuard sendguard(m_SendLock);
-    CGuard recvguard(m_RecvLock);
+    ScopedLock sendguard(m_SendLock);
+    ScopedLock recvguard(m_RecvLock);
 
     // Locking m_RcvBufferLock to protect calling to m_pCryptoControl->decrypt((packet))
     // from the processData(...) function while resetting Crypto Control.
@@ -6484,7 +6484,7 @@ int CUDT::receiveBuffer(char *data, int len)
         throw CUDTException(MJ_NOTSUP, MN_INVALBUFFERAPI, 0);
     }
 
-    CGuard recvguard (m_RecvLock);
+    UniqueLock recvguard(m_RecvLock);
 
     if ((m_bBroken || m_bClosing) && !m_pRcvBuffer->isRcvDataReady())
     {
@@ -6761,12 +6761,12 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
     }
     */
 
-    CGuard sendguard(m_SendLock);
+    UniqueLock sendguard(m_SendLock);
 
     if (m_pSndBuffer->getCurrBufSize() == 0)
     {
         // delay the EXP timer to avoid mis-fired timeout
-        CGuard ack_lock(m_RecvAckLock);
+        ScopedLock ack_lock(m_RecvAckLock);
         m_tsLastRspAckTime = steady_clock::now();
         m_iReXmitCount   = 1;
     }
@@ -6792,7 +6792,7 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
 
         {
             // wait here during a blocking sending
-            CGuard sendblock_lock (m_SendBlockLock);
+            UniqueLock sendblock_lock (m_SendBlockLock);
 
             if (m_iSndTimeOut < 0)
             {
@@ -6859,7 +6859,7 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
     // record total time used for sending
     if (m_pSndBuffer->getCurrBufSize() == 0)
     {
-        CGuard lock(m_StatsLock);
+        ScopedLock lock(m_StatsLock);
         m_stats.sndDurationCounter = steady_clock::now();
     }
 
@@ -6874,7 +6874,7 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
     }
 
     {
-        CGuard recvAckLock(m_RecvAckLock);
+        ScopedLock recvAckLock(m_RecvAckLock);
         // insert the user buffer into the sending list
 
         int32_t seqno = m_iSndNextSeqNo;
@@ -7017,7 +7017,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
     if (!m_CongCtl->checkTransArgs(SrtCongestion::STA_MESSAGE, SrtCongestion::STAD_RECV, data, len, SRT_MSGTTL_INF, false))
         throw CUDTException(MJ_NOTSUP, MN_INVALMSGAPI, 0);
 
-    CGuard recvguard (m_RecvLock);
+    UniqueLock recvguard (m_RecvLock);
     CSync tscond     (m_RcvTsbPdCond,  recvguard);
 
     /* XXX DEBUG STUFF - enable when required
@@ -7271,7 +7271,7 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
         throw CUDTException(MJ_SETUP, MN_SECURITY, 0);
     }
 
-    CGuard sendguard (m_SendLock);
+    ScopedLock sendguard (m_SendLock);
 
     if (m_pSndBuffer->getCurrBufSize() == 0)
     {
@@ -7323,7 +7323,7 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
         unitsize = int((tosend >= block) ? block : tosend);
 
         {
-            CGuard lock(m_SendBlockLock);
+            UniqueLock lock(m_SendBlockLock);
 
             while (stillConnected() && (sndBuffersLeft() <= 0) && m_bPeerHealth)
                 m_SendBlockCond.wait(lock);
@@ -7343,12 +7343,12 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
         // record total time used for sending
         if (m_pSndBuffer->getCurrBufSize() == 0)
         {
-            CGuard lock(m_StatsLock);
+            ScopedLock lock(m_StatsLock);
             m_stats.sndDurationCounter = steady_clock::now();
         }
 
         {
-            CGuard        recvAckLock(m_RecvAckLock);
+            ScopedLock        recvAckLock(m_RecvAckLock);
             const int64_t sentsize = m_pSndBuffer->addBufferFromFile(ifs, unitsize);
 
             if (sentsize > 0)
@@ -7394,7 +7394,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
         throw CUDTException(MJ_NOTSUP, MN_INVALBUFFERAPI, 0);
     }
 
-    CGuard recvguard(m_RecvLock);
+    ScopedLock recvguard(m_RecvLock);
 
     // Well, actually as this works over a FILE (fstream), not just a stream,
     // the size can be measured anyway and predicted if setting the offset might
@@ -7454,7 +7454,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
         }
 
         {
-            CGuard gl   (m_RecvDataLock);
+            UniqueLock gl   (m_RecvDataLock);
             CSync rcond (m_RecvDataCond,  gl);
 
             while (stillConnected() && !m_pRcvBuffer->isRcvDataReady())
@@ -7497,7 +7497,7 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
     if (m_bBroken || m_bClosing)
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
 
-    CGuard statsguard(m_StatsLock);
+    ScopedLock statsguard(m_StatsLock);
 
     const steady_clock::time_point currtime = steady_clock::now();
 
@@ -8034,7 +8034,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
             if (m_bTsbPd)
             {
                 /* Newly acknowledged data, signal TsbPD thread */
-                CGuard rcvlock (m_RecvLock);
+                UniqueLock rcvlock (m_RecvLock);
                 CSync tscond   (m_RcvTsbPdCond, rcvlock);
                 if (m_bTsbPdAckWakeup)
                     tscond.signal_locked(rcvlock);
@@ -8282,7 +8282,7 @@ void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
     // Update sender's loss list and acknowledge packets in the sender's buffer
     {
         // m_RecvAckLock protects sender's loss list and epoll
-        CGuard ack_lock(m_RecvAckLock);
+        ScopedLock ack_lock(m_RecvAckLock);
 
         const int offset = CSeqNo::seqoff(m_iSndLastDataAck, ackdata_seqno);
         // IF distance between m_iSndLastDataAck and ack is nonempty...
@@ -8347,7 +8347,7 @@ void CUDT::processCtrlAck(const CPacket &ctrlpkt, const steady_clock::time_point
     {
         if (CSeqNo::seqcmp(ackdata_seqno, m_iSndLastAck) >= 0)
         {
-            CGuard ack_lock(m_RecvAckLock);
+            ScopedLock ack_lock(m_RecvAckLock);
             m_iFlowWindowSize -= CSeqNo::seqoff(m_iSndLastAck, ackdata_seqno);
             m_iSndLastAck = ackdata_seqno;
             m_iSndMinFlightSpan = getFlightSpan();
@@ -8531,7 +8531,7 @@ void CUDT::processCtrlLossReport(const CPacket& ctrlpkt)
 
     // protect packet retransmission
     {
-        CGuard ack_lock(m_RecvAckLock);
+        ScopedLock ack_lock(m_RecvAckLock);
 
         // decode loss list message and insert loss into the sender loss list
         for (int i = 0, n = (int)(ctrlpkt.getLength() / 4); i < n; ++i)
@@ -8876,7 +8876,7 @@ void CUDT::processCtrl(const CPacket &ctrlpkt)
 
     case UMSG_DROPREQ: // 111 - Msg drop request
         {
-            CGuard rlock(m_RecvLock);
+            UniqueLock rlock(m_RecvLock);
             m_pRcvBuffer->dropMsg(ctrlpkt.getMsgSeq(using_rexmit_flag), using_rexmit_flag);
             // When the drop request was received, it means that there are
             // packets for which there will never be ACK sent; if the TSBPD thread
@@ -9059,7 +9059,7 @@ void CUDT::updateAfterSrtHandshake(int hsv)
 int CUDT::packLostData(CPacket& w_packet, steady_clock::time_point& w_origintime)
 {
     // protect m_iSndLastDataAck from updating by ACK processing
-    CGuard ackguard(m_RecvAckLock);
+    UniqueLock ackguard(m_RecvAckLock);
     const steady_clock::time_point time_now = steady_clock::now();
     const steady_clock::time_point time_nak = time_now - microseconds_from(m_iRTT - 4 * m_iRTTVar);
 
@@ -9182,7 +9182,7 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet)
 
     string reason = "reXmit";
 
-    CGuard connectguard(m_ConnectionLock);
+    ScopedLock connectguard(m_ConnectionLock);
     // If a closing action is done simultaneously, then
     // m_bOpened should already be false, and it's set
     // just before releasing this lock.
@@ -9208,7 +9208,7 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet)
 
         // Stats
         {
-            CGuard lg(m_StatsLock);
+            ScopedLock lg(m_StatsLock);
             ++m_stats.sndFilterExtra;
             ++m_stats.sndFilterExtraTotal;
         }
@@ -9513,7 +9513,7 @@ bool CUDT::overrideSndSeqNo(int32_t seq)
     // - The corresponding socket at the peer side must be also
     //   in this idle state!
 
-    CGuard cg (m_RecvAckLock);
+    ScopedLock cg (m_RecvAckLock);
 
     // Both the scheduling and sending sequences should be fixed.
     // The new sequence normally should jump over several sequence numbers
@@ -9699,7 +9699,7 @@ int CUDT::processData(CUnit* in_unit)
        // >1 - jump over a packet loss (loss = seqdiff-1)
         if (diff > 1)
         {
-            CGuard lg(m_StatsLock);
+            ScopedLock lg(m_StatsLock);
             int    loss = diff - 1; // loss is all that is above diff == 1
             m_stats.traceRcvLoss += loss;
             m_stats.rcvLossTotal += loss;
@@ -9723,7 +9723,7 @@ int CUDT::processData(CUnit* in_unit)
         // Start of offset protected section
         // Prevent TsbPd thread from modifying Ack position while adding data
         // offset from RcvLastAck in RcvBuffer must remain valid between seqoff() and addData()
-        CGuard recvbuf_acklock(m_RcvBufferLock);
+        UniqueLock recvbuf_acklock(m_RcvBufferLock);
 
         // vector<CUnit*> undec_units;
         if (m_PacketFilter)
@@ -9848,7 +9848,7 @@ int CUDT::processData(CUnit* in_unit)
                         // Crypto flags are still set
                         // It will be acknowledged
                         {
-                            CGuard lg(m_StatsLock);
+                            ScopedLock lg(m_StatsLock);
                             m_stats.traceRcvUndecrypt += 1;
                             m_stats.traceRcvBytesUndecrypt += pktsz;
                             m_stats.m_rcvUndecryptTotal += 1;
@@ -9865,7 +9865,7 @@ int CUDT::processData(CUnit* in_unit)
 
             if (adding_successful)
             {
-                CGuard statslock(m_StatsLock);
+                ScopedLock statslock(m_StatsLock);
                 ++m_stats.traceRecvUniq;
                 ++m_stats.recvUniqTotal;
                 m_stats.traceBytesRecvUniq += u->m_Packet.getLength();
@@ -10000,7 +10000,7 @@ int CUDT::processData(CUnit* in_unit)
             HLOGC(qrlog.Debug, log << "processData: LOSS DETECTED, %: " << Printable(srt_loss_seqs) << " - RECORDING.");
             // if record_loss == false, nothing will be contained here
             // Insert lost sequence numbers to the receiver loss list
-            CGuard lg(m_RcvLossLock);
+            ScopedLock lg(m_RcvLossLock);
             for (loss_seqs_t::iterator i = srt_loss_seqs.begin(); i != srt_loss_seqs.end(); ++i)
             {
                 // If loss found, insert them to the receiver loss list
@@ -10063,7 +10063,7 @@ int CUDT::processData(CUnit* in_unit)
 
     vector<int32_t> lossdata;
     {
-        CGuard lg(m_RcvLossLock);
+        ScopedLock lg(m_RcvLossLock);
 
         // XXX There was a mysterious crash around m_FreshLoss. When the initial_loss_ttl is 0
         // (that is, "belated loss report" feature is off), don't even touch m_FreshLoss.
@@ -10155,7 +10155,7 @@ void CUDTGroup::updateLatestRcv(CUDTGroup::gli_t current)
     CUDT* source = current->ps->m_pUDT;
     vector<CUDT*> targets;
 
-    CGuard lg (m_GroupLock);
+    UniqueLock lg (m_GroupLock);
 
     for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
     {
@@ -10201,7 +10201,7 @@ void CUDTGroup::updateLatestRcv(CUDTGroup::gli_t current)
 
 void CUDT::updateIdleLinkFrom(CUDT* source)
 {
-    CGuard lg (m_RecvLock);
+    ScopedLock lg (m_RecvLock);
 
     if (!m_pRcvBuffer->empty())
     {
@@ -10267,7 +10267,7 @@ CUDT::loss_seqs_t CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
 
         {
             // If loss found, insert them to the receiver loss list
-            CGuard lg (self->m_RcvLossLock);
+            ScopedLock lg (self->m_RcvLossLock);
             self->m_pRcvLossList->insert(seqlo, seqhi);
 
             if (initial_loss_ttl)
@@ -10308,7 +10308,7 @@ CUDT::loss_seqs_t CUDT::defaultPacketArrival(void* vself, CPacket& pkt)
 /// This value can be set in options - SRT_LOSSMAXTTL.
 void CUDT::unlose(const CPacket &packet)
 {
-    CGuard lg(m_RcvLossLock);
+    ScopedLock lg(m_RcvLossLock);
     int32_t sequence = packet.m_iSeqNo;
     m_pRcvLossList->remove(sequence);
 
@@ -10453,7 +10453,7 @@ breakbreak:;
 
 void CUDT::dropFromLossLists(int32_t from, int32_t to)
 {
-    CGuard lg(m_RcvLossLock);
+    ScopedLock lg(m_RcvLossLock);
     m_pRcvLossList->remove(from, to);
 
     HLOGF(qrlog.Debug, "%sTLPKTDROP seq %d-%d (%d packets)", CONID().c_str(), from, to, CSeqNo::seqoff(from, to));
@@ -11107,7 +11107,7 @@ void CUDT::checkRexmitTimer(const steady_clock::time_point& currtime)
     if (retransmit)
     {
         // Sender: Insert all the packets sent after last received acknowledgement into the sender loss list.
-        CGuard acklock(m_RecvAckLock); // Protect packet retransmission
+        ScopedLock acklock(m_RecvAckLock); // Protect packet retransmission
         // Resend all unacknowledged packets on timeout, but only if there is no packet in the loss list
         const int32_t csn = m_iSndCurrSeqNo;
         const int     num = m_pSndLossList->insert(m_iSndLastAck, csn);
@@ -11225,7 +11225,7 @@ void CUDTGroup::addEPoll(int eid)
 
    {
        // Check all member sockets
-       CGuard gl (m_GroupLock);
+       ScopedLock gl (m_GroupLock);
 
        // We only need to know if there is any socket that is
        // ready to get a payload and ready to receive from.
@@ -11469,7 +11469,7 @@ std::list<CUDTGroup::SocketData> CUDTGroup::GroupContainer::s_NoList;
 
 CUDTGroup::gli_t CUDTGroup::add(SocketData data)
 {
-    CGuard g (m_GroupLock);
+    ScopedLock g (m_GroupLock);
 
     // Change the snd/rcv state of the group member to PENDING.
     // Default for SocketData after creation is BROKEN, which just
@@ -11721,7 +11721,7 @@ void CUDTGroup::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         HLOGC(gmlog.Debug, log << "... SPREADING to existing sockets.");
         // This means that there are sockets already, so apply
         // this option on them.
-        CGuard gg (m_GroupLock);
+        ScopedLock gg (m_GroupLock);
         for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
         {
             gi->ps->core().setOpt(optName, optval, optlen);
@@ -12018,7 +12018,7 @@ void CUDTGroup::getOpt(SRT_SOCKOPT optname, void* pw_optval, int& w_optlen)
         // Once a socket is extracted, we state it cannot be
         // closed without the group send/recv function or closing
         // being involved.
-        CGuard lg (m_GroupLock);
+        ScopedLock lg (m_GroupLock);
         if (m_Group.empty())
         {
             if (!getOptDefault(optname, (pw_optval), (w_optlen)))
@@ -12054,7 +12054,7 @@ SRT_SOCKSTATUS CUDTGroup::getStatus()
     states_t states;
 
     {
-        CGuard cg (m_GroupLock);
+        ScopedLock cg (m_GroupLock);
         for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
         {
             switch (gi->sndstate)
@@ -12117,7 +12117,7 @@ void CUDTGroup::close()
     vector<SRTSOCKET> ids;
 
     {
-        CGuard g (m_GroupLock);
+        ScopedLock g (m_GroupLock);
 
         // A non-managed group may only be closed if there are no
         // sockets in the group.
@@ -12135,7 +12135,7 @@ void CUDTGroup::close()
 
     // Lock the group again to clear the group data
     {
-        CGuard g (m_GroupLock);
+        ScopedLock g (m_GroupLock);
 
         m_Group.clear();
         m_PeerGroupID = -1;
@@ -12197,7 +12197,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     vector<gli_t> sendable;
 
-    CGuard guard (m_GroupLock);
+    ScopedLock guard (m_GroupLock);
 
     // This simply requires the payload to be sent through every socket in the group
     for (gli_t d = m_Group.begin(); d != m_Group.end(); ++d)
@@ -12761,7 +12761,7 @@ int CUDTGroup::getGroupData(SRT_SOCKGROUPDATA* pdata, size_t* psize)
     if (!psize)
         return CUDT::APIError(MJ_NOTSUP, MN_INVAL);
 
-    CGuard gl (m_GroupLock);
+    ScopedLock gl (m_GroupLock);
 
     SRT_ASSERT(psize != NULL);
     const size_t size = *psize;
@@ -12818,7 +12818,7 @@ int CUDTGroup::getGroupData(SRT_SOCKGROUPDATA* pdata, size_t* psize)
 
 void CUDTGroup::getGroupCount(size_t& w_size, bool& w_still_alive)
 {
-    CGuard gg (m_GroupLock);
+    ScopedLock gg (m_GroupLock);
 
     // Note: linear time, but no way to avoid it.
     // Fortunately the size of the redundancy group is even
@@ -12851,21 +12851,34 @@ void CUDTGroup::fillGroupData(
         const SRT_MSGCTRL& in // MSGCTRL read from the data-providing socket
         )
 {
+    // Preserve the data that will be overwritten by assignment
     SRT_SOCKGROUPDATA* grpdata = w_out.grpdata;
+    size_t grpdata_size = w_out.grpdata_size;
 
     w_out = in; // NOTE: This will write NULL to grpdata and 0 to grpdata_size!
+
+    w_out.grpdata = NULL; // Make sure it's done, for any case
+    w_out.grpdata_size = 0;
 
     // User did not wish to read the group data at all.
     if (!grpdata)
     {
-        w_out.grpdata = NULL;
-        w_out.grpdata_size = 0;
         return;
     }
 
-    int st = getGroupData((grpdata), (&w_out.grpdata_size));
-    // On error, rewrite NULL.
-    w_out.grpdata = st != SRT_ERROR ? grpdata : NULL;
+    int st = getGroupData((grpdata), (&grpdata_size));
+
+    // Always write back the size, no matter if the data were filled.
+    w_out.grpdata_size = grpdata_size;
+
+    if (st == SRT_ERROR)
+    {
+        // Keep NULL in grpdata
+        return;
+    }
+
+    // Write back original data
+    w_out.grpdata = grpdata;
 }
 
 struct FLookupSocketWithEvent
@@ -12890,7 +12903,7 @@ struct FLookupSocketWithEvent
 void CUDTGroup::updateReadState(SRTSOCKET /* not sure if needed */, int32_t sequence)
 {
     bool ready = false;
-    CGuard lg (m_GroupLock);
+    ScopedLock lg (m_GroupLock);
     int seqdiff = 0;
 
     if (m_RcvBaseSeqNo == SRT_SEQNO_NONE)
@@ -12939,7 +12952,7 @@ void CUDTGroup::updateReadState(SRTSOCKET /* not sure if needed */, int32_t sequ
 
 void CUDTGroup::updateWriteState()
 {
-    CGuard lg (m_GroupLock);
+    ScopedLock lg (m_GroupLock);
     m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, true);
 }
 
@@ -13067,7 +13080,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
 
         {
             HLOGC(grlog.Debug, log << "group/recv: Reviewing member sockets to epoll-add (locking)");
-            CGuard glock (m_GroupLock);
+            ScopedLock glock (m_GroupLock);
             for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
             {
                 ++size; // list::size loops over all elements anyway, so this hits two birds with one stone
@@ -13665,7 +13678,7 @@ const char* CUDTGroup::StateStr(CUDTGroup::GroupState st)
 
 void CUDTGroup::synchronizeDrift(CUDT* cu, steady_clock::duration udrift, steady_clock::time_point newtimebase)
 {
-    CGuard glock (m_GroupLock);
+    ScopedLock glock (m_GroupLock);
 
     bool wrap_period = false;
 
@@ -13729,7 +13742,7 @@ void CUDTGroup::bstatsSocket(CBytePerfMon *perf, bool clear)
 
     memset(perf, 0, sizeof *perf);
 
-    CGuard gg (m_GroupLock);
+    ScopedLock gg (m_GroupLock);
 
     perf->msTimeStamp         = count_milliseconds(currtime - m_tsStartTime);
 
@@ -13890,7 +13903,7 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
                 << (!is_zero(u.m_tsUnstableSince) ? " - RESTORED" : " - CONTINUED")
                 << " TIMEDIFF {response= " << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspTime)
                 << " activation="
-                << (u.m_tsTmpActiveTime ? FormatDuration<DUNIT_MS>(currtime - u.m_tsTmpActiveTime) : "PAST")
+                << (!is_zero(u.m_tsTmpActiveTime) ? FormatDuration<DUNIT_MS>(currtime - u.m_tsTmpActiveTime) : "PAST")
                 << "}");
 
         u.m_tsUnstableSince = steady_clock::time_point();
@@ -14471,7 +14484,7 @@ RetryWaitBlocked:
                 continue;
             }
             CUDT& ce = d->ps->core();
-            steady_clock::duration td;
+            steady_clock::duration td(0);
             if (!is_zero(ce.m_tsTmpActiveTime)
                     && count_microseconds(td = currtime - ce.m_tsTmpActiveTime) < ce.m_uOPT_StabilityTimeout)
             {
@@ -14524,7 +14537,7 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
     int final_stat = -1;
     SRT_ATR_UNUSED CUDTException cx (MJ_SUCCESS, MN_NONE, 0);
 
-    CGuard guard (m_GroupLock);
+    ScopedLock guard (m_GroupLock);
 
     steady_clock::time_point currtime = steady_clock::now();
 
@@ -15247,7 +15260,7 @@ int CUDTGroup::recvBalancing(char* buf, int len, SRT_MSGCTRL& w_mctrl)
 
         {
             HLOGC(grlog.Debug, log << "group/recvBalancing: Reviewing member sockets to epoll-add (locking)");
-            CGuard glock (m_GroupLock);
+            ScopedLock glock (m_GroupLock);
             for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
             {
                 ++size; // list::size loops over all elements anyway, so this hits two birds with one stone
@@ -15767,7 +15780,7 @@ int CUDTGroup::sendBalancing(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     w_mc.msgno = -1;
 
-    CGuard guard (m_GroupLock);
+    ScopedLock guard (m_GroupLock);
 
     // Always set the same exactly message number for the payload
     // sent over all links.Regardless whether it will be used to synchronize
