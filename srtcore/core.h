@@ -1918,6 +1918,9 @@ private: // Trace
         MaxMetricUsage<duration> tdMaxResponseTime;
     } m_stats;
 
+    /// This function records the passed current time as the last response time.
+    /// Before doing it, however, it checks if there exist any previous such time
+    /// and updates statistics accordingly.
     void calculateResponseTime(const time_point& now)
     {
         if (!is_zero(m_tsLastRspTime))

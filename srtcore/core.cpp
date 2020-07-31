@@ -13852,6 +13852,15 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
 
     bool is_unstable = false;
 
+    HLOGC(gslog.Debug, log << "grp/sendBackup: CHECK STABLE: @" << w_d->id
+                << ": TIMEDIFF {response= "
+                << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspTime)
+                << " activation="
+                << (!is_zero(u.m_tsTmpActiveTime) ? FormatDuration<DUNIT_MS>(currtime - u.m_tsTmpActiveTime) : "PAST")
+                << " unstable="
+                << (!is_zero(u.m_tsUnstableSince) ? FormatDuration<DUNIT_MS>(currtime - u.m_tsUnstableSince) : "NEVER")
+                << "}");
+
     if (currtime > u.m_tsLastRspTime)
     {
         // The last response predates the start of this function, look at the difference
@@ -13900,11 +13909,7 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
     {
         // If stability is ok, but unstable-since was set before, reset it.
         HLOGC(gslog.Debug, log << "grp/sendBackup: link STABLE: @" << w_d->id
-                << (!is_zero(u.m_tsUnstableSince) ? " - RESTORED" : " - CONTINUED")
-                << " TIMEDIFF {response= " << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspTime)
-                << " activation="
-                << (!is_zero(u.m_tsTmpActiveTime) ? FormatDuration<DUNIT_MS>(currtime - u.m_tsTmpActiveTime) : "PAST")
-                << "}");
+                << (!is_zero(u.m_tsUnstableSince) ? " - RESTORED" : " - CONTINUED"));
 
         u.m_tsUnstableSince = steady_clock::time_point();
     }
@@ -13913,7 +13918,8 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
     if (u.m_tsUnstableSince != steady_clock::time_point())
     {
         HLOGC(gslog.Debug, log << "grp/sendBackup: link UNSTABLE for "
-                << FormatDuration(currtime - u.m_tsUnstableSince) << " : @" << w_d->id << " - will send a payload");
+                << FormatDuration(currtime - u.m_tsUnstableSince) << " : @" << w_d->id
+                << " - will send a payload");
         // The link is already unstable
         if (ts_oldest_unstable != steady_clock::time_point() || ts_oldest_unstable > u.m_tsUnstableSince)
             ts_oldest_unstable = u.m_tsUnstableSince;
