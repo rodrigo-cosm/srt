@@ -532,10 +532,10 @@ private:
     // Support functions for sendBackup and sendBroadcast
     bool send_CheckIdle(const gli_t d, std::vector<gli_t>& w_wipeme, std::vector<gli_t>& w_pending);
     void sendBackup_CheckIdleTime(gli_t w_d);
-    void sendBackup_CheckRunningStability(const gli_t d, const time_point currtime, size_t& w_nunstable);
+    bool sendBackup_CheckRunningStability(const gli_t d, const time_point currtime);
     bool sendBackup_CheckSendStatus(const gli_t d, const time_point& currtime, const int stat, const int erc, const int32_t lastseq,
             const int32_t pktseq, CUDT& w_u, int32_t& w_curseq, std::vector<gli_t>& w_parallel,
-            int& w_final_stat, std::set<int>& w_sendable_pri, size_t& w_nsuccessful, size_t& w_nunstable);
+            int& w_final_stat, std::set<int>& w_sendable_pri, size_t& w_nsuccessful, bool& w_is_unstable);
     void sendBackup_Buffering(const char* buf, const int len, int32_t& curseq, SRT_MSGCTRL& w_mc);
     void sendBackup_CheckNeedActivate(const std::vector<gli_t>& idlers, const char *buf, const int len,
             bool& w_none_succeeded, SRT_MSGCTRL& w_mc, int32_t& w_curseq, int32_t& w_final_stat,
@@ -544,7 +544,7 @@ private:
             const std::string& activate_reason);
     void send_CheckPendingSockets(const std::vector<gli_t>& pending, std::vector<gli_t>& w_wipeme);
     void send_CloseBrokenSockets(std::vector<gli_t>& w_wipeme);
-    void sendBackup_CheckParallelLinks(const size_t nunstable, std::vector<gli_t>& w_parallel,
+    void sendBackup_CheckParallelLinks(const std::vector<gli_t>& unstable, std::vector<gli_t>& w_parallel,
             int& w_final_stat, bool& w_none_succeeded, SRT_MSGCTRL& w_mc, CUDTException& w_cx);
 
 public:
@@ -769,6 +769,7 @@ private:
     int32_t m_iSndOldestMsgNo; // oldest position in the sender buffer
     volatile int32_t m_iSndAckedMsgNo;
     uint32_t m_uOPT_StabilityTimeout;
+    uint32_t m_uOPT_PeerIdleTimeout;
 
     // THIS function must be called only in a function for a group type
     // that does use sender buffer.

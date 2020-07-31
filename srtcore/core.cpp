@@ -11536,6 +11536,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     , m_iSndOldestMsgNo(SRT_MSGNO_NONE)
     , m_iSndAckedMsgNo(SRT_MSGNO_NONE)
     , m_uOPT_StabilityTimeout(4*CUDT::COMM_SYN_INTERVAL_US)
+    , m_uOPT_PeerIdleTimeout(CUDT::COMM_RESPONSE_TIMEOUT_MS)
     // -1 = "undefined"; will become defined with first added socket
     , m_iMaxPayloadSize(-1)
     , m_bSynRecving(true)
@@ -11829,6 +11830,11 @@ void CUDTGroup::deriveSettings(CUDT* u)
     IM(SRTO_ENFORCEDENCRYPTION, m_bOPT_StrictEncryption);
     IM(SRTO_IPV6ONLY, m_iIpV6Only);
     IM(SRTO_PEERIDLETIMEO, m_iOPT_PeerIdleTimeout);
+
+    // Also set internal value of this option, even if later
+    // sockets could be set this value differently.
+    m_uOPT_PeerIdleTimeout = u->m_iOPT_PeerIdleTimeout;
+
     IM(SRTO_GROUPSTABTIMEO, m_uOPT_StabilityTimeout);
     IM(SRTO_PACKETFILTER, m_OPT_PktFilterConfigString);
 
@@ -13833,11 +13839,9 @@ void CUDTGroup::sendBackup_CheckIdleTime(gli_t w_d)
     }
 }
 
-void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point currtime, size_t& w_nunstable)
+bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point currtime)
 {
-    steady_clock::time_point ts_oldest_unstable;
-
-    CUDT& u = w_d->ps->core();
+    CUDT& u = d->ps->core();
     // This link might be unstable, check its responsiveness status
     // NOTE: currtime - last_rsp_time: we believe this value will be always positive as
     // the Tk clock is believed to be monotonic. The resulting value
@@ -13852,7 +13856,7 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
 
     bool is_unstable = false;
 
-    HLOGC(gslog.Debug, log << "grp/sendBackup: CHECK STABLE: @" << w_d->id
+    HLOGC(gslog.Debug, log << "grp/sendBackup: CHECK STABLE: @" << d->id
                 << ": TIMEDIFF {response= "
                 << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspTime)
                 << " activation="
@@ -13892,7 +13896,7 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
         {
             if (is_zero(u.m_tsUnstableSince))
             {
-                HLOGC(gslog.Debug, log << "grp/sendBackup: socket NEW UNSTABLE: @" << w_d->id
+                HLOGC(gslog.Debug, log << "grp/sendBackup: socket NEW UNSTABLE: @" << d->id
                         << " last " << source << " " << FormatDuration(td_responsive)
                         << " > " << m_uOPT_StabilityTimeout << " (stability timeout)");
                 // The link seems to have missed two ACKs already.
@@ -13908,33 +13912,34 @@ void CUDTGroup::sendBackup_CheckRunningStability(gli_t w_d, const time_point cur
     if (!is_unstable)
     {
         // If stability is ok, but unstable-since was set before, reset it.
-        HLOGC(gslog.Debug, log << "grp/sendBackup: link STABLE: @" << w_d->id
+        HLOGC(gslog.Debug, log << "grp/sendBackup: link STABLE: @" << d->id
                 << (!is_zero(u.m_tsUnstableSince) ? " - RESTORED" : " - CONTINUED"));
 
         u.m_tsUnstableSince = steady_clock::time_point();
+        is_unstable = false;
     }
 
+#if ENABLE_HEAVY_LOGGING
     // Could be set above
-    if (u.m_tsUnstableSince != steady_clock::time_point())
+    if (is_unstable)
     {
         HLOGC(gslog.Debug, log << "grp/sendBackup: link UNSTABLE for "
-                << FormatDuration(currtime - u.m_tsUnstableSince) << " : @" << w_d->id
+                << FormatDuration(currtime - u.m_tsUnstableSince) << " : @" << d->id
                 << " - will send a payload");
-        // The link is already unstable
-        if (ts_oldest_unstable != steady_clock::time_point() || ts_oldest_unstable > u.m_tsUnstableSince)
-            ts_oldest_unstable = u.m_tsUnstableSince;
-        ++w_nunstable;
     }
     else
     {
-        HLOGC(gslog.Debug, log << "grp/sendBackup: socket in RUNNING state: @" << w_d->id << " - will send a payload");
+        HLOGC(gslog.Debug, log << "grp/sendBackup: socket in RUNNING state: @" << d->id << " - will send a payload");
     }
+#endif
+
+    return !is_unstable;
 }
 
 bool CUDTGroup::sendBackup_CheckSendStatus(gli_t d, const steady_clock::time_point& currtime ATR_UNUSED,
         const int stat, const int erc, const int32_t lastseq, const int32_t pktseq,
         CUDT& w_u, int32_t& w_curseq, vector<gli_t>& w_parallel, int& w_final_stat,
-        set<int>& w_sendable_pri, size_t& w_nsuccessful, size_t& w_nunstable)
+        set<int>& w_sendable_pri, size_t& w_nsuccessful, bool& w_is_nunstable)
 {
     bool none_succeeded = true;
 
@@ -14004,8 +14009,7 @@ bool CUDTGroup::sendBackup_CheckSendStatus(gli_t d, const steady_clock::time_poi
     else if (erc == SRT_EASYNCSND)
     {
         HLOGC(gslog.Debug, log << "grp/sendBackup: Link @" << w_u.m_SocketID << " DEEMED UNSTABLE (not ready to send)");
-        if (is_zero(w_u.m_tsUnstableSince)) // skip those unstable already - they are already counted
-            ++w_nunstable;
+        w_is_nunstable = true;
     }
 
     return none_succeeded;
@@ -14286,10 +14290,10 @@ void CUDTGroup::send_CloseBrokenSockets(vector<gli_t>& w_wipeme)
     w_wipeme.clear();
 }
 
-void CUDTGroup::sendBackup_CheckParallelLinks(const size_t nunstable, vector<gli_t>& w_parallel,
+void CUDTGroup::sendBackup_CheckParallelLinks(const vector<gli_t>& unstable, vector<gli_t>& w_parallel,
         int& w_final_stat, bool& w_none_succeeded, SRT_MSGCTRL& w_mc, CUDTException& w_cx)
 {
-    // In contradiction to redundancy sending, backup sending must check
+    // In contradiction to broadcast sending, backup sending must check
     // the blocking state in total first. We need this information through
     // epoll because we didn't use all sockets to send the data hence the
     // blocked socket information would not be complete.
@@ -14301,7 +14305,20 @@ void CUDTGroup::sendBackup_CheckParallelLinks(const size_t nunstable, vector<gli
     // If sending succeeded also over at least one unstable link (you only have
     // unstable links and none other or others just got broken), continue sending
     // anyway.
-    if (w_parallel.empty() && !nunstable)
+
+#if ENABLE_HEAVY_LOGGING
+    // Potential problem to be checked in developer mode
+    for (vector<gli_t>::iterator p = w_parallel.begin(); p != w_parallel.end(); ++p)
+    {
+        if (std::find(unstable.begin(), unstable.end(), *p) != unstable.end())
+        {
+            LOGC(gslog.Debug, log << "grp/sendBackup: IPE: parallel links enclose unstable link @"
+                    << (*p)->ps->m_SocketID);
+        }
+    }
+#endif
+
+    if (w_parallel.empty() && !unstable.empty())
     {
         // XXX FILL THE TABLE
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
@@ -14505,6 +14522,44 @@ RetryWaitBlocked:
             ce.m_tsTmpActiveTime = steady_clock::time_point();
         }
     }
+
+    if (w_parallel.empty() || unstable.empty())
+    {
+        HLOGC(gslog.Debug, log << "grp/sendBackup: NOT CHECKING UNSTABLE LINKS: no unstable links ("
+                << unstable.size() << ") or no parallel links (" << w_parallel.size() << ")");
+        return;
+    }
+
+    const uint32_t PEER_IDLE_TMO_US = m_uOPT_PeerIdleTimeout * 1000;
+
+    // Take care of unstable links
+    vector<gli_t>::const_iterator p = unstable.begin(), oldest_unstable = p;
+    steady_clock::time_point oldest_time = (*p)->ps->core().m_tsUnstableSince;
+    bool have_others = false;
+    while (++p != unstable.end())
+    {
+        have_others = true;
+        steady_clock::time_point this_time = (*p)->ps->core().m_tsUnstableSince;
+        if (this_time < oldest_time)
+        {
+            oldest_time = this_time;
+            oldest_unstable = p;
+        }
+    }
+
+    if (w_parallel.empty() && !have_others)
+    {
+        HLOGC(gslog.Debug, log << "grp/sendBackup: NOT killing any unstable links: this would kill the last link");
+        return;
+    }
+
+    steady_clock::time_point currtime = steady_clock::now();
+
+    if (count_microseconds(currtime - oldest_time) > PEER_IDLE_TMO_US)
+    {
+        HLOGC(gslog.Debug, log << "grp/sendBackup: KILL UNSTABLE: would kill @" << (*oldest_unstable)->ps->m_SocketID
+                << " being unstable for " << FormatDuration(currtime - oldest_time));
+    }
 }
 
 
@@ -14533,10 +14588,10 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
     vector<gli_t> wipeme;
     vector<gli_t> idlers;
     vector<gli_t> pending;
+    vector<gli_t> unstable;
 
     // We need them as sets because links at first seen as stable
     // may become unstable after a while
-    size_t nunstable = 0;
     vector<gli_t> sendable;
 
     int stat = 0;
@@ -14579,7 +14634,11 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
 
         if (d->sndstate == SRT_GST_RUNNING)
         {
-            sendBackup_CheckRunningStability(d, (currtime), (nunstable));
+            if (!sendBackup_CheckRunningStability(d, (currtime)))
+            {
+                insert_uniq((unstable), d);
+            }
+            // Unstable links should still be used for sending.
             sendable.push_back(d);
             continue;
         }
@@ -14657,9 +14716,13 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
             erc = e.getErrorCode();
         }
 
+        bool is_unstable = false;
         none_succeeded &= sendBackup_CheckSendStatus(d, currtime, stat, erc, lastseq, w_mc.pktseq,
                 (u), (curseq), (parallel), (final_stat),
-                (sendable_pri), (nsuccessful), (nunstable));
+                (sendable_pri), (nsuccessful), (is_unstable));
+
+        if (is_unstable && is_zero(u.m_tsUnstableSince)) // Add to unstable only if it wasn't unstable already
+            insert_uniq((unstable), d);
 
         const Sendstate cstate = {d, stat, erc};
         sendstates.push_back(cstate);
@@ -14747,7 +14810,11 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
 
     // CHECK: no sendable that exceeds unstable
     // This embraces the case when there are no sendable at all.
-    bool need_activate = sendable.size() <= nunstable;
+    // Note that unstable links still count as sendable; they
+    // are simply links that were qualified for sending, but:
+    // - have exceeded response timeout
+    // - have hit EASYNCSND error during sending
+    bool need_activate = sendable.size() <= unstable.size();
     string activate_reason;
     IF_HEAVY_LOGGING(activate_reason = "BY NO REASON???");
     if (need_activate)
@@ -14805,14 +14872,14 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
     else
     {
         HLOGC(gslog.Debug, log << "grp/sendBackup: have sendable links, stable="
-                << (sendable.size() - nunstable) << " unstable=" << nunstable);
+                << (sendable.size() - unstable.size()) << " unstable=" << unstable.size());
     }
 
     send_CheckPendingSockets(pending, (wipeme));
 
     send_CloseBrokenSockets((wipeme));
 
-    sendBackup_CheckParallelLinks(nunstable, (parallel), (final_stat), (none_succeeded), (w_mc), (cx));
+    sendBackup_CheckParallelLinks(unstable, (parallel), (final_stat), (none_succeeded), (w_mc), (cx));
 
     if (none_succeeded)
     {
