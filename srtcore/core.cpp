@@ -5082,7 +5082,7 @@ void CUDT::applyResponseSettings() ATR_NOEXCEPT
 
     setInitialRcvSeq(m_iPeerISN);
 
-    m_iRcvCurrPhySeqNo = m_ConnRes.m_iISN - 1;
+    m_iRcvCurrPhySeqNo = CSeqNo::decseq(m_ConnRes.m_iISN);
     m_PeerID           = m_ConnRes.m_iID;
     memcpy((m_piSelfIP), m_ConnRes.m_piPeerIP, sizeof m_piSelfIP);
 
@@ -5935,8 +5935,8 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHan
 
     m_iPeerISN = w_hs.m_iISN;
 
-   setInitialRcvSeq(m_iPeerISN);
-    m_iRcvCurrPhySeqNo = w_hs.m_iISN - 1;
+    setInitialRcvSeq(m_iPeerISN);
+    m_iRcvCurrPhySeqNo = CSeqNo::decseq(w_hs.m_iISN);
 
     m_PeerID  = w_hs.m_iID;
     w_hs.m_iID = m_SocketID;
@@ -5944,7 +5944,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHan
     // use peer's ISN and send it back for security check
     m_iISN = w_hs.m_iISN;
 
-   setInitialSndSeq(m_iISN);
+    setInitialSndSeq(m_iISN);
     m_SndLastAck2Time = steady_clock::now();
 
     // this is a reponse handshake
@@ -13879,19 +13879,38 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
 
         IF_HEAVY_LOGGING(string source = "heard");
 
+        bool check_stability = true;
+
         if (!is_zero(u.m_tsTmpActiveTime) && u.m_tsTmpActiveTime < currtime)
         {
             // The link is temporary-activated. Calculate then since the activation time.
-            // Mind that if the difference against the last update time is SMALLER,
-            // the temporary activation time should be cleared.
-            steady_clock::duration td_active = currtime - u.m_tsTmpActiveTime;
 
-            // Use the activation time, if it happened later than the last response.
-            // Still, check it against the timeout.
-            if (td_active < td_responsive)
+            // Check the last received ACK time first. This time is initialized with 'now'
+            // at the CUDT::open call, so you can't count on the trap zero time here, but
+            // it's still possible to check if activation time predates the ACK time. Things
+            // are here in the following possible order:
+            //
+            // - ACK time (old because defined at open)
+            // - Response time (old because the time of received handshake or keepalive counts)
+            // ... long time nothing ...
+            // - Activation time.
+            //
+            // If we have this situation, we have to wait for at least one ACK that is
+            // newer than activation time. However, if in this situation we have a fresh
+            // response, that is:
+            //
+            // - ACK time
+            // ...
+            // - Activation time
+            // - Response time (because a Keepalive had a caprice to come accidentally after sending)
+            //
+            // We still wait for a situation that there's at least one ACK that is newer than activation.
+
+            // As we DO have activation time, we need to check if there's at least
+            // one ACK newer than activation, that is, td_acked < td_active
+            if (u.m_tsLastRspAckTime < u.m_tsTmpActiveTime)
             {
-                IF_HEAVY_LOGGING(source = "activated");
-                td_responsive = td_active;
+                check_stability = false;
             }
             else
             {
@@ -13899,7 +13918,7 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
             }
         }
 
-        if (count_microseconds(td_responsive) > m_uOPT_StabilityTimeout)
+        if (check_stability && count_microseconds(td_responsive) > m_uOPT_StabilityTimeout)
         {
             if (is_zero(u.m_tsUnstableSince))
             {
