@@ -13866,6 +13866,8 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
     HLOGC(gslog.Debug, log << "grp/sendBackup: CHECK STABLE: @" << d->id
                 << ": TIMEDIFF {response= "
                 << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspTime)
+                << " ACK="
+                << FormatDuration<DUNIT_MS>(currtime - u.m_tsLastRspAckTime)
                 << " activation="
                 << (!is_zero(u.m_tsTmpActiveTime) ? FormatDuration<DUNIT_MS>(currtime - u.m_tsTmpActiveTime) : "PAST")
                 << " unstable="
@@ -13911,6 +13913,8 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
             if (u.m_tsLastRspAckTime < u.m_tsTmpActiveTime)
             {
                 check_stability = false;
+                HLOGC(gslog.Debug, log << "grp/sendBackup: link @" << d->id << " activated after ACK, "
+                        "not checking for stability");
             }
             else
             {
