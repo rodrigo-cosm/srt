@@ -866,7 +866,7 @@ int CEPoll::update_events(const SRTSOCKET& uid, std::set<int>& eids, const int e
             continue;
         }
 
-        IF_HEAVY_LOGGING(string tracking = "TRACKING: " + ed.DisplayEpollWatch());
+        IF_HEAVY_LOGGING(string tracking = " TRACKING: " + ed.DisplayEpollWatch());
         // compute new states
 
         // New state to be set into the permanent state
