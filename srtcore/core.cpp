@@ -9766,6 +9766,35 @@ int CUDT::processData(CUnit* in_unit)
         // Needed for possibly check for needsQuickACK.
         bool incoming_belated = (CSeqNo::seqcmp(in_unit->m_Packet.m_iSeqNo, m_iRcvLastSkipAck) < 0);
 
+        bool need_notify_loss = true;
+        // Switch to RUNNING even if there was a discrepancy, unless
+        // it was long way forward.
+        // XXX Important: This code is in the dead function defaultPacketArrival
+        // but normally it should be called here regardless if the packet was
+        // accepted or rejected because if it was belated it may result in a
+        // "runaway train" problem as the IDLE links are being updated the base
+        // reception sequence pointer stating that this link is not receiving.
+        if (m_parent->m_IncludedGroup)
+        {
+            CUDTGroup::gli_t gi = m_parent->m_IncludedIter;
+            if (gi->rcvstate < SRT_GST_RUNNING) // PENDING or IDLE, tho PENDING is unlikely
+            {
+                HLOGC(qrlog.Debug, log << "processData: IN-GROUP rcv state transition "
+                        << srt_log_grp_state[gi->rcvstate]
+                        << " -> RUNNING. NOT checking for loss");
+                gi->rcvstate = SRT_GST_RUNNING;
+
+                // The function unfortunately can't return here.
+                // We just need to skip loss reporting.
+                need_notify_loss = false;
+            }
+            else
+            {
+                HLOGC(qrlog.Debug, log << "processData: IN-GROUP rcv state transition NOT DONE - state:"
+                        << srt_log_grp_state[gi->rcvstate]);
+            }
+        }
+
         // Loop over all incoming packets that were filtered out.
         // In case when there is no filter, there's just one packet in 'incoming',
         // the one that came in the input of this function.
@@ -9920,29 +9949,6 @@ int CUDT::processData(CUnit* in_unit)
                     << " FLAGS: "
                     << rpkt.MessageFlagStr());
 #endif
-
-            bool need_notify_loss = true;
-            // Switch to RUNNING even if there was a discrepancy, unless
-            // it was long way forward.
-            // XXX Important: This code is in the dead function defaultPacketArrival
-            // but normally it should be called here regardless if the packet was
-            // accepted or rejected because if it was belated it may result in a
-            // "runaway train" problem as the IDLE links are being updated the base
-            // reception sequence pointer stating that this link is not receiving.
-            if (m_parent->m_IncludedGroup)
-            {
-                CUDTGroup::gli_t gi = m_parent->m_IncludedIter;
-                if (gi->rcvstate < SRT_GST_RUNNING) // PENDING or IDLE, tho PENDING is unlikely
-                {
-                    HLOGC(qrlog.Debug, log << "processData: IN-GROUP rcv state transition to RUNNING. NOT checking for loss");
-                    gi->rcvstate = SRT_GST_RUNNING;
-
-                    // The function unfortunately can't return here.
-                    // We just need to skip loss reporting.
-                    need_notify_loss = false;
-                }
-            }
-
 
             // Decryption should have made the crypto flags EK_NOENC.
             // Otherwise it's an error.
