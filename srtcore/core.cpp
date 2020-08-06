@@ -13848,6 +13848,18 @@ struct FByWeight //: public std::binary_predicate<CUDTGroup::gli_t, CUDTGroup::g
     }
 };
 
+struct FByOldestActive
+{
+    typedef CUDTGroup::gli_t gli_t;
+    bool operator()(gli_t a, gli_t b)
+    {
+        CUDT& x = a->ps->core();
+        CUDT& y = b->ps->core();
+
+        return x.m_tsTmpActiveTime < y.m_tsTmpActiveTime;
+    }
+};
+
 bool CUDTGroup::send_CheckIdle(const gli_t d, vector<gli_t>& w_wipeme, vector<gli_t>& w_pending)
 {
     SRT_SOCKSTATUS st = SRTS_NONEXIST;
@@ -14577,9 +14589,34 @@ RetryWaitBlocked:
         steady_clock::time_point currtime = steady_clock::now();
 
         vector<gli_t>::iterator b = w_parallel.begin();
+
+        // Additional criterion: if you have multiple links with the same weight,
+        // check if you have at least one with m_tsTmpActiveTime == 0. If not,
+        // sort them additionally by this time.
+        vector<gli_t>::iterator e = b;
+        while (e != w_parallel.end())
+        {
+            ++e;
+            if ((*e)->weight != (*b)->weight)
+                break;
+        }
+
+        if (b != e)
+        {
+            // More than 1 link with the same weight. Sorting them according
+            // to a different criterion will not change the previous sorting order.
+            // Also the link with zero activation time wasn't found, so find
+            // the link with least time. The "trap" zero time matches this
+            // requirement, occasionally.
+            b = min_element(b, e, FByOldestActive());
+        }
+
         HLOGC(gslog.Debug, log << "grp/sendBackup: keeping parallel link @" << (*b)->id << " and silencing others:");
-        ++b;
-        for (; b != w_parallel.end(); ++b)
+
+        // After finding the link to leave active, remove it from the container.
+        w_parallel.erase(b);
+
+        for (b = w_parallel.begin(); b != w_parallel.end(); ++b)
         {
             gli_t& d = *b;
             if (d->sndstate != SRT_GST_RUNNING)
@@ -14603,11 +14640,13 @@ RetryWaitBlocked:
             ce.m_tsTmpActiveTime = steady_clock::time_point();
         }
     }
+}
 
-    if (w_parallel.empty() || unstable.empty())
+void CUDTGroup::sendBackup_CheckLongUnstableLinks(const vector<gli_t>& unstable)
+{
+    if (unstable.empty())
     {
-        HLOGC(gslog.Debug, log << "grp/sendBackup: NOT CHECKING UNSTABLE LINKS: no unstable links ("
-                << unstable.size() << ") or no parallel links (" << w_parallel.size() << ")");
+        HLOGC(gslog.Debug, log << "grp/sendBackup: NOT CHECKING UNSTABLE LINKS: no unstable links");
         return;
     }
 
@@ -14628,7 +14667,7 @@ RetryWaitBlocked:
         }
     }
 
-    if (w_parallel.empty() && !have_others)
+    if (!have_others)
     {
         HLOGC(gslog.Debug, log << "grp/sendBackup: NOT killing any unstable links: this would kill the last link");
         return;
@@ -15198,10 +15237,35 @@ void CUDTGroup::handleKeepalive(gli_t gli)
 {
     // received keepalive for that group member
     // In backup group it means that the link went IDLE.
-    if (m_type == SRT_GTYPE_BACKUP && gli->rcvstate == SRT_GST_RUNNING)
+    if (m_type == SRT_GTYPE_BACKUP)
     {
-        gli->rcvstate = SRT_GST_IDLE;
-        HLOGC(gmlog.Debug, log << "GROUP: received KEEPALIVE in @" << gli->id << " - link turning IDLE");
+        if (gli->rcvstate == SRT_GST_RUNNING)
+        {
+            gli->rcvstate = SRT_GST_IDLE;
+            HLOGC(gmlog.Debug, log << "GROUP: received KEEPALIVE in @" << gli->id << " - link turning rcv=IDLE");
+        }
+
+        // When received KEEPALIVE, the sending state should be also
+        // turned IDLE, if the link isn't temporarily activated. The
+        // temporarily activated link will not be measured stability anyway,
+        // while this should clear out the problem when the transmission is
+        // stopped and restarted after a while. This will simply set the current
+        // link as IDLE on the sender when the peer sends a keepalive because the
+        // data stopped coming in and it can't send ACKs therefore.
+        //
+        // This also shouldn't be done for the temporary activated links because
+        // stability timeout could be exceeded for them by a reason that, for example,
+        // the packets come with the past sequences (as they are being synchronized
+        // the sequence per being IDLE and empty buffer), so a large portion of initial
+        // series of packets may come with past sequence, delaying this way with ACK,
+        // which may result not only with exceeded stability timeout (which fortunately
+        // isn't being measured in this case), but also with receiveing keepalive
+        // (therefore we also don't reset the link to IDLE in the temporary activation period).
+        if (gli->sndstate == SRT_GST_RUNNING && is_zero(gli->ps->core().m_tsTmpActiveTime))
+        {
+            gli->sndstate = SRT_GST_IDLE;
+            HLOGC(gmlog.Debug, log << "GROUP: received KEEPALIVE in @" << gli->id << " active=PAST - link turning snd=IDLE");
+        }
     }
 }
 
