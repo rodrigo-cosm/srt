@@ -1470,11 +1470,10 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
             retval = -1;
             break;
         }
-
         HLOGC(aclog.Debug, log << "groupConnect: first connection, applying EPOLL WAITING.");
         int len = spawned.size();
         vector<SRTSOCKET> ready(spawned.size());
-        int estat = srt_epoll_wait(eid,
+        const int estat = srt_epoll_wait(eid,
                     NULL, NULL,  // IN/ACCEPT
                     &ready[0], &len, // OUT/CONNECT
                     -1, // indefinitely (FIXME Check if it needs to REGARD CONNECTION TIMEOUT!)
@@ -1520,7 +1519,6 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
                 srt_epoll_remove_usock(eid, sid);
                 srt_epoll_remove_usock(g.m_SndEID, sid);
                 srt_epoll_remove_usock(g.m_RcvEID, sid);
-
             }
         }
 
@@ -1587,7 +1585,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
     // Finished, delete epoll.
     if (eid != -1)
     {
-        HLOGC(aclog.Debug, log << "connect FIRST IN THE GROUP finished, removing EID " << eid);
+        HLOGC(aclog.Debug, log << "connect FIRST IN THE GROUP finished, removing E" << eid);
         srt_epoll_release(eid);
     }
 
@@ -1643,8 +1641,19 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
        // -> pthread_create(...C(Snd|Rcv)Queue::worker...)
        s->m_Status = SRTS_OPENED;
    }
-   else if (s->m_Status != SRTS_OPENED)
-      throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
+   else
+   {
+       if (s->m_Status != SRTS_OPENED)
+           throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
+
+       // status = SRTS_OPENED, so family should be known already.
+       if (target_addr.family() != s->m_SelfAddr.family())
+       {
+           LOGP(mglog.Error, "srt_connect: socket is bound to a different family than target address");
+           throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+       }
+   }
+
 
    // connect_complete() may be called before connect() returns.
    // So we need to update the status before connect() is called,
@@ -2164,12 +2173,16 @@ int CUDTUnited::epoll_remove_entity(const int eid, EntityType* ent)
     HLOGC(ealog.Debug, log << "epoll_remove_usock: CLEARING readiness on E" << eid << " of @" << ent->id());
     ent->removeEPollEvents(eid);
 
+    // First remove the EID from the subscribed in the socket so that
+    // a possible call to update_events:
+    // - if happens before this call, can find the epoll bit update possible
+    // - if happens after this call, will not strike this EID
+    HLOGC(ealog.Debug, log << "epoll_remove_usock: REMOVING E" << eid << " from back-subscirbers in @" << ent->id());
+    ent->removeEPollID(eid);
+
     HLOGC(ealog.Debug, log << "epoll_remove_usock: CLEARING subscription on E" << eid << " of @" << ent->id());
     int no_events = 0;
     int ret = m_EPoll.update_usock(eid, ent->id(), &no_events);
-
-    HLOGC(ealog.Debug, log << "epoll_remove_usock: REMOVING E" << eid << " from back-subscirbers in @" << ent->id());
-    ent->removeEPollID(eid);
 
     return ret;
 }
@@ -2528,6 +2541,7 @@ void CUDTUnited::updateMux(
                s->m_pUDT->m_pSndQueue = i->second.m_pSndQueue;
                s->m_pUDT->m_pRcvQueue = i->second.m_pRcvQueue;
                s->m_iMuxID = i->second.m_iID;
+               s->m_SelfAddr.family(addr.family());
                return;
             }
          }
@@ -2588,6 +2602,7 @@ void CUDTUnited::updateMux(
    sockaddr_any sa;
    m.m_pChannel->getSockAddr((sa));
    m.m_iPort = sa.hport();
+   s->m_SelfAddr = sa; // Will be also completed later, but here it's needed for later checks
 
    m.m_pTimer = new CTimer;
 

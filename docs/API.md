@@ -621,6 +621,14 @@ will be 10 times the value set with `SRTO_CONNTIMEO`.
 
 | OptName           | Since | Binding | Type      | Units  | Default  | Range  | Dir | Entity |
 | ----------------- | ----- | ------- | --------- | ------ | -------- | ------ | --- | ------ |
+| `SRTO_DRIFTTRACER`| 1.5.0 | post    | `bool`    |        | true     |        | RW  | GSD    |
+
+- Enables or disables time drift tracer (receiver).
+
+---
+
+| OptName           | Since | Binding | Type      | Units  | Default  | Range  | Dir | Entity |
+| ----------------- | ----- | ------- | --------- | ------ | -------- | ------ | --- | ------ |
 | `SRTO_EVENT`      |       |         | `int32_t` | flags  |          |        | R   | S      |
 
 - Returns bit flags set according to the current active events on the socket. 
@@ -1243,9 +1251,9 @@ procedure of `srt_bind` and then `srt_connect` (or `srt_rendezvous`) to one aoth
 
 ---
 
-| OptName                         | Since | Binding | Type   | Units  | Default | Range  | Dir | Entity |
-| ------------------------------- | ----- | ------- | ------ | ------ | ------- | ------ | --- | ------ |
-| `SRTO_RETRANSMISSION_ALGORITHM` | 1.5.0 | pre     | `int`  |        | 0       | [0, 1] | W   | GSD    |
+| OptName               | Since | Binding | Type   | Units  | Default | Range  | Dir | Entity |
+| --------------------- | ----- | ------- | ------ | ------ | ------- | ------ | --- | ------ |
+| `SRTO_RETRANSMITALGO` | 1.5.0 | pre     | `int`  |        | 0       | [0, 1] | W   | GSD    |
 
 - Retransmission algorithm to use (SENDER option):
    - 0 - Default (retranmsit on every loss report).

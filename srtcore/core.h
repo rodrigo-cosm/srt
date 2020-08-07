@@ -124,7 +124,7 @@ enum AckDataItem
 };
 const size_t ACKD_FIELD_SIZE = sizeof(int32_t);
 
-static const size_t SRT_SOCKOPT_NPOST = 11;
+static const size_t SRT_SOCKOPT_NPOST = 12;
 extern const SRT_SOCKOPT srt_post_opt_list [];
 
 enum GroupDataItem
@@ -1546,6 +1546,7 @@ private: // Identification
     bool m_bRendezvous;                          // Rendezvous connection mode
 
     duration m_tdConnTimeOut;    // connect timeout in milliseconds
+    bool m_bDriftTracer;
     int m_iSndTimeOut;                           // sending timeout in milliseconds
     int m_iRcvTimeOut;                           // receiving timeout in milliseconds
     bool m_bReuseAddr;                           // reuse an exiting port or not, for UDP multiplexer
@@ -1577,7 +1578,7 @@ private: // Identification
     std::string m_sStreamName;
     int m_iOPT_PeerIdleTimeout;      // Timeout for hearing anything from the peer.
     uint32_t m_uOPT_StabilityTimeout;
-    int m_iOPT_RexmitAlgo;
+    int m_iOPT_RetransmitAlgo;
 
     int m_iTsbPdDelay_ms;                           // Rx delay to absorb burst in milliseconds
     int m_iPeerTsbPdDelay_ms;                       // Tx delay that the peer uses to absorb burst in milliseconds
