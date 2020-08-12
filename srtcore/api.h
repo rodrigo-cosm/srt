@@ -69,7 +69,7 @@ modified by
 
 class CUDT;
 
-class CUDTSocket
+class CUDTSocket: public srt::EventEntity
 {
 public:
    CUDTSocket()
@@ -90,7 +90,9 @@ public:
        construct();
    }
 
-   ~CUDTSocket();
+   virtual ~CUDTSocket();
+
+   virtual srt::EventHandler* getEventHandler() ATR_OVERRIDE;
 
    void construct();
 
@@ -157,9 +159,12 @@ public:
 
    // Instrumentally used by select() and also required for non-blocking
    // mode check in groups
-   bool readReady();
-   bool writeReady();
-   bool broken();
+   bool readReady() const ;
+   bool writeReady() const;
+   bool broken() const;
+
+   SRT_EV_OPT getEventFlags() const ATR_OVERRIDE;
+   SRTU_PROPERTY_RW_CHAIN(CUDTSocket, SRTSOCKET, id, m_SocketID);
 
 private:
    CUDTSocket(const CUDTSocket&);
@@ -167,6 +172,9 @@ private:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+
+// fwd
+namespace srt { class EventHandler; }
 
 class CUDTUnited
 {
@@ -372,6 +380,9 @@ private:
    void removeSocket(const SRTSOCKET u);
 
    CEPoll m_EPoll;                                     // handling epoll data structures and events
+
+   srt::EventEntity* getEventEntity(SRTSOCKET s);
+   srt::EventHandler* getEventHandler(SRTSOCKET s);
 
 private:
    CUDTUnited(const CUDTUnited&);

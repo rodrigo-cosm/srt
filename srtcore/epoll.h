@@ -352,6 +352,7 @@ class CEPoll
 friend class CUDT;
 friend class CUDTGroup;
 friend class CRendezvousQueue;
+friend class SrtEPollEventHandler;
 
 public:
    CEPoll();
@@ -483,6 +484,38 @@ private:
    std::map<int, CEPollDesc> m_mPolls;       // all epolls
    srt::sync::Mutex m_EPollLock;
 };
+
+
+class SrtEPollEventHandler: public srt::EventHandler
+{
+    srt::EventEntity* m_parent;
+    std::set<int> m_sPollID;                     // set of epoll ID to trigger
+    CEPoll& m_EPoll;
+
+    ATR_CONSTEXPR SRT_EPOLL_OPT epollfor(const SRT_EV_OPT ev)
+    {
+        const int special = ev & SRT_EV_UPDATE;
+        if (special)
+            return SRT_EPOLL_OPT(special);
+        return SRT_EPOLL_OPT(int(ev));
+    }
+
+public:
+    SrtEPollEventHandler(srt::EventEntity* ps, CEPoll& ep): m_parent(ps), m_EPoll(ep) {}
+
+    void addEPoll(const int eid);
+    void removeEPollEvents(const int eid);
+    void removeEPollID(const int eid);
+    int remove_entity(const int eid);
+
+    void update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state) ATR_OVERRIDE;
+    void commit_handler(SRTSOCKET) ATR_OVERRIDE;
+
+    std::string displayHandler() { return Printable(m_sPollID); }
+
+    void close(SRTSOCKET) ATR_OVERRIDE;
+};
+
 
 #if ENABLE_HEAVY_LOGGING
 std::string DisplayEpollResults(const std::map<SRTSOCKET, int>& sockset);

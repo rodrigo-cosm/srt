@@ -60,6 +60,7 @@ modified by
 #include "queue.h"
 #include "api.h"
 #include "core.h"
+#include "epoll.h"
 #include "logging.h"
 #include "crypto.h"
 #include "logging_api.h" // Required due to containing extern srt_logger_config
@@ -212,6 +213,10 @@ void CUDT::construct()
 
     // Default: 
     m_cbPacketArrival.set(this, &CUDT::defaultPacketArrival);
+
+    // To maintain the backward compatibility, set the default
+    // event handler as internal epoll.
+    m_pEventHandler.reset(new SrtEPollEventHandler(m_parent, s_UDTUnited.m_EPoll));
 }
 
 CUDT::CUDT(CUDTSocket* parent): m_parent(parent)
@@ -5159,7 +5164,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
     s->m_Status = SRTS_CONNECTED;
 
     // acknowledde any waiting epolls to write
-    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_CONNECT, true);
+    m_pEventHandler->update(m_SocketID, SRT_EV_CONNECT, true);
 
     {
         CGuard cl (s_UDTUnited.m_GlobControlLock);
@@ -5191,7 +5196,7 @@ void CUDTGroup::setFreshConnected(CUDTSocket* sock)
     if (!m_bConnected)
     {
         // Switch to connected state and give appropriate signal
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_CONNECT, true);
+        m_pEventHandler->update(id(), SRT_EV_CONNECT, true);
         m_bConnected = true;
     }
 }
@@ -5718,7 +5723,7 @@ void *CUDT::tsbpd(void *param)
             /*
              * Set EPOLL_IN to wakeup any thread waiting on epoll
              */
-            self->s_UDTUnited.m_EPoll.update_events(self->m_SocketID, self->m_sPollID, SRT_EPOLL_IN, true);
+            self->m_pEventHandler->update(self->m_SocketID, SRT_EV_READ, true, SRT_EVS_SCHEDULE);
             if (self->m_parent->m_IncludedGroup)
             {
                 // The current "APP reader" needs to simply decide as to whether
@@ -5726,7 +5731,11 @@ void *CUDT::tsbpd(void *param)
                 // When the group is read-ready, it should update its pollers as it sees fit.
                 self->m_parent->m_IncludedGroup->updateReadState(self->m_SocketID, current_pkt_seq);
             }
-            CGlobEvent::triggerEvent();
+            else
+            {
+                // CUDTGroup::updateReadState will commit by itself
+                self->m_pEventHandler->commit(self->m_SocketID);
+            }
             tsbpdtime = steady_clock::time_point();
         }
 
@@ -6276,28 +6285,12 @@ bool CUDT::closeInternal()
      * it would remove the socket from the EPoll after close.
      */
     // trigger any pending IO events.
-    HLOGC(dlog.Debug, log << "close: SETTING ERR readiness on E" << Printable(m_sPollID) << " of @" << m_SocketID);
-    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_ERR, true);
+    HLOGC(dlog.Debug, log << "close: SETTING ERR readiness on EIDS " << m_pEventHandler->displayHandler() << " of @" << m_SocketID);
+    m_pEventHandler->update(m_SocketID, SRT_EV_ERROR, true);
     // then remove itself from all epoll monitoring
     try
     {
-        int no_events = 0;
-        for (set<int>::iterator i = m_sPollID.begin(); i != m_sPollID.end(); ++i)
-        {
-            HLOGC(dlog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of @" << m_SocketID);
-            s_UDTUnited.m_EPoll.update_usock(*i, m_SocketID, &no_events);
-            HLOGC(dlog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of @" << m_SocketID);
-        }
-
-        // Not deleting elements from m_sPollID inside the loop because it invalidates
-        // the control iterator of the loop. Instead, all will be removed at once.
-
-        // IMPORTANT: there's theoretically little time between setting ERR readiness
-        // and unsubscribing, however if there's an application waiting on this event,
-        // it should be informed before this below instruction locks the epoll mutex.
-        enterCS(s_UDTUnited.m_EPoll.m_EPollLock);
-        m_sPollID.clear();
-        leaveCS(s_UDTUnited.m_EPoll.m_EPollLock);
+        m_pEventHandler->close(m_SocketID);
     }
     catch (...)
     {
@@ -6484,7 +6477,7 @@ int CUDT::receiveBuffer(char *data, int len)
     if (!m_pRcvBuffer->isRcvDataReady())
     {
         // read is not available any more
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
+        m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
     }
 
     if ((res <= 0) && (m_iRcvTimeOut >= 0))
@@ -6839,7 +6832,7 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
         if (sndBuffersLeft() < 1) // XXX Not sure if it should test if any space in the buffer, or as requried.
         {
             // write is not available any more
-            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, false);
+            m_pEventHandler->update(m_SocketID, SRT_EV_WRITE, false);
         }
     }
 
@@ -6957,7 +6950,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
         if (!m_pRcvBuffer->isRcvDataReady())
         {
             // read is not available any more
-            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
+            m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
         }
 
         if (res == 0)
@@ -6998,7 +6991,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
             }
 
             // Shut up EPoll if no more messages in non-blocking mode
-            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
+            m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
             // Forced to return 0 instead of throwing exception, in case of AGAIN/READ
             if (!by_exception)
                 return 0;
@@ -7019,7 +7012,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
             }
 
             // Shut up EPoll if no more messages in non-blocking mode
-            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
+            m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
 
             // After signaling the tsbpd for ready data, report the bandwidth.
 #if ENABLE_HEAVY_LOGGING
@@ -7136,7 +7129,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
         }
 
         // Shut up EPoll if no more messages in non-blocking mode
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
+        m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
     }
 
     // Unblock when required
@@ -7262,7 +7255,7 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
             if (sndBuffersLeft() <= 0)
             {
                 // write is not available any more
-                s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, false);
+                m_pEventHandler->update(m_SocketID, SRT_EV_WRITE, false);
             }
         }
 
@@ -7386,7 +7379,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
     if (!m_pRcvBuffer->isRcvDataReady())
     {
         // read is not available any more
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
+        m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
     }
 
     return size - torecv;
@@ -7948,7 +7941,7 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
                     CSync::lock_signal(m_RecvDataCond, m_RecvDataLock);
                 }
                 // acknowledge any waiting epolls to read
-                s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, true);
+                m_pEventHandler->update(m_SocketID, SRT_EV_READ, true, SRT_EVS_SCHEDULE);
                 if (m_parent->m_IncludedGroup)
                 {
                     // The current "APP reader" needs to simply decide as to whether
@@ -7956,7 +7949,10 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
                     // When the group is read-ready, it should update its pollers as it sees fit.
                     m_parent->m_IncludedGroup->updateReadState(m_SocketID, first_seq);
                 }
-                CGlobEvent::triggerEvent();
+                else
+                {
+                    m_pEventHandler->commit(m_SocketID);
+                }
             }
             enterCS(m_RcvBufferLock);
         }
@@ -8210,8 +8206,7 @@ void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
         m_pSndBuffer->ackData(offset);
 
         // acknowledde any waiting epolls to write
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, true);
-        CGlobEvent::triggerEvent();
+        m_pEventHandler->update(m_SocketID, SRT_EV_WRITE, true);
     }
 
     // insert this socket to snd list if it is not on the list yet
@@ -8767,9 +8762,7 @@ void CUDT::processCtrl(const CPacket &ctrlpkt)
         // Signal the sender and recver if they are waiting for data.
         releaseSynch();
         // Unblock any call so they learn the connection_broken error
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_ERR, true);
-
-        CGlobEvent::triggerEvent();
+        m_pEventHandler->update(m_SocketID, SRT_EV_ERROR, true);
 
         break;
 
@@ -9342,10 +9335,8 @@ void CUDT::processClose()
     // Signal the sender and recver if they are waiting for data.
     releaseSynch();
     // Unblock any call so they learn the connection_broken error
-    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_ERR, true);
-
     HLOGP(mglog.Debug, "processClose: triggering timer event to spread the bad news");
-    CGlobEvent::triggerEvent();
+    m_pEventHandler->update(m_SocketID, SRT_EV_ERROR, true);
 }
 
 void CUDT::sendLossReport(const std::vector<std::pair<int32_t, int32_t> > &loss_seqs)
@@ -10689,7 +10680,7 @@ int CUDT::processConnectRequest(const sockaddr_any& addr, CPacket& packet)
             // a new connection has been created, enable epoll for write
            HLOGC(mglog.Debug, log << "processConnectRequest: @" << m_SocketID
                    << " connected, setting epoll to connect:");
-           s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_CONNECT, true);
+           m_pEventHandler->update(m_SocketID, SRT_EV_CONNECT, true);
         }
     }
     LOGC(mglog.Note, log << "listen ret: " << hs.m_iReqType << " - " << RequestTypeStr(hs.m_iReqType));
@@ -10856,9 +10847,7 @@ bool CUDT::checkExpTimer(const steady_clock::time_point& currtime, int check_rea
         releaseSynch();
 
         // app can call any UDT API to learn the connection_broken error
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
-
-        CGlobEvent::triggerEvent();
+        m_pEventHandler->update(m_SocketID, SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
 
         return true;
     }
@@ -11008,112 +10997,6 @@ void CUDT::checkTimers()
         }
         HLOGP(mglog.Debug, "KEEPALIVE");
     }
-}
-
-void CUDT::addEPoll(const int eid)
-{
-    enterCS(s_UDTUnited.m_EPoll.m_EPollLock);
-    m_sPollID.insert(eid);
-    leaveCS(s_UDTUnited.m_EPoll.m_EPollLock);
-
-    if (!stillConnected())
-        return;
-
-    enterCS(m_RecvLock);
-    if (m_pRcvBuffer->isRcvDataReady())
-    {
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, true);
-    }
-    leaveCS(m_RecvLock);
-
-    if (m_iSndBufSize > m_pSndBuffer->getCurrBufSize())
-    {
-        s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_OUT, true);
-    }
-}
-
-void CUDT::removeEPollEvents(const int eid)
-{
-    // clear IO events notifications;
-    // since this happens after the epoll ID has been removed, they cannot be set again
-    set<int> remove;
-    remove.insert(eid);
-    s_UDTUnited.m_EPoll.update_events(m_SocketID, remove, SRT_EPOLL_IN | SRT_EPOLL_OUT, false);
-}
-
-void CUDT::removeEPollID(const int eid)
-{
-    enterCS(s_UDTUnited.m_EPoll.m_EPollLock);
-    m_sPollID.erase(eid);
-    leaveCS(s_UDTUnited.m_EPoll.m_EPollLock);
-}
-
-void CUDTGroup::addEPoll(int eid)
-{
-   enterCS(m_pGlobal->m_EPoll.m_EPollLock);
-   m_sPollID.insert(eid);
-   leaveCS(m_pGlobal->m_EPoll.m_EPollLock);
-
-   bool any_read = false;
-   bool any_write = false;
-   bool any_broken = false;
-   bool any_pending = false;
-
-   {
-       // Check all member sockets
-       CGuard gl (m_GroupLock);
-
-       // We only need to know if there is any socket that is
-       // ready to get a payload and ready to receive from.
-
-       for (gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
-       {
-           if (i->sndstate == SRT_GST_IDLE || i->sndstate == SRT_GST_RUNNING)
-           {
-               any_write |= i->ps->writeReady();
-           }
-
-           if (i->rcvstate == SRT_GST_IDLE || i->rcvstate == SRT_GST_RUNNING)
-           {
-               any_read |= i->ps->readReady();
-           }
-
-           if (i->ps->broken())
-               any_broken |= true;
-           else
-               any_pending |= true;
-       }
-   }
-
-   // This is stupid, but we don't have any other interface to epoll
-   // internals. Actually we don't have to check if id() is in m_sPollID
-   // because we know it is, as we just added it. But it's not performance
-   // critical, sockets are not being often added during transmission.
-   if (any_read)
-       m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, true);
-
-   if (any_write)
-       m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, true);
-
-   // Set broken if none is non-broken (pending, read-ready or write-ready)
-   if (any_broken && !any_pending)
-       m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
-}
-
-void CUDTGroup::removeEPollEvents(const int eid)
-{
-   // clear IO events notifications;
-   // since this happens after the epoll ID has been removed, they cannot be set again
-   set<int> remove;
-   remove.insert(eid);
-   m_pGlobal->m_EPoll.update_events(id(), remove, SRT_EPOLL_IN | SRT_EPOLL_OUT, false);
-}
-
-void CUDTGroup::removeEPollID(const int eid)
-{
-   enterCS(m_pGlobal->m_EPoll.m_EPollLock);
-   m_sPollID.erase(eid);
-   leaveCS(m_pGlobal->m_EPoll.m_EPollLock);
 }
 
 void CUDT::ConnectSignal(ETransmissionEvent evt, EventSlot sl)
@@ -11395,6 +11278,10 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     setupCond(m_RcvDataCond, "RcvData");
     m_RcvEID = m_pGlobal->m_EPoll.create(&m_RcvEpolld);
     m_SndEID = m_pGlobal->m_EPoll.create(&m_SndEpolld);
+
+    // To maintain the backward compatibility, set the default
+    // event handler as internal epoll.
+    m_pEventHandler.reset(new SrtEPollEventHandler(this, m_pGlobal->m_EPoll));
 
     // Configure according to type
     switch (gtype)
@@ -12397,7 +12284,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     if (was_blocked)
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
         if (!m_bSynSending)
         {
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
@@ -12515,8 +12402,8 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     if (none_succeeded)
     {
         HLOGC(dlog.Debug, log << "grp/sendBroadcast: all links broken (none succeeded to send a payload)");
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+        m_pEventHandler->update(id(), SRT_EV_ERROR, true);
         // Reparse error code, if set.
         // It might be set, if the last operation was failed.
         // If any operation succeeded, this will not be executed anyway.
@@ -12581,7 +12468,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     if (!ready_again)
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
     }
 
     return rstat;
@@ -12764,14 +12651,14 @@ void CUDTGroup::updateReadState(SRTSOCKET /* not sure if needed */, int32_t sequ
 
     if (ready)
     {
-         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, true);
+         m_pEventHandler->update(id(), SRT_EV_READ, true);
     }
 }
 
 void CUDTGroup::updateWriteState()
 {
     CGuard lg (m_GroupLock);
-    m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, true);
+    m_pEventHandler->update(id(), SRT_EV_WRITE, true);
 }
 
 // The "app reader" version of the reading function.
@@ -12823,7 +12710,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
 
                 // We predict to have only one packet ahead, others are pending to be reported by tsbpd.
                 // This will be "re-enabled" if the later check puts any new packet into ahead.
-                m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
+                m_pEventHandler->update(id(), SRT_EV_READ, false);
 
                 return len;
             }
@@ -13253,7 +13140,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             // All broken
             HLOGC(dlog.Debug, log << "group/recv: All sockets broken");
-            m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+            m_pEventHandler->update(id(), SRT_EV_ERROR, true);
 
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
         }
@@ -13289,7 +13176,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
             {
                 // Don't clear the read-readinsess state if you have a packet ahead because
                 // if you have, the next read call will return it.
-                m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
+                m_pEventHandler->update(id(), SRT_EV_READ, false);
             }
 
             HLOGC(dlog.Debug, log << "group/recv: successfully extracted packet size=" << output_size << " - returning");
@@ -13394,7 +13281,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
                 {
                     // Don't clear the read-readinsess state if you have a packet ahead because
                     // if you have, the next read call will return it.
-                    m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
+                    m_pEventHandler->update(id(), SRT_EV_READ, false);
                 }
                 return len;
             }
@@ -14075,8 +13962,8 @@ void CUDTGroup::sendBackup_CheckParallelLinks(const size_t nunstable, vector<gli
     if (w_parallel.empty() && !nunstable)
     {
         // XXX FILL THE TABLE
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+        m_pEventHandler->update(id(), SRT_EV_ERROR, true);
 
         if (m_SndEpolld->watch_empty())
         {
@@ -14158,8 +14045,8 @@ RetryWaitBlocked:
             LOGC(dlog.Error, log << "grp/sendBackup: swait=>" << brdy
                     << " nlinks=" << nlinks << " ndead=" << ndead
                     << " - looxlike all links broken");
-            m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-            m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+            m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+            m_pEventHandler->update(id(), SRT_EV_ERROR, true);
             // You can safely throw here - nothing to fill in when all sockets down.
             // (timeout was reported by exception in the swait call).
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -14571,8 +14458,8 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
     if (none_succeeded)
     {
         HLOGC(dlog.Debug, log << "grp/sendBackup: all links broken (none succeeded to send a payload)");
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+        m_pEventHandler->update(id(), SRT_EV_ERROR, true);
         // Reparse error code, if set.
         // It might be set, if the last operation was failed.
         // If any operation succeeded, this will not be executed anyway.
@@ -14628,7 +14515,7 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
 
     if (!ready_again)
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
     }
 
     HLOGC(dlog.Debug, log << "grp/sendBackup: successfully sent " << final_stat << " bytes, "
@@ -14869,3 +14756,63 @@ int CUDTGroup::configure(const char* str)
 
     return 0;
 }
+
+SRT_EV_OPT CUDTGroup::getEventFlags() const
+{
+    bool any_read = false;
+    bool any_write = false;
+    bool any_broken = false;
+    bool any_pending = false;
+    bool any_connected = false;
+
+    {
+        // Check all member sockets
+        CGuard gl (m_GroupLock);
+
+        // We only need to know if there is any socket that is
+        // ready to get a payload and ready to receive from.
+
+        for (const_gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
+        {
+            if (i->sndstate == SRT_GST_IDLE || i->sndstate == SRT_GST_RUNNING)
+            {
+                any_write |= i->ps->writeReady();
+                any_connected = true;
+            }
+
+            if (i->rcvstate == SRT_GST_IDLE || i->rcvstate == SRT_GST_RUNNING)
+            {
+                any_read |= i->ps->readReady();
+                any_connected = true;
+            }
+
+            if (i->ps->broken())
+                any_broken |= true;
+            else
+                any_pending |= true;
+        }
+    }
+
+    SRT_EV_OPT opt = SRT_EV_NONE;
+
+    // This is stupid, but we don't have any other interface to epoll
+    // internals. Actually we don't have to check if id() is in m_sPollID
+    // because we know it is, as we just added it. But it's not performance
+    // critical, sockets are not being often added during transmission.
+    if (any_read)
+        opt |= SRT_EV_READ;
+
+    if (any_write)
+        opt |= SRT_EV_WRITE;
+
+    if (any_connected)
+        opt |= SRT_EV_CONNECT;
+
+    // Set broken if none is non-broken (pending, read-ready or write-ready)
+    if (any_broken && !any_pending)
+        opt |= SRT_EV_ERROR;
+
+    return opt;
+}
+
+

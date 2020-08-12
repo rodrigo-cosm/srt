@@ -599,6 +599,21 @@ enum SRT_KM_STATE
     SRT_KM_S_BADSECRET = 4       //Stream encrypted and wrong secret, cannot decrypt Keying Material
 };
 
+// [[flags]]
+enum SRT_EV_OPT
+{
+    SRT_EV_NONE = 0,
+    SRT_EV_READ = 0x1,
+    SRT_EV_WRITE = 0x4,
+    SRT_EV_ERROR = 0x8,
+    SRT_EV_UPDATE = 0x10,
+
+    SRT_EV_ACCEPT  = 0x11, // = UPDATE | READ
+    SRT_EV_CONNECT = 0x14, // = UPDATE | WRITE
+};
+
+enum SRT_EVS_METHOD { SRT_EVS_SCHEDULE, SRT_EVS_COMMIT };
+
 enum SRT_EPOLL_OPT
 {
    SRT_EPOLL_OPT_NONE = 0x0, // fallback
@@ -682,23 +697,6 @@ enum SRT_EPOLL_FLAGS
     /// state is reported only as a number of ready sockets from return value.
     SRT_EPOLL_ENABLE_OUTPUTCHECK = 2
 };
-
-#ifdef __cplusplus
-// In C++ these enums cannot be treated as int and glued by operator |.
-// Unless this operator is defined.
-inline SRT_EPOLL_OPT operator|(SRT_EPOLL_OPT a1, SRT_EPOLL_OPT a2)
-{
-    return SRT_EPOLL_OPT( (int)a1 | (int)a2 );
-}
-
-inline bool operator&(int flags, SRT_EPOLL_OPT eflg)
-{
-    // Using an enum prevents treating int automatically as enum,
-    // requires explicit enum to be passed here, and minimizes the
-    // risk that the right side value will contain multiple flags.
-    return (flags & int(eflg)) != 0;
-}
-#endif
 
 
 
@@ -947,5 +945,77 @@ SRT_API int64_t srt_connection_time(SRTSOCKET sock);
 #ifdef __cplusplus
 }
 #endif
+
+// This section needs to be moved out of extern "C"
+
+#ifdef __cplusplus
+// In C++ these enums cannot be treated as int and glued by operator |.
+// Unless this operator is defined.
+inline SRT_EV_OPT operator|(SRT_EV_OPT a1, SRT_EV_OPT a2)
+{
+    return SRT_EV_OPT( (int)a1 | (int)a2 );
+}
+
+inline void operator|=(SRT_EV_OPT& a1, SRT_EV_OPT a2)
+{
+    a1 = SRT_EV_OPT(a1 | a2);
+}
+
+inline SRT_EPOLL_OPT operator|(SRT_EPOLL_OPT a1, SRT_EPOLL_OPT a2)
+{
+    return SRT_EPOLL_OPT( (int)a1 | (int)a2 );
+}
+
+namespace srt
+{
+
+class EventEntity
+{
+public:
+    virtual SRTSOCKET id() const = 0;
+    virtual SRT_EV_OPT getEventFlags() const = 0;
+    virtual class EventHandler* getEventHandler() = 0;
+};
+
+EventEntity* getEventEntity(SRTSOCKET sid);
+
+class EventHandler
+{
+protected:
+    virtual void update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state) = 0;
+    virtual void commit_handler(SRTSOCKET) {}
+
+public:
+
+    virtual void close(SRTSOCKET) = 0;
+
+    // For logging/debugging purposes
+    virtual std::string displayHandler() { return std::string(); }
+
+public:
+    void update(SRTSOCKET sid, const SRT_EV_OPT et, bool state, const SRT_EVS_METHOD method = SRT_EVS_COMMIT)
+    {
+        update_handler(sid, et, state);
+        if (state && method == SRT_EVS_COMMIT)
+            commit_handler(sid);
+    }
+    void commit(SRTSOCKET sid) { commit_handler(sid); }
+
+    template<typename TargetEventHandler>
+    static TargetEventHandler* get(SRTSOCKET u)
+    {
+        EventEntity* ent = getEventEntity(u);
+        if (!ent)
+            return 0;
+
+        EventHandler* eh = ent->getEventHandler();
+        return eh ? dynamic_cast<TargetEventHandler*>(eh) : 0;
+    }
+};
+
+}
+
+#endif
+
 
 #endif

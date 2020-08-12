@@ -106,6 +106,10 @@ CUDTSocket::~CUDTSocket()
    releaseMutex(m_ControlLock);
 }
 
+srt::EventHandler* CUDTSocket::getEventHandler()
+{
+    return m_pUDT->getEventHandler();
+}
 
 SRT_SOCKSTATUS CUDTSocket::getStatus()
 {
@@ -144,10 +148,14 @@ void CUDTSocket::makeClosed()
     m_tsClosureTimeStamp = steady_clock::now();
 }
 
-bool CUDTSocket::readReady()
+bool CUDTSocket::readReady() const
 {
-    if (m_pUDT->m_bConnected && m_pUDT->m_pRcvBuffer->isRcvDataReady())
-        return true;
+    {
+        CGuard lock(m_pUDT->m_RecvLock);
+        if (m_pUDT->m_bConnected && m_pUDT->m_pRcvBuffer->isRcvDataReady())
+            return true;
+    }
+
     if (m_pUDT->m_bListening)
     {
         return m_pQueuedSockets->size() > 0;
@@ -156,16 +164,58 @@ bool CUDTSocket::readReady()
     return broken();
 }
 
-bool CUDTSocket::writeReady()
+bool CUDTSocket::writeReady() const
 {
     return (m_pUDT->m_bConnected
                 && (m_pUDT->m_pSndBuffer->getCurrBufSize() < m_pUDT->m_iSndBufSize))
         || broken();
 }
 
-bool CUDTSocket::broken()
+bool CUDTSocket::broken() const
 {
     return m_pUDT->m_bBroken || !m_pUDT->m_bConnected;
+}
+
+SRT_EV_OPT CUDTSocket::getEventFlags() const
+{
+    SRT_EV_OPT opt = SRT_EV_NONE;
+
+    // Listener sockets can be only reported ready to accept or broken.
+    if (m_pUDT->m_bListening)
+    {
+        if (m_pQueuedSockets->size() > 0)
+            opt |= SRT_EV_ACCEPT;
+
+        if (broken())
+            opt |= SRT_EV_ERROR;
+
+        return opt;
+    }
+
+    if (m_pUDT->stillConnected())
+    {
+        opt |= SRT_EV_CONNECT;
+    }
+
+    {
+        CGuard lock(m_pUDT->m_RecvLock);
+        if (m_pUDT->m_bConnected && m_pUDT->m_pRcvBuffer->isRcvDataReady())
+            opt |= SRT_EV_READ;
+    }
+
+
+    if (m_pUDT->m_bConnected
+                && (m_pUDT->m_pSndBuffer->getCurrBufSize() < m_pUDT->m_iSndBufSize))
+    {
+        opt |= SRT_EV_WRITE;
+    }
+
+    if (broken())
+    {
+        opt |= SRT_EV_ERROR;
+    }
+
+    return opt;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -741,7 +791,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
       HLOGC(mglog.Debug, log << "ACCEPT: new socket @" << ns->m_SocketID << " submitted for acceptance");
       // acknowledge users waiting for new connections on the listening socket
-      m_EPoll.update_events(listen, ls->m_pUDT->m_sPollID, SRT_EPOLL_ACCEPT, true);
+       ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_ACCEPT, true);
 
       CGlobEvent::triggerEvent();
 
@@ -765,7 +815,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
       // acknowledge INTERNAL users waiting for new connections on the listening socket
       // that are reported when a new socket is connected within an already connected group.
-      m_EPoll.update_events(listen, ls->m_pUDT->m_sPollID, SRT_EPOLL_UPDATE, true);
+       ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_UPDATE, true);
       CGlobEvent::triggerEvent();
    }
 
@@ -1061,7 +1111,7 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* pw_addr, int* pw_
            accept_sync.wait();
 
        if (ls->m_pQueuedSockets->empty())
-           m_EPoll.update_events(listen, ls->m_pUDT->m_sPollID, SRT_EPOLL_ACCEPT, false);
+            ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_ACCEPT, false);
    }
 
    if (u == CUDT::INVALID_SOCK)
@@ -2043,31 +2093,57 @@ int CUDTUnited::epoll_clear_usocks(int eid)
     return m_EPoll.clear_usocks(eid);
 }
 
+srt::EventHandler* CUDT::getEventHandler(SRTSOCKET s)
+{
+    return s_UDTUnited.getEventHandler(s);
+}
+
+srt::EventEntity* CUDT::getEventEntity(SRTSOCKET s)
+{
+    return s_UDTUnited.getEventEntity(s);
+}
+
+srt::EventEntity* CUDTUnited::getEventEntity(SRTSOCKET u)
+{
+    if (u & SRTGROUP_MASK)
+    {
+        CUDTGroup* g = locateGroup(u);
+        return g;
+    }
+
+    return locateSocket(u);
+}
+
+srt::EventHandler* CUDTUnited::getEventHandler(SRTSOCKET u)
+{
+    if (u & SRTGROUP_MASK)
+    {
+        CUDTGroup* g = locateGroup(u);
+        if (!g)
+            return NULL;
+
+        return g->getEventHandler();
+    }
+
+    CUDTSocket* s = locateSocket(u);
+    if (!s)
+        return NULL;
+
+    return s->m_pUDT->getEventHandler();
+}
+
 int CUDTUnited::epoll_add_usock(
    const int eid, const SRTSOCKET u, const int* events)
 {
    int ret = -1;
-   if (u & SRTGROUP_MASK)
-   {
-      CUDTGroup* g = locateGroup(u);
-      if (!g)
-         throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-      ret = m_EPoll.update_usock(eid, u, events);
-      g->addEPoll(eid);
-      return 0;
-   }
+   SrtEPollEventHandler* eh = srt::EventHandler::get<SrtEPollEventHandler>(u);
 
-   CUDTSocket* s = locateSocket(u);
-   if (s)
-   {
-      ret = m_EPoll.update_usock(eid, u, events);
-      s->m_pUDT->addEPoll(eid);
-   }
-   else
-   {
+   if (!eh)
       throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
-   }
+
+   ret = m_EPoll.update_usock(eid, u, events);
+   eh->addEPoll(eid);
 
    return ret;
 }
@@ -2081,19 +2157,7 @@ int CUDTUnited::epoll_add_ssock(
 int CUDTUnited::epoll_update_usock(
    const int eid, const SRTSOCKET u, const int* events)
 {
-   CUDTSocket* s = locateSocket(u);
-   int ret = -1;
-   if (s)
-   {
-      ret = m_EPoll.update_usock(eid, u, events);
-      s->m_pUDT->addEPoll(eid);
-   }
-   else
-   {
-      throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
-   }
-
-   return ret;
+    return epoll_add_usock(eid, u, events);
 }
 
 int CUDTUnited::epoll_update_ssock(
@@ -2102,39 +2166,12 @@ int CUDTUnited::epoll_update_ssock(
    return m_EPoll.update_ssock(eid, s, events);
 }
 
-template <class EntityType>
-int CUDTUnited::epoll_remove_entity(const int eid, EntityType* ent)
-{
-    // XXX Not sure if this is anyhow necessary because setting readiness
-    // to false doesn't actually trigger any action. Further research needed.
-    HLOGC(dlog.Debug, log << "epoll_remove_usock: CLEARING readiness on E" << eid << " of @" << ent->id());
-    ent->removeEPollEvents(eid);
-
-    HLOGC(dlog.Debug, log << "epoll_remove_usock: CLEARING subscription on E" << eid << " of @" << ent->id());
-    int no_events = 0;
-    int ret = m_EPoll.update_usock(eid, ent->id(), &no_events);
-
-    HLOGC(dlog.Debug, log << "epoll_remove_usock: REMOVING E" << eid << " from back-subscirbers in @" << ent->id());
-    ent->removeEPollID(eid);
-
-    return ret;
-}
-
 int CUDTUnited::epoll_remove_usock(const int eid, const SRTSOCKET u)
 {
-   CUDTGroup* g = 0;
-   CUDTSocket* s = 0;
-   if (u & SRTGROUP_MASK)
+   SrtEPollEventHandler* eh = srt::EventHandler::get<SrtEPollEventHandler>(u);
+   if (eh)
    {
-      g = locateGroup(u);
-      if (g)
-          return epoll_remove_entity(eid, g);
-   }
-   else
-   {
-       s = locateSocket(u);
-       if (s)
-           return epoll_remove_entity(eid, s->m_pUDT);
+      return eh->remove_entity(eid);
    }
 
    LOGC(mglog.Error, log << "IPE: remove_usock: @" << u
@@ -2390,8 +2427,7 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
    * remains forever causing epoll_wait to unblock continuously for inexistent
    * sockets. Get rid of all events for this socket.
    */
-   m_EPoll.update_events(u, s->m_pUDT->m_sPollID,
-      SRT_EPOLL_IN|SRT_EPOLL_OUT|SRT_EPOLL_ERR, false);
+   s->m_pUDT->m_pEventHandler->update(u, SRT_EV_NONE, false);
 
    // delete this one
    m_ClosedSockets.erase(i);
@@ -4195,6 +4231,16 @@ int getrejectreason(SRTSOCKET u)
 int setrejectreason(SRTSOCKET u, int value)
 {
     return CUDT::rejectReason(u, value);
+}
+
+EventHandler* getEventHandler(SRTSOCKET u)
+{
+    return CUDT::getEventHandler(u);
+}
+
+EventEntity* getEventEntity(SRTSOCKET u)
+{
+    return CUDT::getEventEntity(u);
 }
 
 }  // namespace srt

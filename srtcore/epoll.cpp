@@ -949,5 +949,65 @@ string CEPollDesc::DisplayEpollWatch()
     return os.str();
 }
 
+void SrtEPollEventHandler::update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state)
+{
+    m_EPoll.update_events(sid, m_sPollID, epollfor(et), state);
+}
+
+void SrtEPollEventHandler::commit_handler(SRTSOCKET)
+{
+    CGlobEvent::triggerEvent();
+}
+
+void SrtEPollEventHandler::addEPoll(const int eid)
+{
+    enterCS(m_EPoll.m_EPollLock);
+    m_sPollID.insert(eid);
+    leaveCS(m_EPoll.m_EPollLock);
+
+    SRT_EV_OPT opt = m_parent->getEventFlags();
+    if (opt)
+        update(m_parent->id(), opt, true);
+}
+
+void SrtEPollEventHandler::removeEPollEvents(const int eid)
+{
+    // clear IO events notifications;
+    // since this happens after the epoll ID has been removed, they cannot be set again
+    set<int> remove;
+    remove.insert(eid);
+    m_EPoll.update_events(m_parent->id(), remove, SRT_EPOLL_IN | SRT_EPOLL_OUT, false);
+}
+
+void SrtEPollEventHandler::removeEPollID(const int eid)
+{
+    enterCS(m_EPoll.m_EPollLock);
+    m_sPollID.erase(eid);
+    leaveCS(m_EPoll.m_EPollLock);
+}
+
+int SrtEPollEventHandler::remove_entity(const int eid)
+{
+    removeEPollEvents(eid);
+
+    int no_events = 0;
+    int ret = m_EPoll.update_usock(eid, m_parent->id(), &no_events);
+
+    removeEPollID(eid);
+
+    return ret;
+}
+
+void SrtEPollEventHandler::close(SRTSOCKET sid)
+{
+    int no_events = 0;
+    for (set<int>::iterator i = m_sPollID.begin(); i != m_sPollID.end(); ++i)
+    {
+        HLOGC(dlog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of @" << sid);
+        m_EPoll.update_usock(*i, sid, &no_events);
+        HLOGC(dlog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of @" << sid);
+    }
+}
+
 #endif
 

@@ -281,7 +281,7 @@ struct SRT_SocketOptionObject
     bool add(SRT_SOCKOPT optname, const void* optval, size_t optlen);
 };
 
-class CUDTGroup
+class CUDTGroup: public srt::EventEntity
 {
     friend class CUDTUnited;
 
@@ -364,6 +364,7 @@ public:
 
     typedef std::list<SocketData> group_t;
     typedef group_t::iterator gli_t;
+    typedef group_t::const_iterator const_gli_t;
 
     struct Sendstate
     {
@@ -374,7 +375,7 @@ public:
 
 
     CUDTGroup(SRT_GROUP_TYPE);
-    ~CUDTGroup();
+    virtual ~CUDTGroup();
 
     static SocketData prepareData(CUDTSocket* s);
 
@@ -502,6 +503,9 @@ public:
     }
 
     srt::sync::Mutex* exp_groupLock() { return &m_GroupLock; }
+
+    SRT_EV_OPT getEventFlags() const ATR_OVERRIDE;
+
     void addEPoll(int eid);
     void removeEPollEvents(const int eid);
     void removeEPollID(const int eid);
@@ -557,7 +561,7 @@ private:
     void getGroupCount(size_t& w_size, bool& w_still_alive);
 
     class CUDTUnited* m_pGlobal;
-    srt::sync::Mutex m_GroupLock;
+    mutable srt::sync::Mutex m_GroupLock;
 
     SRTSOCKET m_GroupID;
     SRTSOCKET m_PeerGroupID;
@@ -579,8 +583,10 @@ private:
 
         gli_t begin() { return m_List.begin(); }
         gli_t end() { return m_List.end(); }
+        const_gli_t begin() const { return m_List.begin(); }
+        const_gli_t end() const { return m_List.end(); }
         static gli_t null() { return s_NoList.begin(); }
-        bool empty() { return m_List.empty(); }
+        bool empty() const { return m_List.empty(); }
         void push_back(const SocketData& data)
         {
             m_List.push_back(data);
@@ -707,7 +713,7 @@ private:
     // that does use sender buffer.
     int32_t addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& w_mc);
 
-    std::set<int> m_sPollID;                     // set of epoll ID to trigger
+    UniquePtr<srt::EventHandler> m_pEventHandler;
     int m_iMaxPayloadSize;
     int m_iAvgPayloadSize;
     bool m_bSynRecving;
@@ -887,9 +893,9 @@ public:
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool,           managed,              m_selfManaged);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type,                 m_type);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t,        currentSchedSequence, m_iLastSchedSeqNo);
-    SRTU_PROPERTY_RRW(                std::set<int>&, epollset,             m_sPollID);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int64_t,        latency,              m_iTsbPdDelay_us);
     SRTU_PROPERTY_RO(                 bool,           synconmsgno,          m_bSyncOnMsgNo);
+    SRTU_PROPERTY_RR(             srt::EventHandler*, getEventHandler,      m_pEventHandler.get());
 };
 
 
@@ -982,6 +988,8 @@ public: //API
     static int rejectReason(SRTSOCKET s);
     static int rejectReason(SRTSOCKET s, int value);
     static int64_t socketStartTime(SRTSOCKET s);
+    static srt::EventEntity* getEventEntity(SRTSOCKET s);
+    static srt::EventHandler* getEventHandler(SRTSOCKET s);
 
 public: // internal API
     // This is public so that it can be used directly in API implementation functions.
@@ -1125,7 +1133,6 @@ public: // internal API
 
     // For SRT_tsbpdLoop
     CUDTUnited* uglobal() { return &s_UDTUnited; } // needed by tsbpdLoop
-    std::set<int>& pollset() { return m_sPollID; }
 
     SRTU_PROPERTY_RO(SRTSOCKET, id, m_SocketID);
     SRTU_PROPERTY_RO(bool, isClosing, m_bClosing);
@@ -1134,6 +1141,7 @@ public: // internal API
     SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
     SRTU_PROPERTY_RR(srt::sync::Condition*, recvDataCond, &m_RecvDataCond);
     SRTU_PROPERTY_RR(srt::sync::Condition*, recvTsbPdCond, &m_RcvTsbPdCond);
+    SRTU_PROPERTY_RR(srt::EventHandler*, getEventHandler, m_pEventHandler.get());
 
     void ConnectSignal(ETransmissionEvent tev, EventSlot sl);
     void DisconnectSignal(ETransmissionEvent tev);
@@ -1834,10 +1842,7 @@ public: // For SrtCongestion
     const CRcvQueue* rcvQueue() { return m_pRcvQueue; }
 
 private: // for epoll
-    std::set<int> m_sPollID;                     // set of epoll ID to trigger
-    void addEPoll(const int eid);
-    void removeEPollEvents(const int eid);
-    void removeEPollID(const int eid);
+    UniquePtr<srt::EventHandler> m_pEventHandler;
 };
 
 
