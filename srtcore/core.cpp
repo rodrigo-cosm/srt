@@ -14679,8 +14679,7 @@ RetryWaitBlocked:
 
         // After finding the link to leave active, leave it behind.
         ++b;
-
-        for (b = w_parallel.begin(); b != w_parallel.end(); ++b)
+        for (; b != w_parallel.end(); ++b)
         {
             gli_t& d = *b;
             if (d->sndstate != SRT_GST_RUNNING)
