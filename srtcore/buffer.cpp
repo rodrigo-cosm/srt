@@ -984,7 +984,7 @@ int CRcvBuffer::readBufferToFile(fstream& ofs, int len)
         if (!m_pUnit[p])
         {
             p = shiftFwd(p);
-            LOGC(mglog.Error, log << "readBufferToFile: IPE: NULL unit found in file transmission, last good %"
+            LOGC(brlog.Error, log << "readBufferToFile: IPE: NULL unit found in file transmission, last good %"
                     << trace_seq << " + " << trace_shift);
             continue;
         }

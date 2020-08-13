@@ -1336,16 +1336,37 @@ bool SRT_SocketOptionObject::add(SRT_SOCKOPT optname, const void* optval, size_t
 
     switch (optname)
     {
-    case SRTO_SNDBUF:
+    case SRTO_CONNTIMEO:
+    case SRTO_DRIFTTRACER:
+        //SRTO_FC - not allowed to be different among group members
+    case SRTO_GROUPSTABTIMEO:
+        //SRTO_INPUTBW - per transmission setting
+    case SRTO_IPTOS:
+    case SRTO_IPTTL:
+    case SRTO_KMREFRESHRATE:
+    case SRTO_KMPREANNOUNCE:
+        //SRTO_LATENCY - per transmission setting
+        //SRTO_LINGER - not for managed sockets
+    case SRTO_LOSSMAXTTL:
+        //SRTO_MAXBW - per transmission setting
+        //SRTO_MESSAGEAPI - groups are live mode only
+        //SRTO_MINVERSION - per group connection setting
+    case SRTO_NAKREPORT:
+        //SRTO_OHEADBW - per transmission setting
+        //SRTO_PACKETFILTER - per transmission setting
+        //SRTO_PASSPHRASE - per group connection setting
+        //SRTO_PASSPHRASE - per transmission setting
+        //SRTO_PBKEYLEN - per group connection setting
+    case SRTO_PEERIDLETIMEO:
     case SRTO_RCVBUF:
+        //SRTO_RCVSYN - must be always false in groups
+        //SRTO_RCVTIMEO - must be alwyas -1 in groups
+    case SRTO_SNDBUF:
+    case SRTO_SNDDROPDELAY:
+        //SRTO_TLPKTDROP - per transmission setting
+        //SRTO_TSBPDMODE - per transmission setting
     case SRTO_UDP_RCVBUF:
     case SRTO_UDP_SNDBUF:
-    case SRTO_SNDDROPDELAY:
-    case SRTO_NAKREPORT:
-    case SRTO_CONNTIMEO:
-    case SRTO_LOSSMAXTTL:
-    case SRTO_PEERIDLETIMEO:
-    case SRTO_GROUPSTABTIMEO:
         break;
 
     default:
@@ -1377,7 +1398,7 @@ SRT_ERRNO CUDT::applyMemberConfigObject(const SRT_SocketOptionObject& opt)
     for (size_t i = 0; i < opt.options.size(); ++i)
     {
         SRT_SocketOptionObject::SingleOption* o = opt.options[i];
-        HLOGC(mglog.Debug, log << "applyMemberConfigObject: OPTION @" << m_SocketID << " #" << o->option);
+        HLOGC(smlog.Debug, log << "applyMemberConfigObject: OPTION @" << m_SocketID << " #" << o->option);
         this_opt = SRT_SOCKOPT(o->option);
         setOpt(this_opt, o->storage, o->length);
     }
@@ -3688,7 +3709,16 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t l
     }
     else
     {
-        gp = &newGroup(gtp);
+        try
+        {
+            gp = &newGroup(gtp);
+        }
+        catch (...)
+        {
+            // Expected exceptions are only those referring to system resources
+            return -1;
+        }
+
         if (!gp->applyFlags(link_flags, m_SrtHsSide))
         {
             // Wrong settings. Must reject. Delete group.
@@ -4336,7 +4366,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
             // timeout
             e = CUDTException(MJ_SETUP, MN_TIMEOUT, 0);
             m_RejectReason = SRT_REJ_TIMEOUT;
-            HLOGC(mglog.Debug, log << "startConnect: TTL time " << FormatTime(ttl_time) << " exceeded, TIMEOUT.");
+            HLOGC(calog.Debug, log << "startConnect: TTL time " << FormatTime(ttl_time) << " exceeded, TIMEOUT.");
             break;
         }
     }
@@ -6322,7 +6352,7 @@ bool CUDT::closeInternal()
         return false;
     }
 
-    HLOGC(mglog.Debug, log << CONID() << " - closing socket:");
+    HLOGC(smlog.Debug, log << CONID() << " - closing socket:");
 
     if (m_Linger.l_onoff != 0)
     {
@@ -6330,7 +6360,7 @@ bool CUDT::closeInternal()
 
 #define FLAG(name) (name ? "+" : "-") << #name
 
-        HLOGC(mglog.Debug, log << CONID() << " ... (linger): "
+        HLOGC(smlog.Debug, log << CONID() << " ... (linger): "
                 << FLAG(m_bBroken) << " " << FLAG(m_bConnected)
                 << " SENDER BUFFER:" << (m_pSndBuffer ? m_pSndBuffer->getCurrBufSize() : -1)
                 << " LINGER: " << m_Linger.l_linger);
@@ -6344,7 +6374,7 @@ bool CUDT::closeInternal()
             // linger has been checked by previous close() call and has expired
             if (m_tsLingerExpiration >= entertime)
             {
-                HLOGC(mglog.Debug, log << "CUDT::close: linger set previously to T="
+                HLOGC(smlog.Debug, log << "CUDT::close: linger set previously to T="
                         << FormatTime(m_tsLingerExpiration));
                 break;
             }
@@ -6355,7 +6385,7 @@ bool CUDT::closeInternal()
                 if (is_zero(m_tsLingerExpiration))
                     m_tsLingerExpiration = entertime + seconds_from(m_Linger.l_linger);
 
-                HLOGC(mglog.Debug,
+                HLOGC(smlog.Debug,
                       log << "CUDT::close: linger-nonblocking, setting expire time T="
                           << FormatTime(m_tsLingerExpiration));
 
@@ -6364,7 +6394,7 @@ bool CUDT::closeInternal()
 
             if (!did_linger)
             {
-                HLOGC(mglog.Debug, log << "CUDT::close: linger mandates to sleep for re-check, still "
+                HLOGC(smlog.Debug, log << "CUDT::close: linger mandates to sleep for re-check, still "
                         << FormatDuration<DUNIT_MS>(steady_clock::now() - entertime) << " < LINGER:" << (m_Linger.l_linger*1000) << "ms");
             }
 
@@ -6381,11 +6411,11 @@ bool CUDT::closeInternal()
 
         if (!did_linger)
         {
-            HLOGC(mglog.Debug, log << "CUDT::close: lingering not necessary");
+            HLOGC(smlog.Debug, log << "CUDT::close: lingering not necessary");
         }
         else
         {
-            HLOGC(mglog.Debug, log << "CUDT::close: exit lingering after "
+            HLOGC(smlog.Debug, log << "CUDT::close: exit lingering after "
                     << FormatDuration<DUNIT_MS>(steady_clock::now() - entertime)
                     << " SENDER BUFFER: " << (m_pSndBuffer ? m_pSndBuffer->getCurrBufSize() : -1));
         }
@@ -6403,7 +6433,7 @@ bool CUDT::closeInternal()
      * it would remove the socket from the EPoll after close.
      */
     // trigger any pending IO events.
-    HLOGC(mglog.Debug, log << "close: SETTING ERR readiness on E" << Printable(m_sPollID) << " of @" << m_SocketID);
+    HLOGC(smlog.Debug, log << "close: SETTING ERR readiness on E" << Printable(m_sPollID) << " of @" << m_SocketID);
     s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_ERR, true);
     // then remove itself from all epoll monitoring
     try
@@ -6411,9 +6441,9 @@ bool CUDT::closeInternal()
         int no_events = 0;
         for (set<int>::iterator i = m_sPollID.begin(); i != m_sPollID.end(); ++i)
         {
-            HLOGC(mglog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of @" << m_SocketID);
+            HLOGC(smlog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of @" << m_SocketID);
             s_UDTUnited.m_EPoll.update_usock(*i, m_SocketID, &no_events);
-            HLOGC(mglog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of @" << m_SocketID);
+            HLOGC(smlog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of @" << m_SocketID);
         }
 
         // Not deleting elements from m_sPollID inside the loop because it invalidates
@@ -6439,14 +6469,14 @@ bool CUDT::closeInternal()
     // Inform the threads handler to stop.
     m_bClosing = true;
 
-    HLOGC(mglog.Debug, log << CONID() << "CLOSING STATE. Acquiring connection lock");
+    HLOGC(smlog.Debug, log << CONID() << "CLOSING STATE. Acquiring connection lock");
 
     ScopedLock connectguard(m_ConnectionLock);
 
     // Signal the sender and recver if they are waiting for data.
     releaseSynch();
 
-    HLOGC(mglog.Debug, log << CONID() << "CLOSING, removing from listener/connector");
+    HLOGC(smlog.Debug, log << CONID() << "CLOSING, removing from listener/connector");
 
     if (m_bListening)
     {
@@ -6462,7 +6492,7 @@ bool CUDT::closeInternal()
     {
         if (!m_bShutdown)
         {
-            HLOGC(mglog.Debug, log << CONID() << "CLOSING - sending SHUTDOWN to the peer");
+            HLOGC(smlog.Debug, log << CONID() << "CLOSING - sending SHUTDOWN to the peer");
             sendCtrl(UMSG_SHUTDOWN);
         }
 
@@ -6477,7 +6507,7 @@ bool CUDT::closeInternal()
         m_bConnected = false;
     }
 
-    HLOGC(mglog.Debug, log << "CLOSING, joining send/receive threads");
+    HLOGC(smlog.Debug, log << "CLOSING, joining send/receive threads");
 
     // waiting all send and recv calls to stop
     ScopedLock sendguard(m_SendLock);
@@ -9119,7 +9149,7 @@ int CUDT::packLostData(CPacket& w_packet, steady_clock::time_point& w_origintime
             const steady_clock::time_point tsLastRexmit = m_pSndBuffer->getPacketRexmitTime(offset);
             if (tsLastRexmit >= time_nak)
             {
-                HLOGC(mglog.Debug, log << CONID() << "REXMIT: ignoring seqno "
+                HLOGC(qrlog.Debug, log << CONID() << "REXMIT: ignoring seqno "
                     << w_packet.m_iSeqNo << ", last rexmit " << (is_zero(tsLastRexmit) ? "never" : FormatTime(tsLastRexmit))
                     << " RTT=" << m_iRTT << " RTTVar=" << m_iRTTVar
                     << " now=" << FormatTime(time_now));
@@ -9468,11 +9498,11 @@ void CUDT::processClose()
     m_bBroken        = true;
     m_iBrokenCounter = 60;
 
-    HLOGP(mglog.Debug, "processClose: sent message and set flags");
+    HLOGP(smlog.Debug, "processClose: sent message and set flags");
 
     if (m_bTsbPd)
     {
-        HLOGP(mglog.Debug, "processClose: lock-and-signal TSBPD");
+        HLOGP(smlog.Debug, "processClose: lock-and-signal TSBPD");
         CSync::lock_signal(m_RcvTsbPdCond, m_RecvLock);
     }
 
@@ -9481,7 +9511,7 @@ void CUDT::processClose()
     // Unblock any call so they learn the connection_broken error
     s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_ERR, true);
 
-    HLOGP(mglog.Debug, "processClose: triggering timer event to spread the bad news");
+    HLOGP(smlog.Debug, "processClose: triggering timer event to spread the bad news");
     CGlobEvent::triggerEvent();
 }
 
@@ -12165,7 +12195,19 @@ void CUDTGroup::syncWithSocket(const CUDT& core)
     // [[using locked(m_GroupLock)]];
 
     set_currentSchedSequence(core.ISN());
-    setInitialRxSequence(); // XXX NOT core.m_iPeerISN
+
+    // XXX
+    // Might need further investigation as to whether this isn't
+    // wrong for some cases. By having this -1 here the value will be
+    // laziliy set from the first reading one. It is believed that
+    // it covers all possible scenarios, that is:
+    //
+    // - no readers - no problem!
+    // - have some readers and a new is attached - this is set already
+    // - connect multiple links, but none has read yet - you'll be the first.
+    //
+    // Previous implementation used setting to: core.m_iPeerISN
+    resetInitialRxSequence();
 
     // Get the latency (possibly fixed against the opposite side)
     // from the first socket (core.m_iTsbPdDelay_ms),

@@ -496,7 +496,7 @@ public:
                 // number will collide with any ISN provided by a socket.
                 // Also since now every socket will derive this ISN.
                 m_iLastSchedSeqNo = generateISN();
-                setInitialRxSequence();
+                resetInitialRxSequence();
             }
             s = true;
         }
@@ -961,7 +961,7 @@ public:
 #endif
     }
 
-    void setInitialRxSequence()
+    void resetInitialRxSequence()
     {
         // The app-reader doesn't care about the real sequence number.
         // The first provided one will be taken as a good deal; even if
@@ -1247,8 +1247,9 @@ public: // internal API
 
     static int32_t generateISN()
     {
+        using namespace srt::sync;
         // Random Initial Sequence Number (normal mode)
-        srand(count_microseconds(srt::sync::steady_clock::now().time_since_epoch()));
+        srand(count_microseconds(steady_clock::now().time_since_epoch()));
         return (int32_t)(CSeqNo::m_iMaxSeqNo * (double(rand()) / RAND_MAX));
     }
 

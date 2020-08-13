@@ -106,7 +106,7 @@ void CChannel::createSocket(int family)
         {
             int err = errno;
             char msg[160];
-            LOGC(mglog.Error, log << "::setsockopt: failed to set IPPROTO_IPV6/IPV6_V6ONLY = " << m_iIpV6Only
+            LOGC(cmlog.Error, log << "::setsockopt: failed to set IPPROTO_IPV6/IPV6_V6ONLY = " << m_iIpV6Only
                     << ": " << SysStrError(err, msg, 159));
         }
     }
@@ -122,7 +122,7 @@ void CChannel::open(const sockaddr_any& addr)
         throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
 
     m_BindAddr = addr;
-    LOGC(mglog.Debug, log << "CHANNEL: Bound to local address: " << SockaddrToString(m_BindAddr));
+    LOGC(cmlog.Debug, log << "CHANNEL: Bound to local address: " << SockaddrToString(m_BindAddr));
 
     setUDPSockOpt();
 }
@@ -164,7 +164,7 @@ void CChannel::open(int family)
 
     ::freeaddrinfo(res);
 
-    HLOGC(mglog.Debug, log << "CHANNEL: Bound to local address: " << SockaddrToString(m_BindAddr));
+    HLOGC(cmlog.Debug, log << "CHANNEL: Bound to local address: " << SockaddrToString(m_BindAddr));
 
     setUDPSockOpt();
 }
@@ -336,7 +336,7 @@ int CChannel::getIpTTL() const
    else
    {
        // If family is unspecified, the socket probably doesn't exist.
-       LOGC(mglog.Error, log << "IPE: CChannel::getIpTTL called with unset family");
+       LOGC(cmlog.Error, log << "IPE: CChannel::getIpTTL called with unset family");
        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
    }
    return m_iIpTTL;
@@ -358,7 +358,7 @@ int CChannel::getIpToS() const
    else
    {
        // If family is unspecified, the socket probably doesn't exist.
-       LOGC(mglog.Error, log << "IPE: CChannel::getIpToS called with unset family");
+       LOGC(cmlog.Error, log << "IPE: CChannel::getIpToS called with unset family");
        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
    }
    return m_iIpToS;

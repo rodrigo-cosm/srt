@@ -598,7 +598,7 @@ enum SRT_REJECT_REASON
 // Use ../scripts/generate-logging-defs.tcl to regenerate.
 
 #define SRT_LOGFA_GENERAL    0 // gg
-#define SRT_LOGFA_MGMT       1 // mg
+#define SRT_LOGFA_SOCKMGMT   1 // sm
 #define SRT_LOGFA_CONN       2 // ca
 #define SRT_LOGFA_XTIMER     3 // xt
 #define SRT_LOGFA_TSBPD      4 // ts
@@ -629,7 +629,7 @@ enum SRT_REJECT_REASON
 #define SRT_LOGFA_INTERNAL   41 // ip
 
 #define SRT_LOGFA_QUE_MGMT   43 // qm
-
+#define SRT_LOGFA_CHN_MGMT   44 // cm
 #define SRT_LOGFA_GRP_MGMT   45 // gm
 #define SRT_LOGFA_EPOLL_API  46 // ea
 

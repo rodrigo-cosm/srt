@@ -6,7 +6,7 @@
 
 
 LOGGER(GENERAL,   gg, 0);
-LOGGER(MGMT,      mg, 1);
+LOGGER(SOCKMGMT,  sm, 1);
 LOGGER(CONN,      ca, 2);
 LOGGER(XTIMER,    xt, 3);
 LOGGER(TSBPD,     ts, 4);
@@ -35,6 +35,7 @@ LOGGER(GRP_SEND,  gs, 35);
 
 LOGGER(INTERNAL,  ip, 41);
 LOGGER(QUE_MGMT,  qm, 43);
+LOGGER(CHN_MGMT,  cm, 44);
 LOGGER(GRP_MGMT,  gm, 45);
 LOGGER(EPOLL_API, ea, 46);
 
