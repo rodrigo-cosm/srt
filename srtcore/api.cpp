@@ -601,7 +601,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
        // the SRT Handshake message would fail.
        HLOGF(calog.Debug,
                "newConnection: incoming %s, mapping socket %d",
-               SockaddrToString(peer).c_str(), ns->m_SocketID);
+               peer.str().c_str(), ns->m_SocketID);
        {
            ScopedLock cg(m_GlobControlLock);
            m_Sockets[ns->m_SocketID] = ns;
@@ -623,7 +623,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
                goto ERR_ROLLBACK;
            }
        }
-       ns->m_pUDT->acceptAndRespond(peer, hspkt, (w_hs));
+       ns->m_pUDT->acceptAndRespond(ls->m_SelfAddr, peer, hspkt, (w_hs));
    }
    catch (...)
    {
@@ -1159,7 +1159,7 @@ int CUDTUnited::connect(SRTSOCKET u, const sockaddr* srcname, const sockaddr* ta
 
         // When connecting to exactly one target, only this very target
         // can be returned as a socket, so rewritten back array can be ignored.
-        return groupConnect(g, gd, 1);
+        return singleMemberConnect(g, gd);
     }
 
     CUDTSocket* s = locateSocket(u);
@@ -1189,7 +1189,7 @@ int CUDTUnited::connect(const SRTSOCKET u, const sockaddr* name, int namelen, in
         // it's generated anew for the very first socket, and then
         // derived by all sockets in the group.
         SRT_SOCKGROUPCONFIG gd[1] = { srt_prepare_endpoint(NULL, name, namelen) };
-        return groupConnect(g, gd, 1);
+        return singleMemberConnect(g, gd);
     }
 
     CUDTSocket* s = locateSocket(u);
@@ -1197,6 +1197,25 @@ int CUDTUnited::connect(const SRTSOCKET u, const sockaddr* name, int namelen, in
         throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
     return connectIn(s, target_addr, forced_isn);
+}
+
+int CUDTUnited::singleMemberConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* gd)
+{
+    int gstat = groupConnect(pg, gd, 1);
+    if (gstat == -1)
+    {
+        // We have only one element here, so refer to it.
+        // Sanity check
+        if (gd->errorcode == SRT_SUCCESS)
+            gd->errorcode = SRT_EINVPARAM;
+
+        CodeMajor mj = CodeMajor(gd->errorcode / 1000);
+        CodeMinor mn = CodeMinor(gd->errorcode % 1000);
+
+        return CUDT::APIError(mj, mn);
+    }
+
+    return gstat;
 }
 
 int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int arraysize)
@@ -1253,7 +1272,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         SRTSOCKET& sid_rloc = targets[tii].id;
         int& erc_rloc = targets[tii].errorcode;
         erc_rloc = SRT_SUCCESS; // preinitialized
-        HLOGC(aclog.Debug, log << "groupConnect: taking on " << SockaddrToString(targets[tii].peeraddr));
+        HLOGC(aclog.Debug, log << "groupConnect: taking on " << sockaddr_any(targets[tii].peeraddr).str());
 
         CUDTSocket* ns = 0;
 
@@ -1313,6 +1332,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         {
             ScopedLock cs(m_GlobControlLock);
             SRTSOCKET id = ns->m_SocketID;
+            targets[tii].id = CUDT::INVALID_SOCK;
             delete ns;
             m_Sockets.erase(id);
 
@@ -1389,6 +1409,8 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
             // to avoid locking more than one mutex at a time.
             ns->removeFromGroup();
             erc_rloc = e.getErrorCode();
+            targets[tii].errorcode = e.getErrorCode();
+            targets[tii].id = CUDT::INVALID_SOCK;
 
             ScopedLock cl (m_GlobControlLock);
             m_Sockets.erase(ns->m_SocketID);
@@ -1400,13 +1422,15 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         {
             LOGC(aclog.Fatal, log << "groupConnect: IPE: UNKNOWN EXCEPTION from connectIn");
             ns->removeFromGroup();
+            targets[tii].errorcode = SRT_ESYSOBJ;
+            targets[tii].id = CUDT::INVALID_SOCK;
             ScopedLock cl (m_GlobControlLock);
             m_Sockets.erase(ns->m_SocketID);
             // Intercept to delete the socket on failure.
             delete ns;
 
             // Do not use original exception, it may crash off a C API.
-            throw CUDTException(MJ_SYSTEMRES, MN_NONE);
+            throw CUDTException(MJ_SYSTEMRES, MN_OBJECT);
         }
 
         SRT_SOCKSTATUS st;
@@ -2151,24 +2175,6 @@ int CUDTUnited::epoll_add_ssock(
    return m_EPoll.add_ssock(eid, s, events);
 }
 
-int CUDTUnited::epoll_update_usock(
-   const int eid, const SRTSOCKET u, const int* events)
-{
-   CUDTSocket* s = locateSocket(u);
-   int ret = -1;
-   if (s)
-   {
-      ret = m_EPoll.update_usock(eid, u, events);
-      s->m_pUDT->addEPoll(eid);
-   }
-   else
-   {
-      throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
-   }
-
-   return ret;
-}
-
 int CUDTUnited::epoll_update_ssock(
    const int eid, const SYSSOCKET s, const int* events)
 {
@@ -2535,6 +2541,9 @@ void CUDTUnited::updateMux(
                   && (i->second.m_iMSS == s->m_pUDT->m_iMSS)
                   &&  (i->second.m_iIpTTL == s->m_pUDT->m_iIpTTL)
                   && (i->second.m_iIpToS == s->m_pUDT->m_iIpToS)
+#ifdef SRT_ENABLE_BINDTODEVICE
+                  && (i->second.m_BindToDevice == s->m_pUDT->m_BindToDevice)
+#endif
                   && (i->second.m_iIpV6Only == s->m_pUDT->m_iIpV6Only)
                   &&  i->second.m_bReusable)
           {
@@ -2560,6 +2569,9 @@ void CUDTUnited::updateMux(
    m.m_iIPversion = addr.family();
    m.m_iIpTTL = s->m_pUDT->m_iIpTTL;
    m.m_iIpToS = s->m_pUDT->m_iIpToS;
+#ifdef SRT_ENABLE_BINDTODEVICE
+   m.m_BindToDevice = s->m_pUDT->m_BindToDevice;
+#endif
    m.m_iRefCount = 1;
    m.m_iIpV6Only = s->m_pUDT->m_iIpV6Only;
    m.m_bReusable = s->m_pUDT->m_bReuseAddr;
@@ -2570,6 +2582,9 @@ void CUDTUnited::updateMux(
        m.m_pChannel = new CChannel();
        m.m_pChannel->setIpTTL(s->m_pUDT->m_iIpTTL);
        m.m_pChannel->setIpToS(s->m_pUDT->m_iIpToS);
+#ifdef SRT_ENABLE_BINDTODEVICE
+       m.m_pChannel->setBind(m.m_BindToDevice);
+#endif
        m.m_pChannel->setSndBufSize(s->m_pUDT->m_iUDPSndBufSize);
        m.m_pChannel->setRcvBufSize(s->m_pUDT->m_iUDPRcvBufSize);
        if (s->m_pUDT->m_iIpV6Only != -1)
@@ -3569,7 +3584,7 @@ int CUDT::epoll_update_usock(
 {
    try
    {
-      return s_UDTUnited.epoll_update_usock(eid, u, events);
+      return s_UDTUnited.epoll_add_usock(eid, u, events);
    }
    catch (const CUDTException& e)
    {

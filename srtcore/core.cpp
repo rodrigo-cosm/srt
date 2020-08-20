@@ -52,6 +52,11 @@ modified by
 
 #include "platform_sys.h"
 
+// Linux specific
+#ifdef SRT_ENABLE_BINDTODEVICE
+#include <linux/if.h>
+#endif
+
 #include <cmath>
 #include <sstream>
 #include <algorithm>
@@ -575,6 +580,28 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         if (m_bOpened)
             throw CUDTException(MJ_NOTSUP, MN_ISBOUND, 0);
         m_iIpToS = cast_optval<int>(optval, optlen);
+        break;
+
+    case SRTO_BINDTODEVICE:
+#ifdef SRT_ENABLE_BINDTODEVICE
+        {
+            string val;
+            if (optlen == -1)
+                val = (const char *)optval;
+            else
+                val.assign((const char *)optval, optlen);
+            if (val.size() >= IFNAMSIZ)
+            {
+                LOGC(cmlog.Error, log << "SRTO_BINDTODEVICE: device name too long (max: IFNAMSIZ=" << IFNAMSIZ << ")");
+                throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+            }
+
+            m_BindToDevice = val;
+        }
+#else
+        LOGC(mglog.Error, log << "SRTO_BINDTODEVICE is not supported on that platform");
+        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+#endif
         break;
 
     case SRTO_INPUTBW:
@@ -1165,6 +1192,26 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void *optval, int &optlen)
         optlen = sizeof(int32_t);
         break;
 
+    case SRTO_BINDTODEVICE:
+#ifdef SRT_ENABLE_BINDTODEVICE
+        if (optlen < IFNAMSIZ)
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+
+        if (m_bOpened && m_pSndQueue->getBind(((char*)optval), optlen))
+        {
+            optlen = strlen((char*)optval);
+            break;
+        }
+
+        // Fallback: return from internal data
+        strcpy(((char*)optval), m_BindToDevice.c_str());
+        optlen = m_BindToDevice.size();
+#else
+        LOGC(mglog.Error, log << "SRTO_BINDTODEVICE is not supported on that platform");
+        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+#endif
+        break;
+
     case SRTO_SENDER:
         *(int32_t *)optval = m_bDataSender;
         optlen             = sizeof(int32_t);
@@ -1336,6 +1383,7 @@ bool SRT_SocketOptionObject::add(SRT_SOCKOPT optname, const void* optval, size_t
 
     switch (optname)
     {
+    case SRTO_BINDTODEVICE:
     case SRTO_CONNTIMEO:
     case SRTO_DRIFTTRACER:
         //SRTO_FC - not allowed to be different among group members
@@ -3659,7 +3707,11 @@ bool CUDT::interpretGroup(const int32_t groupdata[], size_t data_size SRT_ATR_UN
             return false;
         }
 
-        m_parent->m_IncludedIter->weight = link_weight;
+        CUDTGroup::gli_t f = m_parent->m_IncludedIter;
+
+        f->weight = link_weight;
+        f->agent = m_parent->m_SelfAddr;
+        f->peer = m_PeerAddr;
     }
 
     m_parent->m_IncludedGroup->debugGroup();
@@ -3678,7 +3730,10 @@ void CUDTGroup::debugGroup()
 
     for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
     {
-        HLOGC(gmlog.Debug, log << " ... id=@" << gi->id << " peer=@" << gi->ps->m_PeerID
+        HLOGC(gmlog.Debug, log << " ... id { agent=@" << gi->id
+                << " peer=@" << gi->ps->m_PeerID << " } address { agent="
+                << gi->agent.str()
+                << " peer=" << gi->peer.str() << "} "
                 << " state {snd=" << StateStr(gi->sndstate) << " rcv=" << StateStr(gi->rcvstate) << "}");
     }
 }
@@ -3766,6 +3821,8 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t l
 
     s->m_IncludedGroup = gp;
     s->m_IncludedIter = gp->add(gp->prepareData(s));
+  
+    // Record the remote address in the group data.
 
     return gp->id();
 }
@@ -4041,7 +4098,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
 {
     ScopedLock cg (m_ConnectionLock);
 
-    HLOGC(aclog.Debug, log << CONID() << "startConnect: -> " << SockaddrToString(serv_addr)
+    HLOGC(aclog.Debug, log << CONID() << "startConnect: -> " << serv_addr.str()
             << (m_bSynRecving ? " (SYNCHRONOUS)" : " (ASYNCHRONOUS)") << "...");
 
     if (!m_bOpened)
@@ -5300,7 +5357,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
         }
     }
 
-    LOGC(calog.Note, log << CONID() << "Connection established to: " << SockaddrToString(m_PeerAddr));
+    LOGC(calog.Note, log << CONID() << "Connection established to: " << m_PeerAddr.str());
 
     return CONN_ACCEPT;
 }
@@ -5971,7 +6028,7 @@ bool CUDT::prepareConnectionObjects(const CHandShake &hs, HandshakeSide hsd, CUD
     return true;
 }
 
-void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHandShake& w_hs)
+void CUDT::acceptAndRespond(const sockaddr_any& agent, const sockaddr_any& peer, const CPacket& hspkt, CHandShake& w_hs)
 {
     HLOGC(calog.Debug, log << "acceptAndRespond: setting up data according to handshake");
 
@@ -6016,6 +6073,8 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHan
 
     // get local IP address and send the peer its IP address (because UDP cannot get local IP address)
     memcpy((m_piSelfIP), w_hs.m_piPeerIP, sizeof m_piSelfIP);
+    m_parent->m_SelfAddr = agent;
+    CIPAddress::pton((m_parent->m_SelfAddr), m_piSelfIP, agent.family(), peer);
     CIPAddress::ntop(peer, (w_hs.m_piPeerIP));
 
     int udpsize          = m_iMSS - CPacket::UDP_HDR_SIZE;
@@ -6044,6 +6103,8 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHan
         m_iRTT       = ib.m_iRTT;
         m_iBandwidth = ib.m_iBandwidth;
     }
+
+    m_PeerAddr = peer;
 
     // This should extract the HSREQ and KMREQ portion in the handshake packet.
     // This could still be a HSv4 packet and contain no such parts, which will leave
@@ -6093,8 +6154,6 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, const CPacket& hspkt, CHan
         m_RejectReason = rr;
         throw CUDTException(MJ_SETUP, MN_REJECTED, 0);
     }
-
-    m_PeerAddr = peer;
 
     // And of course, it is connected.
     m_bConnected = true;
@@ -16449,7 +16508,7 @@ CUDTGroup::gli_t CUDTGroup::linkSelect_window(const CUDTGroup::BalancingLinkStat
 
         HLOGC(gslog.Debug, log << "linkSelect_window: previous link was #" << distance(m_Group.begin(), state.ilink)
                 << " Checking link #" << distance(m_Group.begin(), li)
-                << "@" << li->id << " TO " << SockaddrToString(li->peer)
+                << "@" << li->id << " TO " << li->peer.str()
                 << " flight=" << flight);
 
         // Upgrade idle to running
