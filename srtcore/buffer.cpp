@@ -232,7 +232,9 @@ void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
 
         HLOGC(bslog.Debug,
               log << "addBuffer: %" << w_seqno << " #" << w_msgno << " spreading from=" << (i * m_iMSS)
-                  << " size=" << pktlen << " TO BUFFER:" << (void*)s->m_pcData);
+                  << " size=" << pktlen << " TO BUFFER:" << (void*)s->m_pcData
+                  << " time { origin=" << FormatTime(time)
+                  << " source=" << FormatTime(time_point(w_srctime)) << "}");
         memcpy((s->m_pcData), data + i * m_iMSS, pktlen);
         s->m_iLength = pktlen;
 
@@ -458,7 +460,8 @@ int CSndBuffer::readData(CPacket& w_packet, steady_clock::time_point& w_srctime,
     w_srctime         = getSourceTime(*m_pCurrBlock);
     m_pCurrBlock      = m_pCurrBlock->m_pNext;
 
-    HLOGC(qslog.Debug, log << CONID() << "CSndBuffer: extracting packet size=" << readlen << " to send");
+    HLOGC(qslog.Debug, log << CONID() << "CSndBuffer: extracting packet size=" << readlen
+            << " to send; fixed srctime=" << FormatTime(w_srctime));
 
     return readlen;
 }

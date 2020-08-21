@@ -9313,7 +9313,9 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet)
 
                     HLOGC(qslog.Debug, log << CONID() << "packData: Fixing EXTRACTION sequence " << m_iSndCurrSeqNo
                             << " from SCHEDULING sequence " << w_packet.m_iSeqNo
-                            << " DIFF: " << packetspan << " STAMP:" << BufferStamp(w_packet.m_pcData, w_packet.getLength()));
+                            << " DIFF: " << packetspan
+                            << " STAMP:" << BufferStamp(w_packet.m_pcData, w_packet.getLength())
+                            << " TIME: " << FormatTime(origintime));
 
                     // This is the very first packet to be sent; so there's nothing in
                     // the sending buffer yet, and therefore we are in a situation as just
@@ -9344,7 +9346,8 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet)
                     HLOGC(qslog.Debug, log << CONID() << "packData: Applying EXTRACTION sequence " << m_iSndCurrSeqNo
                             << " over SCHEDULING sequence " << w_packet.m_iSeqNo
                             << " DIFF: " << CSeqNo::seqcmp(m_iSndCurrSeqNo, w_packet.m_iSeqNo)
-                            << " STAMP:" << BufferStamp(w_packet.m_pcData, w_packet.getLength()));
+                            << " STAMP:" << BufferStamp(w_packet.m_pcData, w_packet.getLength())
+                            << " TIME: " << FormatTime(origintime));
 
                     HLOGC(qslog.Debug, log << "... CONDITION: IN GROUP: " << (m_parent->m_IncludedGroup ? "yes":"no")
                             << " extraction-seq=" << m_iSndCurrSeqNo << " scheduling-seq=" << w_packet.m_iSeqNo << " ISN=" << m_iISN);
