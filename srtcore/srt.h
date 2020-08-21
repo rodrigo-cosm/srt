@@ -574,9 +574,7 @@ enum SRT_REJECT_REASON
 
 // Logging API - specialization for SRT.
 
-// Define logging functional areas for log selection.
-// Use values greater than 0. Value 0 is reserved for LOGFA_GENERAL,
-// which is considered always enabled.
+// WARNING: This part is generated.
 
 // Logger Functional Areas
 // Note that 0 is "general".
@@ -597,42 +595,45 @@ enum SRT_REJECT_REASON
 // NOTE:
 // Use ../scripts/generate-logging-defs.tcl to regenerate.
 
-#define SRT_LOGFA_GENERAL    0 // gg
-#define SRT_LOGFA_SOCKMGMT   1 // sm
-#define SRT_LOGFA_CONN       2 // ca
-#define SRT_LOGFA_XTIMER     3 // xt
-#define SRT_LOGFA_TSBPD      4 // ts
-#define SRT_LOGFA_RSRC       5 // rs
-#define SRT_LOGFA_HAICRYPT   6 // hc
-#define SRT_LOGFA_CONGEST    7 // cc
-#define SRT_LOGFA_PFILTER    8 // pf
 
-#define SRT_LOGFA_APPLOG     10 // ap
-#define SRT_LOGFA_API_CTRL   11 // ac
+#define SRT_LOGFA_GENERAL    0 // gglog
+#define SRT_LOGFA_SOCKMGMT   1 // smlog
+#define SRT_LOGFA_CONN       2 // calog
+#define SRT_LOGFA_XTIMER     3 // xtlog
+#define SRT_LOGFA_TSBPD      4 // tslog
+#define SRT_LOGFA_RSRC       5 // rslog
 
-#define SRT_LOGFA_QUE_CTRL   13 // qc
+#define SRT_LOGFA_CONGEST    7 // cclog
+#define SRT_LOGFA_PFILTER    8 // pflog
 
-#define SRT_LOGFA_EPOLL_UPD  16 // ei
+#define SRT_LOGFA_API_CTRL   11 // aclog
 
-#define SRT_LOGFA_API_RECV   21 // ar
-#define SRT_LOGFA_BUF_RECV   22 // br
-#define SRT_LOGFA_QUE_RECV   23 // qr
-#define SRT_LOGFA_CHN_RECV   24 // kr
-#define SRT_LOGFA_GRP_RECV   25 // gr
+#define SRT_LOGFA_QUE_CTRL   13 // qclog
 
-#define SRT_LOGFA_API_SEND   31 // as
-#define SRT_LOGFA_BUF_SEND   32 // bs
-#define SRT_LOGFA_QUE_SEND   33 // qs
-#define SRT_LOGFA_CHN_SEND   34 // ks
-#define SRT_LOGFA_GRP_SEND   35 // gs
+#define SRT_LOGFA_EPOLL_UPD  16 // eilog
 
-#define SRT_LOGFA_INTERNAL   41 // ip
+#define SRT_LOGFA_API_RECV   21 // arlog
+#define SRT_LOGFA_BUF_RECV   22 // brlog
+#define SRT_LOGFA_QUE_RECV   23 // qrlog
+#define SRT_LOGFA_CHN_RECV   24 // krlog
+#define SRT_LOGFA_GRP_RECV   25 // grlog
 
-#define SRT_LOGFA_QUE_MGMT   43 // qm
-#define SRT_LOGFA_CHN_MGMT   44 // cm
-#define SRT_LOGFA_GRP_MGMT   45 // gm
-#define SRT_LOGFA_EPOLL_API  46 // ea
+#define SRT_LOGFA_API_SEND   31 // aslog
+#define SRT_LOGFA_BUF_SEND   32 // bslog
+#define SRT_LOGFA_QUE_SEND   33 // qslog
+#define SRT_LOGFA_CHN_SEND   34 // kslog
+#define SRT_LOGFA_GRP_SEND   35 // gslog
 
+#define SRT_LOGFA_INTERNAL   41 // iplog
+
+#define SRT_LOGFA_QUE_MGMT   43 // qmlog
+#define SRT_LOGFA_CHN_MGMT   44 // cmlog
+#define SRT_LOGFA_GRP_MGMT   45 // gmlog
+#define SRT_LOGFA_EPOLL_API  46 // ealog
+
+// Hidden
+#define SRT_LOGFA_HAICRYPT   6 // hclog
+#define SRT_LOGFA_APPLOG     10 // aplog
 
 // To make a typical int64_t size, although still use std::bitset.
 // C API will carry it over.
