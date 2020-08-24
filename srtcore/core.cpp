@@ -11528,7 +11528,7 @@ bool CUDT::runAcceptHook(CUDT *acore, const sockaddr* peer, const CHandShake& hs
     }
     if (have_group && acore->m_OPT_GroupConnect == 0)
     {
-        HLOGC(mglog.Debug, log << "runAcceptHook: REJECTING connection WITHOUT calling the hook - groups not allowed");
+        HLOGC(calog.Debug, log << "runAcceptHook: REJECTING connection WITHOUT calling the hook - groups not allowed");
         return false;
     }
 
