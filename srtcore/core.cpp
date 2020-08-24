@@ -12785,6 +12785,9 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
                     // Possible return values are only 0, in case when len was passed 0, or a positive
                     // >0 value that defines the size of the data that it has sent, that is, in case
                     // of Live mode, equal to 'blocklen'.
+                    HLOGC(gslog.Debug, log << "grp/sendBroadcast: sending size=" << len << " over @" << d->id
+                            << " #" << w_mc.msgno << " %" << w_mc.pktseq
+                            << " srctime=" << FormatTime(time_point(w_mc.srctime)));
                     stat = d->ps->core().sendmsg2(buf, blocklen, (w_mc));
                 }
                 catch (CUDTException& e)
@@ -14926,6 +14929,10 @@ int CUDTGroup::sendBackup(const char *buf, int len, SRT_MSGCTRL& w_mc)
 
             // Lift the group lock for a while, to avoid possible deadlocks.
             InvertedLock ug (m_GroupLock);
+
+            HLOGC(gslog.Debug, log << "grp/sendBackup: sending size=" << len << " over @" << d->id
+                    << " #" << w_mc.msgno << " %" << w_mc.pktseq
+                    << " srctime=" << FormatTime(time_point(w_mc.srctime)));
             stat = u.sendmsg2(buf, len, (w_mc));
         }
         catch (CUDTException& e)
