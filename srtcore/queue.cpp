@@ -513,6 +513,7 @@ void CSndQueue::init(CChannel *c, CTimer *t)
 #else
     const char* thname = "SRT:SndQ";
 #endif
+    HLOGC(qslog.Debug, log << "CSndQueue: SPAWNING: w" << m_counter);
     if (!StartThread(m_WorkerThread, CSndQueue::worker, this, thname))
         throw CUDTException(MJ_SYSTEMRES, MN_THREAD);
 }
@@ -1118,6 +1119,7 @@ void CRcvQueue::init(int qsize, int payload, int version, int hsize, CChannel *c
 #else
     const std::string thrname = "SRT:RcvQ:w";
 #endif
+    HLOGC(qrlog.Debug, log << "CRcvQueue: SPAWNING: w" << m_counter);
 
     if (!StartThread(m_WorkerThread, CRcvQueue::worker, this, thrname.c_str()))
     {
