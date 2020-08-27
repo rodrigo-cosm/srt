@@ -5439,7 +5439,7 @@ void CUDTGroup::setFreshConnected(CUDTSocket* sock)
 {
     ScopedLock glock (m_GroupLock);
 
-    HLOGC(calog.Debug, log << "group: Socket @" << sock->m_SocketID << " fresh connected, setting IDLE");
+    HLOGC(cnlog.Debug, log << "group: Socket @" << sock->m_SocketID << " fresh connected, setting IDLE");
 
     gli_t gi = sock->m_IncludedIter;
     gi->sndstate = SRT_GST_IDLE;

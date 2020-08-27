@@ -29,7 +29,7 @@ set model {
 set loggers {
 	GENERAL    gg  0
 	SOCKMGMT   sm  1
-	CONN       ca  2
+	CONN       cn  2
 	XTIMER     xt  3
 	TSBPD      ts  4
 	RSRC       rs  5
@@ -51,9 +51,9 @@ set loggers {
 	CHN_SEND   ks  34
 	GRP_SEND   gs  35
 
-	INTERNAL   ip  41
+	INTERNAL   in  41
 	QUE_MGMT   qm  43
-	CHN_MGMT   cm  44
+	CHN_MGMT   km  44
 	GRP_MGMT   gm  45
 	EPOLL_API  ea  46
 }

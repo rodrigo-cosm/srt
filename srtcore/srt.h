@@ -598,7 +598,7 @@ enum SRT_REJECT_REASON
 
 #define SRT_LOGFA_GENERAL    0 // gglog
 #define SRT_LOGFA_SOCKMGMT   1 // smlog
-#define SRT_LOGFA_CONN       2 // calog
+#define SRT_LOGFA_CONN       2 // cnlog
 #define SRT_LOGFA_XTIMER     3 // xtlog
 #define SRT_LOGFA_TSBPD      4 // tslog
 #define SRT_LOGFA_RSRC       5 // rslog
@@ -624,10 +624,10 @@ enum SRT_REJECT_REASON
 #define SRT_LOGFA_CHN_SEND   34 // kslog
 #define SRT_LOGFA_GRP_SEND   35 // gslog
 
-#define SRT_LOGFA_INTERNAL   41 // iplog
+#define SRT_LOGFA_INTERNAL   41 // inlog
 
 #define SRT_LOGFA_QUE_MGMT   43 // qmlog
-#define SRT_LOGFA_CHN_MGMT   44 // cmlog
+#define SRT_LOGFA_CHN_MGMT   44 // kmlog
 #define SRT_LOGFA_GRP_MGMT   45 // gmlog
 #define SRT_LOGFA_EPOLL_API  46 // ealog
 
