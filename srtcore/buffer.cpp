@@ -462,7 +462,7 @@ int CSndBuffer::readData(CPacket& w_packet, steady_clock::time_point& w_srctime,
     w_srctime         = getSourceTime(*m_pCurrBlock);
     m_pCurrBlock      = m_pCurrBlock->m_pNext;
 
-    HLOGC(qslog.Debug, log << CONID() << "CSndBuffer: extracting packet size=" << readlen
+    HLOGC(bslog.Debug, log << CONID() << "CSndBuffer: extracting packet size=" << readlen
             << " to send; fixed srctime=" << FormatTime(w_srctime));
 
     return readlen;
