@@ -579,17 +579,11 @@ enum SRT_REJECT_REASON
 // Logger Functional Areas
 // Note that 0 is "general".
 
-// XXX This part should better be generated
-// from logging_defs.inc.cpp, but this would require
-// that either whole srt.h is partially generated, or
-// this should be kept in a separate file.
-
 // Values 0* - general, unqualified
 // Values 1* - control
 // Values 2* - receiving
 // Values 3* - sending
 // Values 4* - management
-
 
 // Made by #define so that it's available also for C API.
 
