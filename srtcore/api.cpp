@@ -129,7 +129,7 @@ void CUDTSocket::makeShutdown()
     if (m_IncludedGroup)
     {
         HLOGC(smlog.Debug, log << "@" << m_SocketID << " IS MEMBER OF $" << m_IncludedGroup->id() << " - REMOVING FROM GROUP");
-        removeFromGroup();
+        removeFromGroup(true);
     }
 
     HLOGC(smlog.Debug, log << "@" << m_SocketID << " CLOSING AS SOCKET");
@@ -842,6 +842,34 @@ int CUDTUnited::installAcceptHook(const SRTSOCKET lsn, srt_listen_callback_fn* h
     return 0;
 }
 
+int CUDT::installConnectHook(SRTSOCKET lsn, srt_connect_callback_fn* hook, void* opaq)
+{
+    return s_UDTUnited.installConnectHook(lsn, hook, opaq);
+}
+
+int CUDTUnited::installConnectHook(const SRTSOCKET u, srt_connect_callback_fn* hook, void* opaq)
+{
+    try
+    {
+        if (u & SRTGROUP_MASK)
+        {
+            CUDTGroup* g = locateGroup(u, ERH_THROW);
+            g->installConnectHook(hook, opaq);
+            return 0;
+        }
+
+        CUDTSocket* s = locateSocket(u, ERH_THROW);
+        s->m_pUDT->installConnectHook(hook, opaq);
+    }
+    catch (CUDTException& e)
+    {
+        SetThreadLocalError(e);
+        return SRT_ERROR;
+    }
+
+    return 0;
+}
+
 SRT_SOCKSTATUS CUDTUnited::getStatus(const SRTSOCKET u)
 {
     // protects the m_Sockets structure
@@ -1097,28 +1125,28 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* pw_addr, int* pw_
       throw CUDTException(MJ_SETUP, MN_CLOSED, 0);
    }
 
+   CUDTSocket* s = locateSocket(u);
+   if (s == NULL)
+      throw CUDTException(MJ_SETUP, MN_CLOSED, 0);
+
+   // Check if LISTENER has the SRTO_GROUPCONNECT flag set,
+   // and the already accepted socket has successfully joined
+   // the mirror group. If so, RETURN THE GROUP ID, not the socket ID.
+   if (ls->m_pUDT->m_OPT_GroupConnect == 1 && s->m_IncludedGroup)
+   {
+       u = s->m_IncludedGroup->m_GroupID;
+       s->core().m_OPT_GroupConnect = 1; // should be derived from ls, but make sure
+   }
+   else
+   {
+       // Set properly the SRTO_GROUPCONNECT flag
+       s->core().m_OPT_GroupConnect = 0;
+   }
+
+   ScopedLock cg(s->m_ControlLock);
+   
    if (pw_addr != NULL && pw_addrlen != NULL)
    {
-      CUDTSocket* s = locateSocket(u);
-      if (s == NULL)
-         throw CUDTException(MJ_SETUP, MN_CLOSED, 0);
-
-      // Check if LISTENER has the SRTO_GROUPCONNECT flag set,
-      // and the already accepted socket has successfully joined
-      // the mirror group. If so, RETURN THE GROUP ID, not the socket ID.
-      if (ls->m_pUDT->m_OPT_GroupConnect == 1 && s->m_IncludedGroup)
-      {
-          u = s->m_IncludedGroup->m_GroupID;
-          s->core().m_OPT_GroupConnect = 1; // should be derived from ls, but make sure
-      }
-      else
-      {
-          // Set properly the SRTO_GROUPCONNECT flag
-          s->core().m_OPT_GroupConnect = 0;
-      }
-
-      ScopedLock cg(s->m_ControlLock);
-
       // Check if the length of the buffer to fill the name in
       // was large enough.
       const int len = s->m_PeerAddr.size();
@@ -1251,6 +1279,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
     // connection is going to later succeed or fail (this will be
     // known in the group state information).
     bool block_new_opened = !g.m_bOpened && g.m_bSynRecving;
+    const bool was_empty = g.empty();
     SRTSOCKET retval = -1;
 
     int eid = -1;
@@ -1283,6 +1312,12 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         // NOTE: After calling newSocket, the socket is mapped into m_Sockets.
         // It must be MANUALLY removed from this list in case we need it deleted.
         SRTSOCKET sid = newSocket(&ns);
+
+        if (pg->m_cbConnectHook)
+        {
+            // Derive the connect hook, if set on the socket
+            ns->m_pUDT->m_cbConnectHook = pg->m_cbConnectHook;
+        }
 
         SRT_SocketOptionObject* config = targets[tii].config;
 
@@ -1348,7 +1383,21 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         // Add socket to the group.
         // Do it after setting all stored options, as some of them may
         // influence some group data.
-        CUDTGroup::gli_t f = g.add(g.prepareData(ns));
+
+        CUDTGroup::SocketData data = g.prepareData(ns);
+        if (targets[tii].token != -1)
+        {
+            // Reuse the token, if specified by the caller
+            data.token = targets[tii].token;
+        }
+        else
+        {
+            // Otherwise generate and write back the token
+            data.token = CUDTGroup::genToken();
+            targets[tii].token = data.token;
+        }
+
+        CUDTGroup::gli_t f = g.add(data);
         ns->m_IncludedIter = f;
         ns->m_IncludedGroup = &g;
         f->weight = targets[tii].weight;
@@ -1369,7 +1418,6 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
             HLOGC(aclog.Debug, log << "groupConnect: NOT synchronizing sequence numbers: will sync on msgno");
             isn = -1;
         }
-
 
         // Set it the groupconnect option, as all in-group sockets should have.
         ns->m_pUDT->m_OPT_GroupConnect = 1;
@@ -1411,7 +1459,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
             // We know it does belong to a group.
             // Remove it first because this involves a mutex, and we want
             // to avoid locking more than one mutex at a time.
-            ns->removeFromGroup();
+            ns->removeFromGroup(false);
             erc_rloc = e.getErrorCode();
             targets[tii].errorcode = e.getErrorCode();
             targets[tii].id = CUDT::INVALID_SOCK;
@@ -1425,7 +1473,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         catch (...)
         {
             LOGC(aclog.Fatal, log << "groupConnect: IPE: UNKNOWN EXCEPTION from connectIn");
-            ns->removeFromGroup();
+            ns->removeFromGroup(false);
             targets[tii].errorcode = SRT_ESYSOBJ;
             targets[tii].id = CUDT::INVALID_SOCK;
             ScopedLock cl (m_GlobControlLock);
@@ -1446,9 +1494,9 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         {
             ScopedLock grd (g.m_GroupLock);
 
-            if (isn == 0)
+            if (was_empty)
             {
-                g.syncWithSocket(ns->core());
+                g.syncWithSocket(ns->core(), HSD_INITIATOR);
             }
 
             HLOGC(aclog.Debug, log << "groupConnect: @" << sid << " connection successful, setting group OPEN (was "
@@ -1495,7 +1543,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
     if (retval == -1)
     {
         HLOGC(aclog.Debug, log << "groupConnect: none succeeded as background-spawn, exit with error");
-        block_new_opened = false;
+        block_new_opened = false; // Avoid executing further while loop
     }
 
     vector<SRTSOCKET> broken;
@@ -1709,6 +1757,10 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
        // InvertedGuard unlocks in the constructor, then locks in the
        // destructor, no matter if an exception has fired.
        InvertedLock l_unlocker (s->m_pUDT->m_bSynRecving ? &s->m_ControlLock : 0);
+
+       // record peer address
+       s->m_PeerAddr = target_addr;
+
        s->m_pUDT->startConnect(target_addr, forced_isn);
    }
    catch (CUDTException& e) // Interceptor, just to change the state.
@@ -1716,9 +1768,6 @@ int CUDTUnited::connectIn(CUDTSocket* s, const sockaddr_any& target_addr, int32_
       s->m_Status = SRTS_OPENED;
       throw e;
    }
-
-   // record peer address
-   s->m_PeerAddr = target_addr;
 
    // ScopedLock destructor will delete cg and unlock s->m_ControlLock
 
@@ -2951,13 +3000,23 @@ int CUDT::removeSocketFromGroup(SRTSOCKET socket)
         return APIError(MJ_NOTSUP, MN_INVAL, 0);
 
     ScopedLock grd (s->m_ControlLock);
-    s->removeFromGroup();
+    s->removeFromGroup(false);
     return 0;
 }
 
-void CUDTSocket::removeFromGroup()
+void CUDTSocket::removeFromGroup(bool broken)
 {
     m_IncludedGroup->remove(m_SocketID);
+    if (broken)
+    {
+        // Activate the SRT_EPOLL_UPDATE event on the group
+        // if it was because of a socket that was earlier connected
+        // and became broken. This is not to be sent in case when
+        // it is a failure during connection, or the socket was
+        // explicitly removed from the group.
+        m_IncludedGroup->activateUpdateEvent();
+    }
+
     m_IncludedIter = CUDTGroup::gli_NULL();
     m_IncludedGroup = NULL;
 }

@@ -165,7 +165,7 @@ public:
    /// operation, but continues to be responsive in the connection in order
    /// to finish sending the data that were scheduled for sending so far.
    void makeShutdown();
-   void removeFromGroup();
+   void removeFromGroup(bool broken);
 
    // Instrumentally used by select() and also required for non-blocking
    // mode check in groups
@@ -221,6 +221,7 @@ public:
            CHandShake& w_hs, int& w_error, std::string& w_streaminfo);
 
    int installAcceptHook(const SRTSOCKET lsn, srt_listen_callback_fn* hook, void* opaq);
+   int installConnectHook(const SRTSOCKET lsn, srt_connect_callback_fn* hook, void* opaq);
 
       /// Check the status of the UDT socket.
       /// @param [in] u the UDT socket ID.

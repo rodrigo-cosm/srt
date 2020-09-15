@@ -49,16 +49,40 @@ class SrtCommon
 
 protected:
 
-    struct Connection
+    friend void TransmitGroupSocketConnect(void* srtcommon, SRTSOCKET sock, int error, const sockaddr* peer, int token);
+
+    struct ConnectionBase
     {
         string host;
         int port;
         int weight = 0;
         SRTSOCKET socket = SRT_INVALID_SOCK;
         sockaddr_any source;
-        SRT_SOCKOPT_CONFIG* options = nullptr;
+        sockaddr_any target;
+        int token = -1;
 
-        Connection(string h, int p): host(h), port(p), source(AF_INET) {}
+        ConnectionBase(string h, int p): host(h), port(p), source(AF_INET) {}
+    };
+
+    struct Connection: ConnectionBase
+    {
+        SRT_SOCKOPT_CONFIG* options = nullptr;
+        int error = SRT_SUCCESS;
+        int reason = SRT_REJ_UNKNOWN;
+
+        Connection(string h, int p): ConnectionBase(h, p) {}
+        Connection(Connection&& old): ConnectionBase(old)
+        {
+            if (old.options)
+            {
+                options = old.options;
+                old.options = nullptr;
+            }
+        }
+        ~Connection()
+        {
+            srt_delete_config(options);
+        }
     };
 
     int srt_epoll = -1;
