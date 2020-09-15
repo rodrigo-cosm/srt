@@ -6741,13 +6741,14 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
        fputs(ptrn, stderr);
     // */
 
+    const int seqdistance = -1;
+
     if (m_bBroken || m_bClosing)
     {
-        HLOGC(arlog.Debug, log << CONID() << "receiveMessage: CONNECTION BROKEN - reading from recv buffer just for formality");
+        HLOGC(arlog.Debug, log << CONID() << "receiveMessage: CONNECTION BROKEN - reading from buffer while possible");
         enterCS(m_RcvBufferLock);
-        int res       = m_pRcvBuffer->readMsg(data, len);
+        const int res       = m_pRcvBuffer->readMsg(data, len, (w_mctrl), seqdistance);
         leaveCS(m_RcvBufferLock);
-        w_mctrl.srctime = 0;
 
         // Kick TsbPd thread to schedule next wakeup (if running)
         if (m_bTsbPd)
@@ -6778,8 +6779,6 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
         else
             return res;
     }
-
-    const int seqdistance = -1;
 
     if (!m_bSynRecving)
     {

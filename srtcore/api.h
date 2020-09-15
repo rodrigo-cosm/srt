@@ -170,6 +170,7 @@ public:
    // Instrumentally used by select() and also required for non-blocking
    // mode check in groups
    bool readReady();
+   bool readCapable();
    bool writeReady();
    bool broken();
 
@@ -352,6 +353,7 @@ private:
 
 private:
    friend struct FLookupSocketWithEvent;
+   friend struct FSocketIsNotReadCapable;
 
    CUDTSocket* locateSocket(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);

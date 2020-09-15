@@ -156,6 +156,20 @@ bool CUDTSocket::readReady()
     return broken();
 }
 
+bool CUDTSocket::readCapable()
+{
+    if (!m_pUDT->m_pRcvBuffer)
+       return false;
+
+    // Something in the buffer
+    if (m_pUDT->m_pRcvBuffer->isRcvDataAvailable())
+        return true;
+
+    // If the buffer is empty, you may still potentially
+    // receive data, if the socket is still connected
+    return !broken();
+}
+
 bool CUDTSocket::writeReady()
 {
     return (m_pUDT->m_bConnected
@@ -717,7 +731,9 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
       // Add also per-direction subscription for the about-to-be-accepted socket.
       // Both first accepted socket that makes the group-accept and every next
       // socket that adds a new link.
-      int read_modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
+      // int read_modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
+      // XXX EXPERIMENTAL: DO NOT POLL ON ERR for reading.
+      int read_modes = SRT_EPOLL_IN;
       int write_modes = SRT_EPOLL_OUT | SRT_EPOLL_ERR;
       srt_epoll_add_usock(g->m_RcvEID, ns->m_SocketID, &read_modes);
       srt_epoll_add_usock(g->m_SndEID, ns->m_SocketID, &write_modes);

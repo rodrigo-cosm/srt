@@ -1746,6 +1746,27 @@ struct FLookupSocketWithEvent
     }
 };
 
+struct FSocketIsNotReadCapable
+{
+    CUDTUnited* glob;
+    FSocketIsNotReadCapable(CUDTUnited* g)
+        : glob(g)
+    {
+    }
+
+    typedef CUDTSocket* result_type;
+
+    pair<CUDTSocket*, bool> operator()(const pair<SRTSOCKET, int>& es)
+    {
+        CUDTSocket* so = glob->locateSocket(es.first, glob->ERH_RETURN);
+
+        if (so && so->readCapable())
+            return make_pair(so, true);
+
+        return make_pair<CUDTSocket*>(NULL, false);
+    }
+};
+
 void CUDTGroup::updateReadState(SRTSOCKET /* not sure if needed */, int32_t sequence)
 {
     bool       ready = false;
@@ -1940,6 +1961,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
                     continue; // don't read over a failed or pending socket
                 }
 
+                /* blocked temporarily broken check
                 if (gi->laststatus >= SRTS_BROKEN)
                 {
                     broken.insert(gi->ps);
@@ -1950,6 +1972,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
                     HCLOG(ds << "@" << gi->id << "<broken> ");
                     continue;
                 }
+                */
 
                 if (gi->laststatus != SRTS_CONNECTED)
                 {
@@ -1986,7 +2009,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
             }
         }
 
-        int read_modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
+        int read_modes = SRT_EPOLL_IN; // XXX EXPERIMENTAL: ONLY READING XXX | SRT_EPOLL_ERR;
 
         /* Done at the connecting stage so that it won't be missed.
 
@@ -2067,11 +2090,19 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
         //                          : {nullptr, false}
         //                   });
 
+        // XXX EXPERIMENTAL: block premature check for blocking
+        // FilterIf(
+        //     /*VFROM*/ sready.begin(),
+        //     sready.end(),
+        //     /*TO*/ std::inserter(broken, broken.begin()),
+        //     /*VIA*/ FLookupSocketWithEvent(m_pGlobal, SRT_EPOLL_ERR));
+        // INSTEAD:
+        // Check if a socket is NOT READ CAPABLE.
         FilterIf(
-            /*FROM*/ sready.begin(),
-            sready.end(),
-            /*TO*/ std::inserter(broken, broken.begin()),
-            /*VIA*/ FLookupSocketWithEvent(m_pGlobal, SRT_EPOLL_ERR));
+             /*VFROM*/ sready.begin(),
+             sready.end(),
+             /*TO*/ std::inserter(broken, broken.begin()),
+             /*VIA*/ FSocketIsNotReadCapable(m_pGlobal));
 
         // Ok, now we need to have some extra qualifications:
         // 1. If a socket has no registry yet, we read anyway, just
@@ -2092,11 +2123,16 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
 
         for (CEPoll::fmap_t::const_iterator i = sready.begin(); i != sready.end(); ++i)
         {
+            /* XXX don't skip broken. Wait for error.
             if (i->second & SRT_EPOLL_ERR)
                 continue; // broken already
+                */
 
             if ((i->second & SRT_EPOLL_IN) == 0)
+            {
+                HLOGC(grlog.Debug, log << "group/recv: @" << i->first << " NOT READ-READY");
                 continue; // not ready for reading
+            }
 
             // Check if this socket is in aheads
             // If so, don't read from it, wait until the ahead is flushed.
@@ -2178,6 +2214,15 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
                     HLOGC(grlog.Debug, log << "group/recv: @" << id << ": " << srt_getlasterror_str());
                     broken.insert(ps);
                     break;
+                }
+                else
+                {
+                    // Could be reported as broken already, BUT reading might have
+                    // still succeeded. If so, remove it from broken.
+                    if (broken.erase(ps))
+                    {
+                        HLOGC(grlog.Debug, log << "group/recv: @" << id << " is broken, but it did deliver data. KEEPING SO FAR.");
+                    }
                 }
 
                 // NOTE: checks against m_RcvBaseSeqNo and decisions based on it
