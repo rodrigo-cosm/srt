@@ -614,6 +614,7 @@ private:
         MetricUsage<PacketMetric> recv;        // number of packets delivered from the group to the application
         MetricUsage<PacketMetric> recvDrop;    // number of packets dropped by the group receiver (not received from any member)
         MetricUsage<PacketMetric> recvDiscard; // number of packets discarded as already delivered
+        MetricUsage<uint32_t> countBreak, countActivate, countEager, countSilence;
 
         void init()
         {
@@ -622,6 +623,10 @@ private:
             recv.Init();
             recvDrop.Init();
             recvDiscard.Init();
+            countBreak.Init();
+            countActivate.Init();
+            countEager.Init();
+            countSilence.Init();
 
             reset();
         }
@@ -632,6 +637,10 @@ private:
             recv.Clear();
             recvDrop.Clear();
             recvDiscard.Clear();
+            countBreak.Clear();
+            countActivate.Clear();
+            countEager.Clear();
+            countSilence.Clear();
 
             tsLastSampleTime = srt::sync::steady_clock::now();
         }
