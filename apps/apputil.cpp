@@ -366,6 +366,10 @@ struct SrtStatsTableInit
         STAT(LINK, rtt, msRTT);
         STAT(LINK, bandwidth, mbpsBandwidth);
         STAT(LINK, maxBandwidth, mbpsMaxBW);
+        STAT(LINK, breaks, countBreak);
+        STAT(LINK, activate, countActivate);
+        STAT(LINK, overreact, countEager);
+        STAT(LINK, silenced, countSilence);
 
         STAT(SEND, packets, pktSent);
         STAT(SEND, packetsUnique, pktSentUnique);
