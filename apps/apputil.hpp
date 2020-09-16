@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "netinet_any.h"
+#include "utilities.h"
 
 #if _WIN32
 
@@ -314,7 +315,7 @@ enum SrtStatsPrintFormat
     SRTSTATS_PROFMAT_CSV
 };
 
-SrtStatsPrintFormat ParsePrintFormat(std::string pf);
+SrtStatsPrintFormat ParsePrintFormat(std::string pf, std::string& w_extras);
 
 enum SrtStatCat
 {
@@ -360,6 +361,24 @@ public:
     virtual std::string WriteBandwidth(double mbpsBandwidth) = 0;
     virtual ~SrtStatsWriter() { };
 
+    void Option(const std::string& key, const std::string& val)
+    {
+        options[key] = val;
+    }
+
+    bool Option(const std::string& key, std::string* rval = nullptr)
+    {
+        const std::string* out = map_getp(options, key);
+        if (!out)
+            return false;
+
+        if (rval)
+            *rval = *out;
+        return true;
+    }
+
+protected:
+    std::map<std::string, std::string> options;
 
 };
 
