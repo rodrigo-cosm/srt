@@ -53,6 +53,7 @@ bool transmit_printformat_json = false;
 srt_listen_callback_fn* transmit_accept_hook_fn = nullptr;
 void* transmit_accept_hook_op = nullptr;
 bool transmit_use_sourcetime = false;
+ofstream* transmit_stats_stream = nullptr;
 
 // Do not unblock. Copy this to an app that uses applog and set appropriate name.
 //srt_logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-test");
@@ -1481,10 +1482,12 @@ static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
     // clear only if stats report is to be read
     srt_bstats(sock, &perf, clr);
 
+    ostream& sout = ::transmit_stats_stream ? *::transmit_stats_stream : cout;
+
     if (bw)
-        cout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
+        sout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
     if (stats)
-        cout << transmit_stats_writer->WriteStats(sock, perf);
+        sout << transmit_stats_writer->WriteStats(sock, perf);
 }
 
 

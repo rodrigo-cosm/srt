@@ -443,6 +443,7 @@ int main( int argc, char** argv )
         o_logfile   ((optargs), "<filepath> File to send logs to", "lf",  "logfile"),
         o_stats     ((optargs), "<freq[npkt]> How often stats should be reported", "s",   "stats", "stats-report-frequency"),
         o_statspf   ((optargs), "<format=default|csv|json> Format for printing statistics", "pf", "statspf", "statspformat"),
+        o_statsf    ((optargs), "<filename> File to output statistics", "sfile", "statsfile"),
         o_logint    ((optargs), " Use internal function for receiving logs (for testing)",        "loginternal"),
         o_skipflush ((optargs), " Do not wait safely 5 seconds at the end to flush buffers", "sf",  "skipflush"),
         o_stoptime  ((optargs), "<time[s]=0[no timeout]> Time after which the application gets interrupted", "d", "stoptime"),
@@ -705,6 +706,19 @@ int main( int argc, char** argv )
             klv.resize(2);
             transmit_stats_writer->Option(klv[0], klv[1]);
         }
+    }
+
+    string sfilename = Option<OutString>(params, "", o_statsf);
+    ofstream sfile;
+    if (sfilename != "")
+    {
+        sfile.open(sfilename);
+        if (!sfile)
+        {
+            cerr << "Can't open stats file '" << sfilename << "' for writing\n";
+            return 1;
+        }
+        ::transmit_stats_stream = &sfile;
     }
 
     // Options that require integer conversion

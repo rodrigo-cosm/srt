@@ -15,6 +15,7 @@
 #include <map>
 #include <stdexcept>
 #include <deque>
+#include <fstream>
 
 #include "testmediabase.hpp"
 #include <udt.h> // Needs access to CUDTException
@@ -22,6 +23,7 @@
 
 extern srt_listen_callback_fn* transmit_accept_hook_fn;
 extern void* transmit_accept_hook_op;
+extern std::ofstream* transmit_stats_stream;
 
 extern std::shared_ptr<SrtStatsWriter> transmit_stats_writer;
 
