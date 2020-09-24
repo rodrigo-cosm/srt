@@ -2770,6 +2770,10 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
     {
         // The last response predates the start of this function, look at the difference
         steady_clock::duration td_responsive = currtime - u.m_tsLastRspTime;
+        {
+            ScopedLock lg(d->ps->core().m_StatsLock);
+            d->ps->core().m_stats.tdMaxProbedResponseTime.Update(td_responsive);
+        }
 
         IF_HEAVY_LOGGING(string source = "heard");
 

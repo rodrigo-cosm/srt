@@ -1191,6 +1191,7 @@ private: // Trace
 
         AverageMetricUsage<duration> tdAverageResponseTime;
         MaxMetricUsage<duration> tdMaxResponseTime;
+        MaxMetricUsage<duration> tdMaxProbedResponseTime;
     } m_stats;
 
     /// This function records the passed current time as the last response time.

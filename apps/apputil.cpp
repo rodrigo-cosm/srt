@@ -384,6 +384,7 @@ struct SrtStatsTableInit
         STAT(SEND, sendPeriod, usPktSndPeriod);
         STAT(SEND, msAvgResponseTime, msAvgResponseTime);
         STAT(SEND, msMaxResponseTime, msMaxResponseTime);
+        STAT(SEND, msMaxProbedResponseTime, msMaxProbedResponseTime);
 
         STAT(RECV, packets, pktRecv);
         STAT(RECV, packetsUnique, pktRecvUnique);

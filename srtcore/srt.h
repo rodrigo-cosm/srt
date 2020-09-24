@@ -415,6 +415,7 @@ struct CBytePerfMon
    uint64_t byteRecvUniqueTotal;        // total number of data bytes to be received by the application
    uint32_t msAvgResponseTimeTotal;
    uint32_t msMaxResponseTimeTotal;
+   uint32_t msMaxProbedResponseTimeTotal;
 
    // Local
    int64_t  pktSentUnique;              // number of data packets sent by the application
@@ -423,6 +424,7 @@ struct CBytePerfMon
    uint64_t byteRecvUnique;             // number of data bytes to be received by the application
    uint32_t msAvgResponseTime;
    uint32_t msMaxResponseTime;
+   uint32_t msMaxProbedResponseTime;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
