@@ -2775,7 +2775,7 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
             d->ps->core().m_stats.tdMaxProbedResponseTime.Update(td_responsive);
         }
 
-        IF_HEAVY_LOGGING(string source = "heard");
+        IF_HEAVY_LOGGING(void(0)); string source = "heard";
 
         bool check_stability = true;
 
