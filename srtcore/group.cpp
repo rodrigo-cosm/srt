@@ -2809,13 +2809,14 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
             if (u.m_tsLastRspAckTime < u.m_tsTmpActiveTime)
             {
                 check_stability = false;
-                HLOGC(gslog.Debug,
+                LOGC(gslog.Debug,
                       log << "grp/sendBackup: link @" << d->id
-                          << " activated after ACK, "
-                             "not checking for stability");
+                          << " activated after ACK, not checking for stability ("
+                          << FormatDuration(td_responsive) << " vs max " << m_uOPT_StabilityTimeout << "ms)");
             }
             else
             {
+                LOGC(gslog.Debug, log << "grp/sendBackup: link @" << d->id << " EXIT Temporary Activation");
                 u.m_tsTmpActiveTime = steady_clock::time_point();
             }
         }
@@ -2824,14 +2825,21 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
         {
             if (is_zero(u.m_tsUnstableSince))
             {
-                HLOGC(gslog.Debug,
+                LOGC(gslog.Debug,
                       log << "grp/sendBackup: socket NEW UNSTABLE: @" << d->id << " last " << source << " "
                           << FormatDuration(td_responsive) << " > " << m_uOPT_StabilityTimeout
-                          << " (stability timeout)");
+                          << "ms (stability timeout)");
                 // The link seems to have missed two ACKs already.
                 // Qualify this link as unstable
                 // Notify that it has been seen so since now
                 u.m_tsUnstableSince = currtime;
+            }
+            else
+            {
+                LOGC(gslog.Debug,
+                      log << "grp/sendBackup: socket STILL UNSTABLE: @" << d->id << " last " << source << " "
+                          << FormatDuration(td_responsive) << " > " << m_uOPT_StabilityTimeout
+                          << " (stability timeout)");
             }
 
             is_unstable = true;
@@ -2843,7 +2851,7 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
     {
         bool restored = !is_zero(u.m_tsUnstableSince);
         // If stability is ok, but unstable-since was set before, reset it.
-        HLOGC(gslog.Debug,
+        LOGC(gslog.Debug,
               log << "grp/sendBackup: link STABLE: @" << d->id
                   << (restored? " - RESTORED" : " - CONTINUED"));
 
@@ -2852,17 +2860,17 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
         w_restored = restored;
     }
 
-#if ENABLE_HEAVY_LOGGING
+#if 1 // ENABLE_HEAVY_LOGGING
     // Could be set above
     if (is_unstable)
     {
-        HLOGC(gslog.Debug,
+        LOGC(gslog.Debug,
               log << "grp/sendBackup: link UNSTABLE for " << FormatDuration(currtime - u.m_tsUnstableSince) << " : @"
                   << d->id << " - will send a payload");
     }
     else
     {
-        HLOGC(gslog.Debug, log << "grp/sendBackup: socket in RUNNING state: @" << d->id << " - will send a payload");
+        LOGC(gslog.Debug, log << "grp/sendBackup: socket in RUNNING state: @" << d->id << " - will send a payload");
     }
 #endif
 
