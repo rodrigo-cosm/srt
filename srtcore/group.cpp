@@ -3822,6 +3822,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
         // Remaining sndstate is SRT_GST_RUNNING. Send a payload through it.
         CUDT&   u       = d->ps->core();
         int32_t lastseq = u.schedSeqNo();
+        /* THIS was removed from master - possibly two colliding solutions!
         if (curseq != SRT_SEQNO_NONE && curseq != lastseq)
         {
             LOGC(gslog.Error, log << "IPE: @" << d->id << " sched-seq=%" << lastseq
@@ -3835,6 +3836,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
                 continue;
             }
         }
+        */
         try
         {
             // This must be wrapped in try-catch because on error it throws an exception.
