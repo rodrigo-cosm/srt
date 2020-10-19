@@ -10745,11 +10745,19 @@ bool CUDT::checkExpTimer(const steady_clock::time_point& currtime, int check_rea
         // app can call any UDT API to learn the connection_broken error
         s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
         int token = -1;
+        bool pending_broken = false;
 #if ENABLE_EXPERIMENTAL_BONDING
         if (m_parent->m_IncludedGroup)
         {
-            // Bound to one call because this requires locking
-            token = m_parent->m_IncludedGroup->updateFailedLink(m_SocketID);
+            token = m_parent->m_IncludedIter->token;
+            if (m_parent->m_IncludedIter->sndstate == SRT_GST_PENDING)
+            {
+                HLOGC(gmlog.Debug, log << "checkExpTimer: a pending link was broken - will be removed");
+                pending_broken = true;
+            }
+
+            m_parent->m_IncludedIter->sndstate = SRT_GST_BROKEN;
+            m_parent->m_IncludedIter->rcvstate = SRT_GST_BROKEN;
         }
 #endif
         CGlobEvent::triggerEvent();
@@ -10757,6 +10765,20 @@ bool CUDT::checkExpTimer(const steady_clock::time_point& currtime, int check_rea
         {
             CALLBACK_CALL(m_cbConnectHook, m_SocketID, SRT_ENOSERVER, m_PeerAddr.get(), token);
         }
+
+#if ENABLE_EXPERIMENTAL_BONDING
+        if (m_parent->m_IncludedGroup)
+        {
+            // DO NOT close it, if it wasn't pending because if it passed through
+            // the "connected" state and was used for sending the data, the sending/receiving
+            // function might want to check it up.
+            if (pending_broken)
+                s_UDTUnited.close(m_parent);
+
+            // Bound to one call because this requires locking
+            m_parent->m_IncludedGroup->updateFailedLink();
+        }
+#endif
 
         return true;
     }

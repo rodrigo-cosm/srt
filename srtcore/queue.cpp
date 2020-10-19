@@ -974,10 +974,20 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
             CUDT::s_UDTUnited.m_EPoll.update_events(i->m_iID, i->m_pUDT->m_sPollID, SRT_EPOLL_ERR, true);
             int token = -1;
 #if ENABLE_EXPERIMENTAL_BONDING
-            if (i->m_pUDT->m_parent->m_IncludedGroup)
+            bool pending_broken = false;
+            CUDT* thisu = i->m_pUDT;
+
+            if (thisu->m_parent->m_IncludedGroup)
             {
-                // Bound to one call because this requires locking
-                token = i->m_pUDT->m_parent->m_IncludedGroup->updateFailedLink(i->m_iID);
+                token = thisu->m_parent->m_IncludedIter->token;
+                if (thisu->m_parent->m_IncludedIter->sndstate == SRT_GST_PENDING)
+                {
+                    HLOGC(gmlog.Debug, log << "checkExpTimer: a pending link was broken - will be removed");
+                    pending_broken = true;
+                }
+
+                thisu->m_parent->m_IncludedIter->sndstate = SRT_GST_BROKEN;
+                thisu->m_parent->m_IncludedIter->rcvstate = SRT_GST_BROKEN;
             }
 #endif
             CGlobEvent::triggerEvent();
@@ -996,6 +1006,20 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
             // i_next was preincremented, but this is guaranteed to point to
             // the element next to erased one.
             i_next = m_lRendezvousID.erase(i);
+
+#if ENABLE_EXPERIMENTAL_BONDING
+            if (thisu->m_parent->m_IncludedGroup)
+            {
+                // DO NOT close it, if it wasn't pending because if it passed through
+                // the "connected" state and was used for sending the data, the sending/receiving
+                // function might want to check it up.
+                if (pending_broken)
+                    thisu->s_UDTUnited.close(thisu->m_parent);
+
+                // Bound to one call because this requires locking
+                thisu->m_parent->m_IncludedGroup->updateFailedLink();
+            }
+#endif
             continue;
         }
         else
