@@ -884,6 +884,8 @@ void TransmitGroupSocketConnect(void* srtcommon, SRTSOCKET sock, int error, cons
         return; // nothing to do for a successful socket
     }
 
+    Verb() << "Connect callback - error: " << srt_strerror(error, 0);
+
     /* Example: identify by target address
     sockaddr_any peersa = peer;
     sockaddr_any agentsa;
