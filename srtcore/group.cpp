@@ -4261,7 +4261,22 @@ void CUDTGroup::updateLatestRcv(CUDTGroup::gli_t current)
 
 void CUDTGroup::activateUpdateEvent()
 {
-    m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_UPDATE, true);
+    // This function actually reacts on the fact that a socket
+    // was deleted from the group. This might make the group empty.
+    bool isempty = false;
+    {
+        ScopedLock lock (m_GroupLock);
+        isempty = m_Group.empty();
+    }
+
+    if (isempty)
+    {
+        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
+    }
+    else
+    {
+        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_UPDATE, true);
+    }
 }
 
 void CUDTGroup::addEPoll(int eid)

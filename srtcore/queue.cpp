@@ -971,33 +971,8 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                 // suggest error on the peer
                 i->m_pUDT->m_RejectReason = SRT_REJ_PEER;
             }
-            CUDT::s_UDTUnited.m_EPoll.update_events(i->m_iID, i->m_pUDT->m_sPollID, SRT_EPOLL_ERR, true);
-            int token = -1;
-#if ENABLE_EXPERIMENTAL_BONDING
-            bool pending_broken = false;
-            CUDT* thisu = i->m_pUDT;
 
-            if (thisu->m_parent->m_IncludedGroup)
-            {
-                token = thisu->m_parent->m_IncludedIter->token;
-                if (thisu->m_parent->m_IncludedIter->sndstate == SRT_GST_PENDING)
-                {
-                    HLOGC(gmlog.Debug, log << "checkExpTimer: a pending link was broken - will be removed");
-                    pending_broken = true;
-                }
-
-                thisu->m_parent->m_IncludedIter->sndstate = SRT_GST_BROKEN;
-                thisu->m_parent->m_IncludedIter->rcvstate = SRT_GST_BROKEN;
-            }
-#endif
-            CGlobEvent::triggerEvent();
-
-            if (i->m_pUDT->m_cbConnectHook)
-            {
-                CALLBACK_CALL(i->m_pUDT->m_cbConnectHook, i->m_iID,
-                        i->m_pUDT->m_RejectReason == SRT_REJ_TIMEOUT ? SRT_ENOSERVER : SRT_ECONNREJ,
-                            i->m_PeerAddr.get(), token);
-            }
+            i->m_pUDT->updateBrokenConnection();
             /*
              * Setting m_bConnecting to false but keeping socket in rendezvous queue is not a good idea.
              * Next CUDT::close will not remove it from rendezvous queue (because !m_bConnecting)
@@ -1006,20 +981,6 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
             // i_next was preincremented, but this is guaranteed to point to
             // the element next to erased one.
             i_next = m_lRendezvousID.erase(i);
-
-#if ENABLE_EXPERIMENTAL_BONDING
-            if (thisu->m_parent->m_IncludedGroup)
-            {
-                // DO NOT close it, if it wasn't pending because if it passed through
-                // the "connected" state and was used for sending the data, the sending/receiving
-                // function might want to check it up.
-                if (pending_broken)
-                    thisu->s_UDTUnited.close(thisu->m_parent);
-
-                // Bound to one call because this requires locking
-                thisu->m_parent->m_IncludedGroup->updateFailedLink();
-            }
-#endif
             continue;
         }
         else
