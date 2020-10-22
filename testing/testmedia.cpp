@@ -1029,7 +1029,9 @@ void SrtCommon::OpenGroupClient()
     {
         Verb() << "Waiting for group connection... " << VerbNoEOL;
 
+        ::transmit_throw_on_interrupt = true;
         int fisock = srt_connect_group(m_sock, targets.data(), targets.size());
+        ::transmit_throw_on_interrupt = false;
 
         if (fisock == SRT_ERROR)
         {
@@ -1241,7 +1243,9 @@ void SrtCommon::ConnectClient(string host, int port)
     int stat = -1;
     for (;;)
     {
+        ::transmit_throw_on_interrupt = true;
         stat = srt_connect(m_sock, sa.get(), sizeof sa);
+        ::transmit_throw_on_interrupt = false;
         if (stat == SRT_ERROR)
         {
             int reason = srt_getrejectreason(m_sock);

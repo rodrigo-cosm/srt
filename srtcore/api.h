@@ -83,6 +83,7 @@ public:
 #if ENABLE_EXPERIMENTAL_BONDING
        , m_IncludedGroup()
 #endif
+       , m_bMarkSweep(false)
        , m_iISN(0)
        , m_pUDT(NULL)
        , m_pQueuedSockets(NULL)
@@ -119,6 +120,7 @@ public:
    CUDTGroup::gli_t m_IncludedIter;          //< Container's iterator of the group to which it belongs, or gli_NULL() if it isn't
    CUDTGroup* m_IncludedGroup;               //< Group this socket is a member of, or NULL if it isn't
 #endif
+   volatile bool m_bMarkSweep;
 
    int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
 

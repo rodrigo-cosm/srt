@@ -7607,8 +7607,16 @@ void CUDT::initSynch()
 void CUDT::destroySynch()
 {
     releaseMutex(m_SendBlockLock);
+
+    // Just in case, signal the CV, on which some
+    // other thread is possibly waiting, because a
+    // process hanging on a pthread_cond_wait would
+    // cause the call to destroy a CV hang up.
+    m_SendBlockCond.notify_all();
     releaseCond(m_SendBlockCond);
     releaseMutex(m_RecvDataLock);
+
+    m_RecvDataCond.notify_all();
     releaseCond(m_RecvDataCond);
     releaseMutex(m_SendLock);
     releaseMutex(m_RecvLock);
@@ -7617,6 +7625,8 @@ void CUDT::destroySynch()
     releaseMutex(m_RcvBufferLock);
     releaseMutex(m_ConnectionLock);
     releaseMutex(m_StatsLock);
+
+    m_RcvTsbPdCond.notify_all();
     releaseCond(m_RcvTsbPdCond);
 }
 
@@ -10914,9 +10924,12 @@ void CUDT::updateBrokenConnection()
         // function might want to check it up.
         if (pending_broken)
         {
+            s_UDTUnited.close(m_parent);
         }
-
-        s_UDTUnited.close(m_parent);
+        else
+        {
+            m_parent->m_bMarkSweep = true;
+        }
 
         // Bound to one call because this requires locking
         pg->updateFailedLink();
