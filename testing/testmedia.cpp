@@ -53,6 +53,7 @@ bool transmit_printformat_json = false;
 srt_listen_callback_fn* transmit_accept_hook_fn = nullptr;
 void* transmit_accept_hook_op = nullptr;
 bool transmit_use_sourcetime = false;
+int transmit_retry_connect = 0;
 
 // Do not unblock. Copy this to an app that uses applog and set appropriate name.
 //srt_logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-test");
@@ -1024,26 +1025,43 @@ void SrtCommon::OpenGroupClient()
         targets.push_back(gd);
     }
 
-    Verb() << "Waiting for group connection... " << VerbNoEOL;
-
-    int fisock = srt_connect_group(m_sock, targets.data(), targets.size());
-
-    if (fisock == SRT_ERROR)
+    for (;;) // REPEATABLE BLOCK
     {
-        // Complete the error information for every member
+        Verb() << "Waiting for group connection... " << VerbNoEOL;
 
-        ostringstream out;
-        for (Connection& c: m_group_nodes)
+        int fisock = srt_connect_group(m_sock, targets.data(), targets.size());
+
+        if (fisock == SRT_ERROR)
         {
-            if (c.error != SRT_SUCCESS)
+            // Complete the error information for every member
+
+            ostringstream out;
+            set<int> reasons;
+            for (Connection& c: m_group_nodes)
             {
-                out << "[" << c.token << "] " << c.host << ":" << c.port;
-                if (!c.source.empty())
-                    out << "[[" << c.source.str() << "]]";
-                out << ": " << srt_strerror(c.error, 0) << ": " << srt_rejectreason_str(c.reason) << endl;
+                if (c.error != SRT_SUCCESS)
+                {
+                    out << "[" << c.token << "] " << c.host << ":" << c.port;
+                    if (!c.source.empty())
+                        out << "[[" << c.source.str() << "]]";
+                    out << ": " << srt_strerror(c.error, 0) << ": " << srt_rejectreason_str(c.reason) << endl;
+                }
+                reasons.insert(c.reason);
             }
+
+            if (transmit_retry_connect && reasons.size() == 1 && *reasons.begin() == SRT_REJ_TIMEOUT)
+            {
+                if (transmit_retry_connect != -1)
+                    --transmit_retry_connect;
+
+                Verb() << "...all links timeout, retrying (" << transmit_retry_connect << ")...";
+                continue;
+            }
+
+            Error("srt_connect_group, nodes:\n" + out.str());
         }
-        Error("srt_connect_group, nodes:\n" + out.str());
+
+        break;
     }
 
     if (m_blocking_mode)
@@ -1220,16 +1238,30 @@ void SrtCommon::ConnectClient(string host, int port)
         srt_connect_callback(m_sock, &TransmitConnectCallback, 0);
     }
 
-    int stat = srt_connect(m_sock, sa.get(), sizeof sa);
-    if (stat == SRT_ERROR)
+    int stat = -1;
+    for (;;)
     {
-        int reason = srt_getrejectreason(m_sock);
+        stat = srt_connect(m_sock, sa.get(), sizeof sa);
+        if (stat == SRT_ERROR)
+        {
+            int reason = srt_getrejectreason(m_sock);
 #if PLEASE_LOG
-        extern srt_logging::Logger applog;
-        LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
+            extern srt_logging::Logger applog;
+            LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
 #endif
-        srt_close(m_sock);
-        Error("srt_connect", reason);
+            if (transmit_retry_connect && reason == SRT_REJ_TIMEOUT)
+            {
+                if (transmit_retry_connect != -1)
+                    --transmit_retry_connect;
+
+                Verb() << "...timeout, retrying (" << transmit_retry_connect << ")...";
+                continue;
+            }
+
+            srt_close(m_sock);
+            Error("srt_connect", reason);
+        }
+        break;
     }
 
     // Wait for REAL connected state if nonblocking mode
