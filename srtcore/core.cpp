@@ -5045,7 +5045,21 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
         {
             // XXX this might require another check of group type.
             // For redundancy group, at least, update the status in the group.
-            g->setFreshConnected(m_parent, (token));
+
+            // LEAVING as comment for historical reasons. Locking is here most
+            // likely not necessary because the socket cannot be removed from the
+            // group until the socket isn't removed, and this requires locking of
+            // m_GlobControlLock.
+            // ScopedLock glock(g->m_GroupLock);
+
+            HLOGC(cnlog.Debug, log << "group: Socket @" << m_parent->m_SocketID << " fresh connected, setting IDLE");
+
+            CUDTGroup::gli_t gi       = m_parent->m_IncludedIter;
+            gi->sndstate   = SRT_GST_IDLE;
+            gi->rcvstate   = SRT_GST_IDLE;
+            gi->laststatus = SRTS_CONNECTED;
+            token = gi->token;
+            g->setGroupConnected();
         }
     }
 #endif

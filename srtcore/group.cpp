@@ -864,26 +864,36 @@ SRT_SOCKSTATUS CUDTGroup::getStatus()
 
             default: // (pending, or whatever will be added in future)
             {
-                SRT_SOCKSTATUS st = m_pGlobal->getStatus(gi->id);
-                states.push_back(make_pair(gi->id, st));
+                // TEMPORARY make a node to note a socket to be checked afterwards
+                states.push_back(make_pair(gi->id, SRTS_NONEXIST));
             }
             }
         }
     }
 
-    // If at least one socket is connected, the state is connected.
-    if (find_if(states.begin(), states.end(), HaveState(SRTS_CONNECTED)) != states.end())
-        return SRTS_CONNECTED;
+    SRT_SOCKSTATUS pending_state = SRTS_NONEXIST;
 
-    // Otherwise find at least one socket, which's state isn't broken.
-    // If none found, return SRTS_BROKEN.
-    states_t::iterator p = find_if(states.begin(), states.end(), not1(HaveState(SRTS_BROKEN)));
-    if (p != states.end())
+    for (states_t::iterator i = states.begin(); i != states.end(); ++i)
     {
-        // Return that state as group state
-        return p->second;
+        // If at least one socket is connected, the state is connected.
+        if (i->second == SRTS_CONNECTED)
+            return SRTS_CONNECTED;
+
+        // Second level - pick up the state
+        if (i->second == SRTS_NONEXIST)
+        {
+            // Otherwise find at least one socket, which's state isn't broken.
+            i->second = m_pGlobal->getStatus(i->first);
+            if (pending_state == SRTS_NONEXIST)
+                pending_state = i->second;
+        }
     }
 
+        // Return that state as group state
+    if (pending_state != SRTS_NONEXIST) // did call getStatus at least once and it didn't return NOEXIST
+        return pending_state;
+
+    // If none found, return SRTS_BROKEN.
     return SRTS_BROKEN;
 }
 
@@ -4181,24 +4191,14 @@ int32_t CUDTGroup::generateISN()
     return CUDT::generateISN();
 }
 
-void CUDTGroup::setFreshConnected(CUDTSocket* sock, int& w_token)
+void CUDTGroup::setGroupConnected()
 {
-    ScopedLock glock(m_GroupLock);
-
-    HLOGC(cnlog.Debug, log << "group: Socket @" << sock->m_SocketID << " fresh connected, setting IDLE");
-
-    gli_t gi       = sock->m_IncludedIter;
-    gi->sndstate   = SRT_GST_IDLE;
-    gi->rcvstate   = SRT_GST_IDLE;
-    gi->laststatus = SRTS_CONNECTED;
-
     if (!m_bConnected)
     {
         // Switch to connected state and give appropriate signal
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_CONNECT, true);
         m_bConnected = true;
     }
-    w_token = gi->token;
 }
 
 void CUDTGroup::updateLatestRcv(CUDTGroup::gli_t current)
