@@ -18,6 +18,8 @@
 #include <stdexcept>
 #include <iterator>
 #include <map>
+#include <chrono>
+#include <thread>
 #include <srt.h>
 #if !defined(_WIN32)
 #include <sys/ioctl.h>
@@ -1027,6 +1029,7 @@ void SrtCommon::OpenGroupClient()
 
     for (;;) // REPEATABLE BLOCK
     {
+Connect_Again:
         Verb() << "Waiting for group connection... " << VerbNoEOL;
 
         ::transmit_throw_on_interrupt = true;
@@ -1060,6 +1063,10 @@ void SrtCommon::OpenGroupClient()
             }
 
             Error("srt_connect_group, nodes:\n" + out.str());
+        }
+        else
+        {
+            Verb() << "[ASYNC] will wait..." << VerbNoEOL;
         }
 
         break;
@@ -1124,7 +1131,7 @@ void SrtCommon::OpenGroupClient()
         Error("All connections failed");
 
     // Wait for REAL connected state if nonblocking mode, for AT LEAST one node.
-    while (!m_blocking_mode)
+    if (!m_blocking_mode)
     {
         Verb() << "[ASYNC] " << VerbNoEOL;
 
@@ -1166,8 +1173,10 @@ void SrtCommon::OpenGroupClient()
                     if (transmit_retry_connect != -1)
                         --transmit_retry_connect;
 
-                    Verb() << "...all links timeout, retrying (" << transmit_retry_connect << ")...";
-                    continue;
+
+                    Verb() << "...all links timeout, retrying in 250ms (" << transmit_retry_connect << ")...";
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                    goto Connect_Again;
                 }
 
                 Error("srt_connect_group, nodes:\n" + out.str());
@@ -1185,8 +1194,6 @@ void SrtCommon::OpenGroupClient()
         {
             Error("srt_epoll_wait");
         }
-
-        break;
     }
 
     stat = ConfigurePost(m_sock);

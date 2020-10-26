@@ -1272,6 +1272,9 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
     if (!g.managed())
         throw CUDTException(MJ_NOTSUP, MN_INVAL);
 
+    // In case the group was retried connection, clear first all epoll readiness.
+    m_EPoll.update_events(g.id(), g.m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, false);
+
     // Check and report errors on data brought in by srt_prepare_endpoint,
     // as the latter function has no possibility to report errors.
     for (int tii = 0; tii < arraysize; ++tii)
