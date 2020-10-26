@@ -4172,7 +4172,7 @@ EConnectStatus CUDT::processAsyncConnectResponse(const CPacket &pkt) ATR_NOEXCEP
 
     HLOGC(cnlog.Debug,
           log << CONID() << "processAsyncConnectResponse: response processing result: " << ConnectStatusStr(cst)
-              << "REQ-TIME LOW to enforce immediate response");
+              << "; REQ-TIME LOW to enforce immediate response");
     m_tsLastReqTime = steady_clock::time_point();
 
     return cst;
@@ -4228,7 +4228,10 @@ bool CUDT::processAsyncConnectRequest(EReadStatus         rst,
     {
         // m_RejectReason already set at worker_ProcessAddressedPacket.
         LOGC(cnlog.Warn,
-             log << "processAsyncConnectRequest: REJECT reported from HS processing, not processing further.");
+             log << "processAsyncConnectRequest: REJECT reported from HS processing:"
+             << srt_rejectreason_str(m_RejectReason)
+             << "- not processing further; REQ-TIME LOW");
+        m_tsLastReqTime = steady_clock::time_point();
         return false;
     }
     else

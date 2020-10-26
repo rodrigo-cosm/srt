@@ -960,16 +960,19 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                 << "). removing from queue");
             // connection timer expired, acknowledge app via epoll
             i->m_pUDT->m_bConnecting = false;
-            if (!is_zero(i->m_tsTTL))
+            if (i->m_pUDT->m_RejectReason == SRT_REJ_UNKNOWN)
             {
-                // Timer expired, set TIMEOUT forcefully
-                i->m_pUDT->m_RejectReason = SRT_REJ_TIMEOUT;
-            }
-            else if (i->m_pUDT->m_RejectReason == SRT_REJ_UNKNOWN)
-            {
-                // In case of unknown reason, rejection should at least
-                // suggest error on the peer
-                i->m_pUDT->m_RejectReason = SRT_REJ_PEER;
+                if (!is_zero(i->m_tsTTL))
+                {
+                    // Timer expired, set TIMEOUT forcefully
+                    i->m_pUDT->m_RejectReason = SRT_REJ_TIMEOUT;
+                }
+                else
+                {
+                    // In case of unknown reason, rejection should at least
+                    // suggest error on the peer
+                    i->m_pUDT->m_RejectReason = SRT_REJ_PEER;
+                }
             }
 
             i->m_pUDT->updateBrokenConnection();

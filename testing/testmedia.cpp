@@ -1036,7 +1036,6 @@ void SrtCommon::OpenGroupClient()
         if (fisock == SRT_ERROR)
         {
             // Complete the error information for every member
-
             ostringstream out;
             set<int> reasons;
             for (Connection& c: m_group_nodes)
@@ -1125,7 +1124,7 @@ void SrtCommon::OpenGroupClient()
         Error("All connections failed");
 
     // Wait for REAL connected state if nonblocking mode, for AT LEAST one node.
-    if (!m_blocking_mode)
+    while (!m_blocking_mode)
     {
         Verb() << "[ASYNC] " << VerbNoEOL;
 
@@ -1147,7 +1146,31 @@ void SrtCommon::OpenGroupClient()
             if (find(ready_err, ready_err+len2, m_sock) != ready_err+len2)
             {
                 Verb() << "[EPOLL: " << len2 << " entities FAILED]";
-                Error("All group connections failed", SRT_REJ_UNKNOWN, SRT_ENOCONN);
+                // Complete the error information for every member
+                ostringstream out;
+                set<int> reasons;
+                for (Connection& c: m_group_nodes)
+                {
+                    if (c.error != SRT_SUCCESS)
+                    {
+                        out << "[" << c.token << "] " << c.host << ":" << c.port;
+                        if (!c.source.empty())
+                            out << "[[" << c.source.str() << "]]";
+                        out << ": " << srt_strerror(c.error, 0) << ": " << srt_rejectreason_str(c.reason) << endl;
+                    }
+                    reasons.insert(c.reason);
+                }
+
+                if (transmit_retry_connect && reasons.size() == 1 && *reasons.begin() == SRT_REJ_TIMEOUT)
+                {
+                    if (transmit_retry_connect != -1)
+                        --transmit_retry_connect;
+
+                    Verb() << "...all links timeout, retrying (" << transmit_retry_connect << ")...";
+                    continue;
+                }
+
+                Error("srt_connect_group, nodes:\n" + out.str());
             }
             else if (find(ready_conn, ready_conn+len1, m_sock) != ready_conn+len1)
             {
@@ -1162,6 +1185,8 @@ void SrtCommon::OpenGroupClient()
         {
             Error("srt_epoll_wait");
         }
+
+        break;
     }
 
     stat = ConfigurePost(m_sock);
