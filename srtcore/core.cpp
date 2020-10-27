@@ -10933,24 +10933,34 @@ void CUDT::updateBrokenConnection(int errorcode)
     }
 
 #if ENABLE_EXPERIMENTAL_BONDING
-    CUDTGroup* pg = m_parent->m_IncludedGroup;
-    if (pg)
     {
-        // DO NOT close it, if it wasn't pending because if it passed through
-        // the "connected" state and was used for sending the data, the sending/receiving
-        // function might want to check it up.
-        if (pending_broken)
+        // Lock GlobControlLock in order to make sure that
+        // the state if the socket having the group and the
+        // existence of the group will not be changed during
+        // the operation. The attempt of group deletion will
+        // have to wait until this operation completes.
+        ScopedLock lock(s_UDTUnited.m_GlobControlLock);
+        CUDTGroup* pg = m_parent->m_IncludedGroup;
+        if (pg)
         {
-            s_UDTUnited.close(m_parent);
-        }
-        else
-        {
-            m_parent->m_bMarkSweep = true;
-        }
+            // DO NOT close it, if it wasn't pending because if it passed through
+            // the "connected" state and was used for sending the data, the sending/receiving
+            // function might want to check it up.
+            if (!pending_broken)
+            {
+                m_parent->m_bMarkSweep = true;
+            }
 
-        // Bound to one call because this requires locking
-        pg->updateFailedLink();
+            // Bound to one call because this requires locking
+            pg->updateFailedLink();
+        }
     }
+
+    if (pending_broken)
+    {
+        s_UDTUnited.close(m_SocketID);
+    }
+
 #endif
 
 }
