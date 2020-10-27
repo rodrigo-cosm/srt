@@ -157,7 +157,9 @@ public:
     // PRIOR TO calling this function.
     bool remove(SRTSOCKET id)
     {
+        using srt_logging::gmlog;
         bool                  s = false;
+        HLOGC(gmlog.Debug, log << "group/remove: going to remove @" << id << " from $" << m_GroupID);
         srt::sync::ScopedLock g(m_GroupLock);
         gli_t                 f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f != m_Group.end())
@@ -183,6 +185,10 @@ public:
                 resetInitialRxSequence();
             }
             s = true;
+        }
+        else
+        {
+            HLOGC(gmlog.Debug, log << "group/remove: id @" << id << " NOT FOUND!");
         }
 
         if (m_Group.empty())
