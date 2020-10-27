@@ -960,12 +960,14 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                 << "). removing from queue");
             // connection timer expired, acknowledge app via epoll
             i->m_pUDT->m_bConnecting = false;
+            int ccerror = SRT_ECONNREJ;
             if (i->m_pUDT->m_RejectReason == SRT_REJ_UNKNOWN)
             {
                 if (!is_zero(i->m_tsTTL))
                 {
                     // Timer expired, set TIMEOUT forcefully
                     i->m_pUDT->m_RejectReason = SRT_REJ_TIMEOUT;
+                    ccerror = SRT_ENOSERVER;
                 }
                 else
                 {
@@ -975,7 +977,7 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                 }
             }
 
-            i->m_pUDT->updateBrokenConnection();
+            i->m_pUDT->updateBrokenConnection(ccerror);
             /*
              * Setting m_bConnecting to false but keeping socket in rendezvous queue is not a good idea.
              * Next CUDT::close will not remove it from rendezvous queue (because !m_bConnecting)

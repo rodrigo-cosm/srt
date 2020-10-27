@@ -143,7 +143,6 @@ public:
     {
         ofile.write(data.payload.data(), data.payload.size());
 #ifdef PLEASE_LOG
-        extern srt_logging::Logger applog;
         applog.Debug() << "FileTarget::Write: " << data.size() << " written to a file";
 #endif
     }
@@ -154,7 +153,6 @@ public:
     void Close() override
     {
 #ifdef PLEASE_LOG
-        extern srt_logging::Logger applog;
         applog.Debug() << "FileTarget::Close";
 #endif
         ofile.close();
@@ -902,6 +900,10 @@ void TransmitGroupSocketConnect(void* srtcommon, SRTSOCKET sock, int error, cons
         return; // nothing to do for a successful socket
     }
 
+//#ifdef PLEASE_LOG
+    applog.Debug("connect callback: error on @", sock, " erc=", error, " token=", token);
+//#endif
+
     /* Example: identify by target address
     sockaddr_any peersa = peer;
     sockaddr_any agentsa;
@@ -1282,7 +1284,6 @@ void SrtCommon::ConnectClient(string host, int port)
         {
             int reason = srt_getrejectreason(m_sock);
 #if PLEASE_LOG
-            extern srt_logging::Logger applog;
             LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
 #endif
             if (transmit_retry_connect && reason == SRT_REJ_TIMEOUT)

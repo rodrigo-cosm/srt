@@ -932,7 +932,6 @@ void CUDTGroup::syncWithSocket(const CUDT& core, const HandshakeSide side)
 void CUDTGroup::close()
 {
     // Close all descriptors, then delete the group.
-
     vector<SRTSOCKET> ids;
 
     {
@@ -953,9 +952,11 @@ void CUDTGroup::close()
             ids.push_back(ig->id);
     }
 
+    HLOGC(gmlog.Debug, log << "grp/close: closing $" << m_GroupID << ", closing first " << ids.size() << " sockets:");
     // Close all sockets with unlocked GroupLock
     for (vector<SRTSOCKET>::iterator i = ids.begin(); i != ids.end(); ++i)
         m_pGlobal->close(*i);
+    HLOGC(gmlog.Debug, log << "grp/close: closing $" << m_GroupID << ": sockets closed, clearing the group:");
 
     // Lock the group again to clear the group data
     {

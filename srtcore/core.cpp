@@ -8664,7 +8664,7 @@ void CUDT::processCtrl(const CPacket &ctrlpkt)
 
         // This does the same as it would happen on connection timeout,
         // just we know about this state prematurely thanks to this message.
-        updateBrokenConnection();
+        updateBrokenConnection(SRT_ECONNLOST);
         break;
 
     case UMSG_DROPREQ: // 111 - Msg drop request
@@ -10756,7 +10756,7 @@ bool CUDT::checkExpTimer(const steady_clock::time_point& currtime, int check_rea
         // update snd U list to remove this socket
         m_pSndQueue->m_pSndUList->update(this, CSndUList::DO_RESCHEDULE);
 
-        updateBrokenConnection();
+        updateBrokenConnection(SRT_ECONNLOST);
 
         return true;
     }
@@ -10898,7 +10898,7 @@ void CUDT::checkTimers()
     }
 }
 
-void CUDT::updateBrokenConnection()
+void CUDT::updateBrokenConnection(int errorcode)
 {
     releaseSynch();
 
@@ -10929,7 +10929,7 @@ void CUDT::updateBrokenConnection()
     CGlobEvent::triggerEvent();
     if (m_cbConnectHook)
     {
-        CALLBACK_CALL(m_cbConnectHook, m_SocketID, SRT_ENOSERVER, m_PeerAddr.get(), token);
+        CALLBACK_CALL(m_cbConnectHook, m_SocketID, errorcode, m_PeerAddr.get(), token);
     }
 
 #if ENABLE_EXPERIMENTAL_BONDING

@@ -3048,6 +3048,7 @@ void CUDTSocket::removeFromGroup(bool broken)
         m_IncludedGroup->activateUpdateEvent();
     }
 
+    HLOGC(smlog.Debug, log << "removeFromGroup: socket @" << m_SocketID << " NO LONGER A MEMBER of $" << m_IncludedGroup->id());
     m_IncludedIter = CUDTGroup::gli_NULL();
     m_IncludedGroup = NULL;
 }

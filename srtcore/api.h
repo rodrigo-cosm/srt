@@ -301,10 +301,15 @@ public:
        {
            // Everything ok, group was found, delete it, and its
            // associated entry.
-           m_Groups.erase(g->m_GroupID);
+           int id = g->m_GroupID;
+           m_Groups.erase(id);
            if (g != pg) // sanity check -- only report
            {
-               LOGC(gmlog.Error, log << "IPE: the group id=" << g->m_GroupID << " had DIFFERENT OBJECT mapped!");
+               LOGC(gmlog.Error, log << "IPE: the group id=" << id << " had DIFFERENT OBJECT mapped!");
+           }
+           else
+           {
+               HLOGC(gmlog.Debug, log << "deleteGroup: deleting $" << id);
            }
            delete pg; // still delete it
            return;
