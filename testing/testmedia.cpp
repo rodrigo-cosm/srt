@@ -56,6 +56,7 @@ srt_listen_callback_fn* transmit_accept_hook_fn = nullptr;
 void* transmit_accept_hook_op = nullptr;
 bool transmit_use_sourcetime = false;
 int transmit_retry_connect = 0;
+bool transmit_retry_always = false;
 
 // Do not unblock. Copy this to an app that uses applog and set appropriate name.
 //srt_logging::Logger applog(SRT_LOGFA_APP, srt_logger_config, "srt-test");
@@ -1029,14 +1030,13 @@ void SrtCommon::OpenGroupClient()
         targets.push_back(gd);
     }
 
+    ::transmit_throw_on_interrupt = true;
     for (;;) // REPEATABLE BLOCK
     {
 Connect_Again:
         Verb() << "Waiting for group connection... " << VerbNoEOL;
 
-        ::transmit_throw_on_interrupt = true;
         int fisock = srt_connect_group(m_sock, targets.data(), targets.size());
-        ::transmit_throw_on_interrupt = false;
 
         if (fisock == SRT_ERROR)
         {
@@ -1055,7 +1055,7 @@ Connect_Again:
                 reasons.insert(c.reason);
             }
 
-            if (transmit_retry_connect && reasons.size() == 1 && *reasons.begin() == SRT_REJ_TIMEOUT)
+            if (transmit_retry_connect && (transmit_retry_always || (reasons.size() == 1 && *reasons.begin() == SRT_REJ_TIMEOUT)))
             {
                 if (transmit_retry_connect != -1)
                     --transmit_retry_connect;
@@ -1170,7 +1170,7 @@ Connect_Again:
                     reasons.insert(c.reason);
                 }
 
-                if (transmit_retry_connect && reasons.size() == 1 && *reasons.begin() == SRT_REJ_TIMEOUT)
+                if (transmit_retry_connect && (transmit_retry_always || (reasons.size() == 1 && *reasons.begin() == SRT_REJ_TIMEOUT)))
                 {
                     if (transmit_retry_connect != -1)
                         --transmit_retry_connect;
@@ -1207,6 +1207,7 @@ Connect_Again:
         Error("ConfigurePost");
     }
 
+    ::transmit_throw_on_interrupt = false;
 
     Verb() << "Group connection report:";
     for (auto& d: m_group_data)
@@ -1286,7 +1287,7 @@ void SrtCommon::ConnectClient(string host, int port)
 #if PLEASE_LOG
             LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
 #endif
-            if (transmit_retry_connect && reason == SRT_REJ_TIMEOUT)
+            if (transmit_retry_connect && (transmit_retry_always || reason == SRT_REJ_TIMEOUT))
             {
                 if (transmit_retry_connect != -1)
                     --transmit_retry_connect;

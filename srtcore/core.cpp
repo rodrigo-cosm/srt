@@ -3620,7 +3620,7 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t l
 
         HLOGC(gmlog.Debug, log << "makeMePeerOf: group for peer=$" << peergroup << " found: $" << gp->id());
 
-        if (!gp->empty())
+        if (!gp->groupEmpty())
             was_empty = false;
     }
     else

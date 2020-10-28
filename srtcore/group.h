@@ -203,7 +203,7 @@ public:
         return s;
     }
 
-    bool empty()
+    bool groupEmpty()
     {
         srt::sync::ScopedLock g(m_GroupLock);
         return m_Group.empty();

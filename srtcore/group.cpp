@@ -223,6 +223,7 @@ CUDTGroup::gli_t CUDTGroup::add(SocketData data)
     data.sndstate = SRT_GST_PENDING;
     data.rcvstate = SRT_GST_PENDING;
 
+    HLOGC(gmlog.Debug, log << "CUDTGroup::add: adding new member @" << data.id);
     m_Group.push_back(data);
     gli_t end = m_Group.end();
     if (m_iMaxPayloadSize == -1)
@@ -962,7 +963,13 @@ void CUDTGroup::close()
     {
         ScopedLock g(m_GroupLock);
 
-        m_Group.clear();
+        if (!m_Group.empty())
+        {
+            LOGC(gmlog.Error, log << "grp/close: IPE - after requesting to close all members, still " << m_Group.size()
+                    << " lingering members!");
+            m_Group.clear();
+        }
+
         m_PeerGroupID = -1;
         // This takes care of the internal part.
         // The external part will be done in Global (CUDTUnited)
@@ -1616,6 +1623,7 @@ int CUDTGroup::getGroupData(SRT_SOCKGROUPDATA* pdata, size_t* psize)
     return getGroupDataIn(pdata, psize);
 }
 
+// [[using locked(this->m_GroupLock)]]
 int CUDTGroup::getGroupDataIn(SRT_SOCKGROUPDATA* pdata, size_t* psize)
 {
     SRT_ASSERT(psize != NULL);
@@ -1643,6 +1651,7 @@ int CUDTGroup::getGroupDataIn(SRT_SOCKGROUPDATA* pdata, size_t* psize)
     return m_Group.size();
 }
 
+// [[using locked(this->m_GroupLock)]]
 void CUDTGroup::copyGroupData(const CUDTGroup::SocketData& source, SRT_SOCKGROUPDATA& w_target)
 {
     w_target.id = source.id;
@@ -2662,6 +2671,7 @@ bool CUDTGroup::send_CheckIdle(const gli_t d, vector<gli_t>& w_wipeme, vector<gl
     return true;
 }
 
+// [[using locked(this->m_GroupLock)]]
 void CUDTGroup::sendBackup_CheckIdleTime(gli_t w_d)
 {
     // Check if it was fresh set as idle, we had to wait until its sender
@@ -2688,6 +2698,7 @@ void CUDTGroup::sendBackup_CheckIdleTime(gli_t w_d)
     }
 }
 
+// [[using locked(this->m_GroupLock)]]
 bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point currtime)
 {
     CUDT& u = d->ps->core();
@@ -2810,6 +2821,7 @@ bool CUDTGroup::sendBackup_CheckRunningStability(const gli_t d, const time_point
     return !is_unstable;
 }
 
+// [[using locked(this->m_GroupLock)]]
 bool CUDTGroup::sendBackup_CheckSendStatus(gli_t                                    d,
                                            const steady_clock::time_point& currtime ATR_UNUSED,
                                            const int                                stat,
@@ -2900,6 +2912,7 @@ bool CUDTGroup::sendBackup_CheckSendStatus(gli_t                                
     return none_succeeded;
 }
 
+// [[using locked(this->m_GroupLock)]]
 void CUDTGroup::sendBackup_Buffering(const char* buf, const int len, int32_t& w_curseq, SRT_MSGCTRL& w_mc)
 {
     // This is required to rewrite into currentSchedSequence() property
@@ -2950,6 +2963,7 @@ void CUDTGroup::sendBackup_Buffering(const char* buf, const int len, int32_t& w_
         m_iLastSchedSeqNo = oldest_buffer_seq;
 }
 
+// [[using locked(this->m_GroupLock)]]
 size_t CUDTGroup::sendBackup_CheckNeedActivate(const vector<gli_t>&          idlers,
                                              const char*                   buf,
                                              const int                     len,
@@ -3083,6 +3097,7 @@ size_t CUDTGroup::sendBackup_CheckNeedActivate(const vector<gli_t>&          idl
     return nactive;
 }
 
+// [[using locked(this->m_GroupLock)]]
 void CUDTGroup::send_CheckPendingSockets(const vector<gli_t>& pending, vector<gli_t>& w_wipeme)
 {
     // If we have at least one stable link, then select a link that have the
@@ -3148,6 +3163,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<gli_t>& pending, vector<gl
     }
 }
 
+// [[using locked(this->m_GroupLock)]]
 void CUDTGroup::send_CloseBrokenSockets(vector<gli_t>& w_wipeme)
 {
     // Review the w_wipeme sockets.
@@ -3208,6 +3224,7 @@ struct FByOldestActive
     }
 };
 
+// [[using locked(this->m_GroupLock)]]
 void CUDTGroup::sendBackup_CheckParallelLinks(const vector<gli_t>& unstable,
                                               vector<gli_t>&       w_parallel,
                                               int&                 w_final_stat,

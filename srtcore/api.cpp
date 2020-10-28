@@ -1299,7 +1299,7 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
     // connection is going to later succeed or fail (this will be
     // known in the group state information).
     bool block_new_opened = !g.m_bOpened && g.m_bSynRecving;
-    const bool was_empty = g.empty();
+    const bool was_empty = g.groupEmpty();
     SRTSOCKET retval = -1;
 
     int eid = -1;
@@ -2996,7 +2996,7 @@ int CUDT::addSocketToGroup(SRTSOCKET socket, SRTSOCKET group)
     if (g->managed())
     {
         // This can be changed as long as the group is empty.
-        if (!g->empty())
+        if (!g->groupEmpty())
         {
             return APIError(MJ_NOTSUP, MN_INVAL, 0);
         }

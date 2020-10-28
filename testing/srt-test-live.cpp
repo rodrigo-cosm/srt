@@ -762,7 +762,17 @@ int main( int argc, char** argv )
         }
     }
 
-    transmit_retry_connect = Option<OutNumber>(params, "0", o_retry);
+    string retryphrase = Option<OutString>(params, "", o_retry);
+    if (retryphrase != "")
+    {
+        if (retryphrase[retryphrase.size()-1] == 'a')
+        {
+            transmit_retry_always = true;
+            retryphrase = retryphrase.substr(0, retryphrase.size()-1);
+        }
+
+        transmit_retry_connect = stoi(retryphrase);
+    }
 
 #ifdef _WIN32
 #define alarm(argument) (void)0
