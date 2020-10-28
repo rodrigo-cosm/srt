@@ -10958,7 +10958,7 @@ void CUDT::updateBrokenConnection(int errorcode)
 
     if (pending_broken)
     {
-        s_UDTUnited.close(m_SocketID);
+        s_UDTUnited.close(m_parent);
     }
 
 #endif
