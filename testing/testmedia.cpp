@@ -42,6 +42,7 @@
 
 using namespace std;
 
+using srt_logging::KmStateStr;
 using srt_logging::SockStatusStr;
 #if ENABLE_EXPERIMENTAL_BONDING
 using srt_logging::MemberStatusStr;
@@ -697,9 +698,6 @@ void SrtCommon::Init(string host, int port, string path, map<string,string> par,
     srt_getsockflag(m_sock, SRTO_KMSTATE, &kmstate, &len);
     srt_getsockflag(m_sock, SRTO_SNDKMSTATE, &snd_kmstate, &len);
     srt_getsockflag(m_sock, SRTO_RCVKMSTATE, &rcv_kmstate, &len);
-
-    // Bring this declaration temporarily, this is only for testing
-    std::string KmStateStr(SRT_KM_STATE state);
 
     Verb() << "ENCRYPTION status: " << KmStateStr(kmstate)
         << " (SND:" << KmStateStr(snd_kmstate) << " RCV:" << KmStateStr(rcv_kmstate)
