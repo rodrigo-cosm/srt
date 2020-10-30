@@ -1871,6 +1871,8 @@ size_t CUDT::fillHsExtConfigString(uint32_t* pcmdspec, int cmd, const string& st
 }
 
 #if ENABLE_EXPERIMENTAL_BONDING
+// [[using locked(m_parent->m_ControlLock)]]
+// [[using locked(s_UDTUnited.m_GlobControlLock)]]
 size_t CUDT::fillHsExtGroup(uint32_t* pcmdspec)
 {
     uint32_t* space = pcmdspec + 1;
@@ -2165,6 +2167,19 @@ bool CUDT::createSrtHandshake(
 
 #if ENABLE_EXPERIMENTAL_BONDING
     bool have_group = false;
+
+    // Note: this is done without locking because we have the following possibilities:
+    //
+    // 1. Most positive: the group will be the same all the time up to the moment when we use it.
+    // 2. The group will disappear when next time we try to use it having now have_group set true.
+    //
+    // Not possible that a group is NULL now but would appear later: the group must be either empty
+    // or already set as valid at this time.
+    //
+    // If the 2nd possibility happens, then simply it means that the group has been closed during
+    // the operation and the socket got this information updated in the meantime. This means that
+    // it was an abnormal interrupt during the processing so the handshake process should be aborted
+    // anyway, and that's what will be done.
     if (m_parent->m_IncludedGroup)
     {
         // Whatever group this socket belongs to, the information about
@@ -2272,10 +2287,16 @@ bool CUDT::createSrtHandshake(
     // need to be changed for some other types.
     if (have_group)
     {
-        ScopedLock grd (m_parent->m_ControlLock);
+        // NOTE: See information about mutex ordering in api.h
+        ScopedLock grd (m_parent->m_ControlLock); // Required to make sure 
+        ScopedLock gdrg (s_UDTUnited.m_GlobControlLock);
         if (!m_parent->m_IncludedGroup)
         {
+            // This may only happen if since last check of m_IncludedGroup pointer the socket was removed
+            // from the group in the meantime, which can only happen due to that the group was closed.
+            // In such a case it simply means that the handshake process was requested to be interrupted.
             LOGC(cnlog.Fatal, log << "GROUP DISAPPEARED. Socket not capable of continuing HS");
+            return false;
         }
         else
         {
@@ -3512,6 +3533,8 @@ bool CUDT::interpretGroup(const int32_t groupdata[], size_t data_size SRT_ATR_UN
         return false;
     }
 
+    ScopedLock guard_group_existence (s_UDTUnited.m_GlobControlLock);
+
     if (m_SrtHsSide == HSD_INITIATOR)
     {
         // This is a connection initiator that has requested the peer to make a
@@ -3602,10 +3625,19 @@ bool CUDT::interpretGroup(const int32_t groupdata[], size_t data_size SRT_ATR_UN
 #if ENABLE_EXPERIMENTAL_BONDING
 // NOTE: This function is called only in one place and it's done
 // exclusively on the listener side (HSD_RESPONDER, HSv5+).
+
+// [[using locked(s_UDTUnited.m_GlobControlLock)]]
 SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t link_flags)
 {
+    // Note: This function will lock pg->m_GroupLock!
+
     CUDTSocket* s = m_parent;
-    ScopedLock cg (s->m_ControlLock);
+
+    // Note that the socket being worked out here is about to be returned
+    // from `srt_accept` call, and until this moment it will be inaccessible
+    // for any other thread. It is then assumed that no other thread is accessing
+    // it right now so there's no need to lock s->m_ControlLock.
+
     // Check if there exists a group that this one is a peer of.
     CUDTGroup* gp = s_UDTUnited.findPeerGroup(peergroup);
     bool was_empty = true;
@@ -4936,25 +4968,29 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
             return CONN_REJECT;
     }
 
+    bool have_group = false;
+
     {
 #if ENABLE_EXPERIMENTAL_BONDING
+        ScopedLock cl (s_UDTUnited.m_GlobControlLock);
         CUDTGroup* g = m_parent->m_IncludedGroup;
         if (g)
         {
-            ScopedLock cl (s_UDTUnited.m_GlobControlLock);
             // This is the last moment when this can be done.
             // The updateAfterSrtHandshake call will copy the receiver
             // start time to the receiver buffer data, so the correct
             // value must be set before this happens.
             synchronizeWithGroup(g);
+            have_group = true;
         }
-       else
 #endif
-       {
-           // This function will be called internally inside
-           // synchronizeWithGroup(). This is just more complicated.
-           updateAfterSrtHandshake(m_ConnRes.m_iVersion);
-       }
+    }
+
+    if (!have_group)
+    {
+        // This function will be called internally inside
+        // synchronizeWithGroup(). This is just more complicated.
+        updateAfterSrtHandshake(m_ConnRes.m_iVersion);
     }
 
     CInfoBlock ib;
@@ -5832,26 +5868,30 @@ void CUDT::acceptAndRespond(const sockaddr_any& agent, const sockaddr_any& peer,
 
    // Synchronize the time NOW because the following function is about
    // to use the start time to pass it to the receiver buffer data.
-   {
+    bool have_group = false;
+
+    {
 #if ENABLE_EXPERIMENTAL_BONDING
-       CUDTGroup* g = m_parent->m_IncludedGroup;
-       if (g)
-       {
-           ScopedLock cl (s_UDTUnited.m_GlobControlLock);
-           // This is the last moment when this can be done.
-           // The updateAfterSrtHandshake call will copy the receiver
-           // start time to the receiver buffer data, so the correct
-           // value must be set before this happens.
-           synchronizeWithGroup(g);
-       }
-       else
+        ScopedLock cl (s_UDTUnited.m_GlobControlLock);
+        CUDTGroup* g = m_parent->m_IncludedGroup;
+        if (g)
+        {
+            // This is the last moment when this can be done.
+            // The updateAfterSrtHandshake call will copy the receiver
+            // start time to the receiver buffer data, so the correct
+            // value must be set before this happens.
+            synchronizeWithGroup(g);
+            have_group = true;
+        }
 #endif
-       {
-           // This function will be called internally inside
-           // synchronizeWithGroup(). This is just more complicated.
-           updateAfterSrtHandshake(w_hs.m_iVersion);
-       }
-   }
+    }
+
+    if (!have_group)
+    {
+        // This function will be called internally inside
+        // synchronizeWithGroup(). This is just more complicated.
+        updateAfterSrtHandshake(m_ConnRes.m_iVersion);
+    }
 
     SRT_REJECT_REASON rr = setupCC();
     // UNKNOWN used as a "no error" value
@@ -6109,6 +6149,7 @@ void CUDT::addressAndSend(CPacket& w_pkt)
     m_pSndQueue->sendto(m_PeerAddr, w_pkt);
 }
 
+// [[using locked(m_GlobControlLock)]]
 bool CUDT::closeInternal()
 {
     // NOTE: this function is called from within the garbage collector thread.
@@ -10902,30 +10943,33 @@ void CUDT::updateBrokenConnection(int errorcode)
 {
     releaseSynch();
 
-    // app can call any UDT API to learn the connection_broken error
-    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
     int token = -1;
     bool pending_broken = false;
 
 #if ENABLE_EXPERIMENTAL_BONDING
-    if (m_parent->m_IncludedGroup)
     {
-        token = m_parent->m_IncludedIter->token;
-        if (m_parent->m_IncludedIter->sndstate == SRT_GST_PENDING)
+        ScopedLock guard_group_existence (s_UDTUnited.m_GlobControlLock);
+        if (m_parent->m_IncludedGroup)
         {
-            HLOGC(gmlog.Debug, log << "checkExpTimer: a pending link was broken - will be removed");
-            pending_broken = true;
-        }
-        else
-        {
-            HLOGC(gmlog.Debug, log << "checkExpTimer: state=" << CUDTGroup::StateStr(m_parent->m_IncludedIter->sndstate) << " a used link was broken - not closing automatically");
-        }
+            token = m_parent->m_IncludedIter->token;
+            if (m_parent->m_IncludedIter->sndstate == SRT_GST_PENDING)
+            {
+                HLOGC(gmlog.Debug, log << "checkExpTimer: a pending link was broken - will be removed");
+                pending_broken = true;
+            }
+            else
+            {
+                HLOGC(gmlog.Debug, log << "checkExpTimer: state=" << CUDTGroup::StateStr(m_parent->m_IncludedIter->sndstate) << " a used link was broken - not closing automatically");
+            }
 
-        m_parent->m_IncludedIter->sndstate = SRT_GST_BROKEN;
-        m_parent->m_IncludedIter->rcvstate = SRT_GST_BROKEN;
+            m_parent->m_IncludedIter->sndstate = SRT_GST_BROKEN;
+            m_parent->m_IncludedIter->rcvstate = SRT_GST_BROKEN;
+        }
     }
 #endif
 
+    // app can call any UDT API to learn the connection_broken error
+    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
     CGlobEvent::triggerEvent();
     if (m_cbConnectHook)
     {

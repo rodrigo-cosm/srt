@@ -69,6 +69,47 @@ modified by
 #include "group.h"
 #endif
 
+// IMPORTANT INFORMATION ABOUT LOCKING.
+//
+// The overall structure of the object database, involving sockets and groups
+// is as follows:
+//
+// CUDTUnited (singleton) {
+//      CONTAINER m_Sockets { CUDTSocket }
+//      CONTAINER m_ClosedSockets { CUDTSocket }
+//      CONTAINER m_Groups { CUDTGroup }
+// }
+//
+// CUDTGroup {
+//      CONTAINER m_Group { CUDTSocket }
+// }
+//
+// Dead sockets (either closed manually or broken after connection) are
+// moved first from m_Sockets to m_ClosedSockets.
+//
+// Containers and contents guarded by mutex:
+//
+// CUDTUnited::m_GlobControlLock - guards all containers in CUDTUnited.
+//
+// CUDTSocket::m_ControlLock - guards internal operation performed on particular socket, with its existence assumed
+// (this is because a socket will always exist until it's deleted while being in m_ClosedSockets, and when
+// the socket is in m_ClosedSockets it will not be deleted until it's free from any operation, while the socket
+// is assumed nonexistent for any newly called API function even if it exists physically, but is moved to m_ClosedSockets).
+//
+// CUDTGroup::m_GroupLock - guards the m_Group container inside a group that collects member sockets.
+//
+// There are unfortunately many situations when multiple locks have to be applied at a time. This
+// is then the hierarchy of the mutexes that must be preserved everywhere in the code:
+//
+//  - CUDTSocket::m_ControlLock
+//
+//      - CRendezvousQueue::m_RIDVectorLock 
+//
+//  - CUDTUnited::m_GlobControlLock
+//
+//  - CUDTGroup::m_GroupLock
+// 
+//
 
 class CUDT;
 

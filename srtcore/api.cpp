@@ -126,6 +126,7 @@ SRT_SOCKSTATUS CUDTSocket::getStatus()
     return m_Status;
 }
 
+// [[using locked(m_GlobControlLock)]]
 void CUDTSocket::makeShutdown()
 {
 #if ENABLE_EXPERIMENTAL_BONDING
@@ -140,6 +141,7 @@ void CUDTSocket::makeShutdown()
     m_pUDT->closeInternal();
 }
 
+// [[using locked(m_GlobControlLock)]]
 void CUDTSocket::makeClosed()
 {
     m_pUDT->m_bBroken = true;
@@ -803,9 +805,6 @@ ERR_ROLLBACK:
        LOGC(cnlog.Warn, log << CONID(ns->m_SocketID) << "newConnection: connection rejected due to: "
                << why[error] << " - " << RequestTypeStr(URQFailure(w_error)));
 #endif
-      SRTSOCKET id = ns->m_SocketID;
-      ns->makeClosed();
-
       // The mapped socket should be now unmapped to preserve the situation that
       // was in the original UDT code.
       // In SRT additionally the acceptAndRespond() function (it was called probably
@@ -813,6 +812,9 @@ ERR_ROLLBACK:
       // further processed and should be removed.
       {
           ScopedLock cg(m_GlobControlLock);
+          SRTSOCKET id = ns->m_SocketID;
+          ns->makeClosed();
+
           m_Sockets.erase(id);
           m_ClosedSockets[id] = ns;
       }
@@ -1479,12 +1481,12 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
             // We know it does belong to a group.
             // Remove it first because this involves a mutex, and we want
             // to avoid locking more than one mutex at a time.
-            ns->removeFromGroup(false);
             erc_rloc = e.getErrorCode();
             targets[tii].errorcode = e.getErrorCode();
             targets[tii].id = CUDT::INVALID_SOCK;
 
             ScopedLock cl (m_GlobControlLock);
+            ns->removeFromGroup(false);
             m_Sockets.erase(ns->m_SocketID);
             // Intercept to delete the socket on failure.
             delete ns;
@@ -1493,10 +1495,10 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         catch (...)
         {
             LOGC(aclog.Fatal, log << "groupConnect: IPE: UNKNOWN EXCEPTION from connectIn");
-            ns->removeFromGroup(false);
             targets[tii].errorcode = SRT_ESYSOBJ;
             targets[tii].id = CUDT::INVALID_SOCK;
             ScopedLock cl (m_GlobControlLock);
+            ns->removeFromGroup(false);
             m_Sockets.erase(ns->m_SocketID);
             // Intercept to delete the socket on failure.
             delete ns;
@@ -1854,15 +1856,17 @@ int CUDTUnited::close(CUDTSocket* s)
    }
    else
    {
+       // synchronize with garbage collection.
+       HLOGC(smlog.Debug, log << "@" << u << "U::close done. GLOBAL CLOSE: " << s->m_pUDT->CONID() << ". Acquiring GLOBAL control lock");
+       ScopedLock manager_cg(m_GlobControlLock);
+
        // Removing from group NOW - groups are used only for live mode
        // and it shouldn't matter if the transmission is broken in the middle of sending.
        // This makes the socket unable to process new requests, but it
        // remains functional until all scheduled data are delivered.
-       s->makeShutdown();
 
-       // synchronize with garbage collection.
-       HLOGC(smlog.Debug, log << "@" << u << "U::close done. GLOBAL CLOSE: " << s->m_pUDT->CONID() << ". Acquiring GLOBAL control lock");
-       ScopedLock manager_cg(m_GlobControlLock);
+       // DONE AFTER LOCK because makeShutdown assumes lock on m_GlobControlLock.
+       s->makeShutdown();
 
        // since "s" is located before m_GlobControlLock, locate it again in case
        // it became invalid
@@ -2501,6 +2505,7 @@ void CUDTUnited::checkBrokenSockets()
       removeSocket(*l);
 }
 
+// [[using locked(m_GlobControlLock)]]
 void CUDTUnited::removeSocket(const SRTSOCKET u)
 {
    sockets_t::iterator i = m_ClosedSockets.find(u);
@@ -2838,36 +2843,39 @@ void* CUDTUnited::garbageCollect(void* p)
 
    // remove all sockets and multiplexers
    HLOGC(inlog.Debug, log << "GC: GLOBAL EXIT - releasing all pending sockets. Acquring control lock...");
-   enterCS(self->m_GlobControlLock);
-   for (sockets_t::iterator i = self->m_Sockets.begin();
-      i != self->m_Sockets.end(); ++ i)
+
    {
-      i->second->makeClosed();
-      self->m_ClosedSockets[i->first] = i->second;
+       ScopedLock glock (self->m_GlobControlLock);
 
-      // remove from listener's queue
-      sockets_t::iterator ls = self->m_Sockets.find(
-         i->second->m_ListenSocket);
-      if (ls == self->m_Sockets.end())
-      {
-         ls = self->m_ClosedSockets.find(i->second->m_ListenSocket);
-         if (ls == self->m_ClosedSockets.end())
-            continue;
-      }
+       for (sockets_t::iterator i = self->m_Sockets.begin();
+               i != self->m_Sockets.end(); ++ i)
+       {
+           i->second->makeClosed();
+           self->m_ClosedSockets[i->first] = i->second;
 
-      enterCS(ls->second->m_AcceptLock);
-      ls->second->m_pQueuedSockets->erase(i->second->m_SocketID);
-      ls->second->m_pAcceptSockets->erase(i->second->m_SocketID);
-      leaveCS(ls->second->m_AcceptLock);
+           // remove from listener's queue
+           sockets_t::iterator ls = self->m_Sockets.find(
+                   i->second->m_ListenSocket);
+           if (ls == self->m_Sockets.end())
+           {
+               ls = self->m_ClosedSockets.find(i->second->m_ListenSocket);
+               if (ls == self->m_ClosedSockets.end())
+                   continue;
+           }
+
+           enterCS(ls->second->m_AcceptLock);
+           ls->second->m_pQueuedSockets->erase(i->second->m_SocketID);
+           ls->second->m_pAcceptSockets->erase(i->second->m_SocketID);
+           leaveCS(ls->second->m_AcceptLock);
+       }
+       self->m_Sockets.clear();
+
+       for (sockets_t::iterator j = self->m_ClosedSockets.begin();
+               j != self->m_ClosedSockets.end(); ++ j)
+       {
+           j->second->m_tsClosureTimeStamp = steady_clock::time_point();
+       }
    }
-   self->m_Sockets.clear();
-
-   for (sockets_t::iterator j = self->m_ClosedSockets.begin();
-      j != self->m_ClosedSockets.end(); ++ j)
-   {
-      j->second->m_tsClosureTimeStamp = steady_clock::time_point();
-   }
-   leaveCS(self->m_GlobControlLock);
 
    HLOGC(inlog.Debug, log << "GC: GLOBAL EXIT - releasing all CLOSED sockets.");
    while (true)
@@ -3031,10 +3039,12 @@ int CUDT::removeSocketFromGroup(SRTSOCKET socket)
         return APIError(MJ_NOTSUP, MN_INVAL, 0);
 
     ScopedLock grd (s->m_ControlLock);
+    ScopedLock glob_grd (s_UDTUnited.m_GlobControlLock);
     s->removeFromGroup(false);
     return 0;
 }
 
+// [[using locked(m_GlobControlLock)]]
 void CUDTSocket::removeFromGroup(bool broken)
 {
     m_IncludedGroup->remove(m_SocketID);
