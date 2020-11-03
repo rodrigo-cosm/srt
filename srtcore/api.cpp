@@ -2253,8 +2253,7 @@ int CUDTUnited::epoll_add_usock(
    CUDTSocket* s = locateSocket(u);
    if (s)
    {
-      ret = m_EPoll.update_usock(eid, u, events);
-      s->m_pUDT->addEPoll(eid);
+      ret = epoll_add_usock_INTERNAL(eid, s, events);
    }
    else
    {
@@ -2262,6 +2261,13 @@ int CUDTUnited::epoll_add_usock(
    }
 
    return ret;
+}
+
+int CUDTUnited::epoll_add_usock_INTERNAL(const int eid, CUDTSocket* s, const int* events)
+{
+    int ret = m_EPoll.update_usock(eid, s->m_SocketID, events);
+    s->m_pUDT->addEPoll(eid);
+    return ret;
 }
 
 int CUDTUnited::epoll_add_ssock(
@@ -3003,6 +3009,8 @@ CUDT::APIError::APIError(CodeMajor mj, CodeMinor mn, int syserr)
 #if ENABLE_EXPERIMENTAL_BONDING
 // This is an internal function; 'type' should be pre-checked if it has a correct value.
 // This doesn't have argument of GroupType due to header file conflicts.
+
+// [[using locked(s_UDTUnited.m_GlobControlLock)]]
 CUDTGroup& CUDT::newGroup(const int type)
 {
     const SRTSOCKET id = s_UDTUnited.generateSocketID(true);
@@ -3019,7 +3027,13 @@ SRTSOCKET CUDT::createGroup(SRT_GROUP_TYPE gt)
 
     try
     {
+        srt::sync::ScopedLock globlock (s_UDTUnited.m_GlobControlLock);
         return newGroup(gt).id();
+        // Note: potentially, after this function exits, the group
+        // could be deleted, immediately, from a separate thread (tho
+        // unlikely because the other thread would need some handle to
+        // keep it). But then, the first call to any API function would
+        // return invalid ID error.
     }
     catch (const CUDTException& e)
     {

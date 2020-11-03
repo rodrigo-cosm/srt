@@ -109,7 +109,7 @@ modified by
 //
 //  - CUDTGroup::m_GroupLock
 // 
-//     - CUDT::m_RecvAckLock
+//     - CUDT::m_RecvAckLock  || CEPoll::m_EPollLock
 //
 // ----------------
 //  - CUDTUnited::m_GlobControlLock
@@ -315,6 +315,7 @@ public:
    int epoll_create();
    int epoll_clear_usocks(int eid);
    int epoll_add_usock(const int eid, const SRTSOCKET u, const int* events = NULL);
+   int epoll_add_usock_INTERNAL(const int eid, CUDTSocket* s, const int* events);
    int epoll_add_ssock(const int eid, const SYSSOCKET s, const int* events = NULL);
    int epoll_remove_usock(const int eid, const SRTSOCKET u);
    template <class EntityType>
@@ -326,9 +327,9 @@ public:
    int epoll_release(const int eid);
 
 #if ENABLE_EXPERIMENTAL_BONDING
+   // [[using locked(m_GlobControlLock)]]
    CUDTGroup& addGroup(SRTSOCKET id, SRT_GROUP_TYPE type)
    {
-       srt::sync::ScopedLock cg (m_GlobControlLock);
        // This only ensures that the element exists.
        // If the element was newly added, it will be NULL.
        CUDTGroup*& g = m_Groups[id];
@@ -357,10 +358,9 @@ public:
        m_ClosedGroups[g->m_GroupID] = g;
    }
 
-   CUDTGroup* findPeerGroup(SRTSOCKET peergroup)
+   // [[using locked(m_GlobControlLock)]]
+   CUDTGroup* findPeerGroup_LOCKED(SRTSOCKET peergroup)
    {
-       srt::sync::ScopedLock cg (m_GlobControlLock);
-
        for (groups_t::iterator i = m_Groups.begin();
                i != m_Groups.end(); ++i)
        {

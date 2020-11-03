@@ -3639,7 +3639,7 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t l
     // it right now so there's no need to lock s->m_ControlLock.
 
     // Check if there exists a group that this one is a peer of.
-    CUDTGroup* gp = s_UDTUnited.findPeerGroup(peergroup);
+    CUDTGroup* gp = s_UDTUnited.findPeerGroup_LOCKED(peergroup);
     bool was_empty = true;
     if (gp)
     {
@@ -5640,10 +5640,17 @@ void *CUDT::tsbpd(void *param)
 #if ENABLE_EXPERIMENTAL_BONDING
             if (self->m_parent->m_IncludedGroup)
             {
-                // The current "APP reader" needs to simply decide as to whether
-                // the next CUDTGroup::recv() call should return with no blocking or not.
-                // When the group is read-ready, it should update its pollers as it sees fit.
-                self->m_parent->m_IncludedGroup->updateReadState(self->m_SocketID, current_pkt_seq);
+                InvertedLock unlk_recv (self->m_RecvLock);
+                ScopedLock lock_glob (CUDT::s_UDTUnited.m_GlobControlLock);
+                if (self->m_parent->m_IncludedGroup) // check again. The above was before locks.
+                {
+                    // The current "APP reader" needs to simply decide as to whether
+                    // the next CUDTGroup::recv() call should return with no blocking or not.
+                    // When the group is read-ready, it should update its pollers as it sees fit.
+
+                    // NOTE: this call will set lock to m_IncludedGroup->m_GroupLock
+                    self->m_parent->m_IncludedGroup->updateReadState(self->m_SocketID, current_pkt_seq);
+                }
             }
 #endif
             CGlobEvent::triggerEvent();
