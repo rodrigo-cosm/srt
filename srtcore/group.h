@@ -112,10 +112,12 @@ public:
 
     typedef std::list<SocketData> group_t;
     typedef group_t::iterator     gli_t;
+    typedef std::vector< std::pair<SRTSOCKET, CUDTSocket*> > sendable_t;
 
     struct Sendstate
     {
-        gli_t d;
+        SRTSOCKET id;
+        gli_t     it;
         int   stat;
         int   code;
     };
@@ -157,10 +159,15 @@ public:
     // PRIOR TO calling this function.
     bool remove(SRTSOCKET id)
     {
+        srt::sync::ScopedLock g(m_GroupLock);
+        return remove_LOCKED(id);
+    }
+
+    bool remove_LOCKED(SRTSOCKET id)
+    {
         using srt_logging::gmlog;
         bool                  s = false;
         HLOGC(gmlog.Debug, log << "group/remove: going to remove @" << id << " from $" << m_GroupID);
-        srt::sync::ScopedLock g(m_GroupLock);
         gli_t                 f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f != m_Group.end())
         {
@@ -223,7 +230,7 @@ private:
     int sendBackupRexmit(CUDT& core, SRT_MSGCTRL& w_mc);
 
     // Support functions for sendBackup and sendBroadcast
-    bool send_CheckIdle(const gli_t d, std::vector<gli_t>& w_wipeme, std::vector<gli_t>& w_pending);
+    bool send_CheckIdle(const gli_t d, std::vector<SRTSOCKET>& w_wipeme, std::vector<SRTSOCKET>& w_pending);
     void sendBackup_CheckIdleTime(gli_t w_d);
     bool sendBackup_CheckRunningStability(const gli_t d, const time_point currtime);
     bool sendBackup_CheckSendStatus(const gli_t         d,
@@ -250,16 +257,18 @@ private:
                                       CUDTException&            w_cx,
                                       std::vector<Sendstate>&   w_sendstates,
                                       std::vector<gli_t>&       w_parallel,
-                                      std::vector<gli_t>&       w_wipeme,
+                                      std::vector<SRTSOCKET>&   w_wipeme,
                                       const std::string&        activate_reason);
-    void send_CheckPendingSockets(const std::vector<gli_t>& pending, std::vector<gli_t>& w_wipeme);
-    void send_CloseBrokenSockets(std::vector<gli_t>& w_wipeme);
+    void send_CheckPendingSockets(const std::vector<SRTSOCKET>& pending, std::vector<SRTSOCKET>& w_wipeme);
+    void send_CloseBrokenSockets(std::vector<SRTSOCKET>& w_wipeme);
     void sendBackup_CheckParallelLinks(const std::vector<gli_t>& unstable,
                                        std::vector<gli_t>&       w_parallel,
                                        int&                      w_final_stat,
                                        bool&                     w_none_succeeded,
                                        SRT_MSGCTRL&              w_mc,
                                        CUDTException&            w_cx);
+
+    void send_CheckValidSockets();
 
 public:
     int recv(char* buf, int len, SRT_MSGCTRL& w_mc);
@@ -382,6 +391,7 @@ private:
     bool           m_bSyncOnMsgNo;
     SRT_GROUP_TYPE m_type;
     CUDTSocket*    m_listener; // A "group" can only have one listener.
+    int            m_iBusy;
     CallbackHolder<srt_connect_callback_fn> m_cbConnectHook;
     void installConnectHook(srt_connect_callback_fn* hook, void* opaq)
     {
@@ -389,6 +399,63 @@ private:
     }
 
 public:
+
+    void apiAcquire() { ++m_iBusy; }
+    void apiRelease() { --m_iBusy; }
+
+    // A normal cycle of the send/recv functions is the following:
+    // - [Initial API call for a group]
+    // - GroupKeeper - ctor
+    //    - LOCK: GlobControlLock
+    //       - Find the group ID in the group container (break if not found)
+    //       - LOCK: GroupLock of that group
+    //           - Set BUSY flag
+    //       - UNLOCK GroupLock
+    //    - UNLOCK GlobControlLock
+    //    - [Call the sending function (sendBroadcast/sendBackup)]
+    //    - LOCK: GroupLock
+    //       - Preparation activities
+    //       - Loop over group members
+    //       - Send over a single socket
+    //       - Check send status and conditions
+    //       - Exit, if nothing else to be done
+    //       - Check links to send extra
+    //       - Wait for first ready link
+    //       - Check status and find sendable link
+    //        - Send over a single socket
+    //       - Check status and update data
+    //    - UNLOCK GroupLock, Exit
+    // - GroupKeeper - dtor
+    // - LOCK GroupLock
+    //    - Clear BUSY flag
+    // - UNLOCK GroupLock
+    // END.
+    //
+    // The possibility for isStillBusy to go on is only the following:
+    // 1. Before calling the API function. As GlobControlLock is locked,
+    //    the nearest lock on GlobControlLock by GroupKeeper can happen:
+    //    - before the group is moved to ClosedGroups (this allows it to be found)
+    //    - after the group is moved to ClosedGroups (this makes the group not found)
+    //    - NOT after the group was deleted, as it could not be found and occupied.
+    //    
+    // 2. Before release of GlobControlLock (acquired by GC), but before the
+    //    API function locks GroupLock:
+    //    - the GC call to isStillBusy locks GroupLock, but BUSY flag is already set
+    //    - GC then avoids deletion of the group
+    //
+    // 3. In any further place up to the exit of the API implementation function,
+    // the BUSY flag is still set.
+    // 
+    // 4. After exit of GroupKeeper destructor and unlock of GroupLock
+    //    - the group is no longer being accessed and can be freely deleted.
+    //    - the group also can no longer be found by ID.
+
+    bool isStillBusy()
+    {
+        srt::sync::ScopedLock glk(m_GroupLock);
+        return m_iBusy || !m_Group.empty();
+    }
+
     struct BufferedMessageStorage
     {
         size_t             blocksize;

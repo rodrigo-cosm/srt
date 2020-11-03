@@ -109,6 +109,19 @@ modified by
 //
 //  - CUDTGroup::m_GroupLock
 // 
+//     - CUDT::m_RecvAckLock
+//
+// ----------------
+//  - CUDTUnited::m_GlobControlLock
+//
+//      - CUDT::m_ConnectionLock
+//
+//  - CUDT::m_SendLock
+//
+//     - CUDT::m_RecvLock
+//        - CUDT::m_RecvBufferLock
+//
+//  - CUDT::m_RecvAckLock || CUDT::m_SendBlockLock
 //
 
 class CUDT;
@@ -209,6 +222,7 @@ public:
    /// the socket should be no longer visible in the
    /// connection, including for sending remaining data).
    void makeClosed();
+   void makeMemberClosed();
 
    /// This makes the socket no longer capable of performing any transmission
    /// operation, but continues to be responsive in the connection in order
@@ -336,29 +350,11 @@ public:
        using srt_logging::gmlog;
 
        srt::sync::ScopedLock cg (m_GlobControlLock);
+       SRT_ASSERT(g->groupEmpty());
 
-       CUDTGroup* pg = map_get(m_Groups, g->m_GroupID, NULL);
-       if (pg)
-       {
-           // Everything ok, group was found, delete it, and its
-           // associated entry.
-           int id = g->m_GroupID;
-           m_Groups.erase(id);
-           if (g != pg) // sanity check -- only report
-           {
-               LOGC(gmlog.Error, log << "IPE: the group id=" << id << " had DIFFERENT OBJECT mapped!");
-           }
-           else
-           {
-               HLOGC(gmlog.Debug, log << "deleteGroup: deleting $" << id);
-           }
-           delete pg; // still delete it
-           return;
-       }
-
-       LOGC(gmlog.Error, log << "IPE: the group id=" << g->m_GroupID << " not found in the map!");
-       delete g; // still delete it.
-       // Do not remove anything from the map - it's not found, anyway
+       // After that the group is no longer findable by GroupKeeper
+       m_Groups.erase(g->m_GroupID);
+       m_ClosedGroups[g->m_GroupID] = g;
    }
 
    CUDTGroup* findPeerGroup(SRTSOCKET peergroup)
@@ -413,12 +409,40 @@ private:
    std::map<int64_t, std::set<SRTSOCKET> > m_PeerRec;// record sockets from peers to avoid repeated connection request, int64_t = (socker_id << 30) + isn
 
 private:
-   friend struct FLookupSocketWithEvent;
+   friend struct FLookupSocketWithEvent_LOCKED;
 
    CUDTSocket* locateSocket(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
+   // This function does the same as locateSocket, except that:
+   // - lock on m_GlobControlLock is expected (so that you don't unlock between finding and using)
+   // - only return NULL if not found
+   CUDTSocket* locateSocket_LOCKED(SRTSOCKET u);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
+
 #if ENABLE_EXPERIMENTAL_BONDING
-   CUDTGroup* locateGroup(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
+   struct GroupKeeper
+   {
+       CUDTGroup* group;
+       GroupKeeper(CUDTUnited& glob, SRTSOCKET id, ErrorHandling erh)
+       {
+           group = glob.locateAcquireGroup(id, erh);
+       }
+
+       ~GroupKeeper()
+       {
+           if (group)
+           {
+               // We have a guarantee that if `group` was set
+               // as non-NULL here, it is also acquired and will not
+               // be deleted until this busy flag is set back to false.
+               srt::sync::ScopedLock cgroup (*group->exp_groupLock());
+               group->apiRelease();
+               // Only now that the group lock is lifted, can the
+               // group be now deleted and this pointer potentially dangling
+           }
+       }
+   };
+
+   CUDTGroup* locateAcquireGroup(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
 #endif
    void updateMux(CUDTSocket* s, const sockaddr_any& addr, const UDPSOCKET* = NULL);
    bool updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
@@ -443,6 +467,9 @@ private:
    static void* garbageCollect(void*);
 
    sockets_t m_ClosedSockets;   // temporarily store closed sockets
+#if ENABLE_EXPERIMENTAL_BONDING
+   groups_t m_ClosedGroups;
+#endif
 
    void checkBrokenSockets();
    void removeSocket(const SRTSOCKET u);
