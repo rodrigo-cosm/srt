@@ -1343,12 +1343,12 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     {
         InvertedLock ug(m_GroupLock);
 
+        // With unlocked GroupLock, we can now lock GlobControlLock.
+        // This is a requirement for makeClosed.
+        ScopedLock globlock(CUDT::s_UDTUnited.m_GlobControlLock);
+
         for (vector<SRTSOCKET>::iterator p = wipeme.begin(); p != wipeme.end(); ++p)
         {
-            // With unlocked GroupLock, we can now lock GlobControlLock.
-            // This is a requirement for makeClosed.
-            ScopedLock globlock(CUDT::s_UDTUnited.m_GlobControlLock);
-
             CUDTSocket* s = CUDT::s_UDTUnited.locateSocket_LOCKED(*p);
 
             // If the socket has been just moved to ClosedSockets, it means that
