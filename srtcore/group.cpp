@@ -1696,11 +1696,11 @@ int CUDTGroup::getGroupData(SRT_SOCKGROUPDATA* pdata, size_t* psize)
 
     ScopedLock gl(m_GroupLock);
 
-    return getGroupDataIn(pdata, psize);
+    return getGroupData_LOCKED(pdata, psize);
 }
 
 // [[using locked(this->m_GroupLock)]]
-int CUDTGroup::getGroupDataIn(SRT_SOCKGROUPDATA* pdata, size_t* psize)
+int CUDTGroup::getGroupData_LOCKED(SRT_SOCKGROUPDATA* pdata, size_t* psize)
 {
     SRT_ASSERT(psize != NULL);
     const size_t size = *psize;
@@ -1794,6 +1794,7 @@ void CUDTGroup::getGroupCount(size_t& w_size, bool& w_still_alive)
     w_still_alive = still_alive;
 }
 
+// [[using locked(m_GroupLock)]]
 void CUDTGroup::fillGroupData(SRT_MSGCTRL&       w_out, // MSGCTRL to be written
                               const SRT_MSGCTRL& in     // MSGCTRL read from the data-providing socket
 )
@@ -1813,7 +1814,7 @@ void CUDTGroup::fillGroupData(SRT_MSGCTRL&       w_out, // MSGCTRL to be written
         return;
     }
 
-    int st = getGroupData((grpdata), (&grpdata_size));
+    int st = getGroupData_LOCKED((grpdata), (&grpdata_size));
 
     // Always write back the size, no matter if the data were filled.
     w_out.grpdata_size = grpdata_size;
@@ -2048,7 +2049,8 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
         // action because this will result in a deadlock.
         // Prepare first the list of sockets to be added as connect-pending
         // and as read-ready, then unlock the group, and then add them to epoll.
-        vector<SRTSOCKET> read_ready, connect_pending;
+        vector<CUDTSocket*> read_ready;
+        vector<SRTSOCKET> connect_pending;
 
         {
             HLOGC(grlog.Debug, log << "group/recv: Reviewing member sockets to epoll-add");
@@ -2106,7 +2108,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
                 // on write, when it's attempting to connect, but now it's connected.
                 // This will update the socket with the new event set.
 
-                read_ready.push_back(gi->id);
+                read_ready.push_back(gi->ps);
                 HCLOG(ds << "@" << gi->id << "[READ] ");
             }
         }
@@ -2129,9 +2131,12 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
 
          */
 
-        for (vector<SRTSOCKET>::iterator i = read_ready.begin(); i != read_ready.end(); ++i)
+        for (vector<CUDTSocket*>::iterator i = read_ready.begin(); i != read_ready.end(); ++i)
         {
-            srt_epoll_add_usock(m_RcvEID, *i, &read_modes);
+            // NOT using the official srt_epoll_add_usock because this will do socket dispatching,
+            // which requires lock on m_GlobControlLock, while this lock cannot be applied without
+            // first unlocking m_GroupLock.
+            CUDT::s_UDTUnited.epoll_add_usock_INTERNAL(m_RcvEID, *i, &read_modes);
         }
 
         HLOGC(grlog.Debug, log << "group/recv: " << ds.str() << " --> EPOLL/SWAIT");
@@ -2447,7 +2452,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             CUDTSocket* ps = *di;
             m_Positions.erase(ps->m_SocketID);
-            m_pGlobal->close(ps);
+            ps->makeMemberClosed();
         }
 
         if (broken.size() >= size) // This > is for sanity check
@@ -2614,6 +2619,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
     }
 }
 
+// [[using locked(m_GroupLock)]]
 CUDTGroup::ReadPos* CUDTGroup::checkPacketAhead()
 {
     typedef map<SRTSOCKET, ReadPos>::iterator pit_t;
@@ -3381,7 +3387,7 @@ void CUDTGroup::sendBackup_CheckParallelLinks(const vector<gli_t>& unstable,
                 << unstable.size() << " unstable links - checking...");
 
         // Note: GroupLock is set already, skip locks and checks
-        getGroupDataIn((w_mc.grpdata), (&w_mc.grpdata_size));
+        getGroupData_LOCKED((w_mc.grpdata), (&w_mc.grpdata_size));
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
 
