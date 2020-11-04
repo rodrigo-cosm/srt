@@ -5529,6 +5529,14 @@ void *CUDT::tsbpd(void *param)
 
     THREAD_STATE_INIT("SRT:TsbPd");
 
+#if ENABLE_EXPERIMENTAL_BONDING
+    // Make the TSBPD thread a "client" of the group,
+    // which will ensure that the group will not be physically
+    // deleted until this thread exits.
+    // NOTE: DO NOT LEAD TO EVER CANCEL THE THREAD!!!
+    CUDTUnited::GroupKeeper gkeeper (self->s_UDTUnited, self->m_parent);
+#endif
+
     UniqueLock recv_lock  (self->m_RecvLock);
     CSync recvdata_cc (self->m_RecvDataCond, recv_lock);
     CSync tsbpd_cc    (self->m_RcvTsbPdCond, recv_lock);
@@ -5580,13 +5588,13 @@ void *CUDT::tsbpd(void *param)
 
                     self->m_iRcvLastSkipAck = skiptoseqno;
 #if ENABLE_EXPERIMENTAL_BONDING
-                    if (self->m_parent->m_IncludedGroup)
+                    if (gkeeper.group)
                     {
                         // A group may need to update the parallelly used idle links,
                         // should it have any. Pass the current socket position in order
                         // to skip it from the group loop.
                         // NOTE: SELF LOCKING.
-                        self->m_parent->m_IncludedGroup->updateLatestRcv(self->m_parent->m_IncludedIter);
+                        gkeeper.group->updateLatestRcv(self->m_parent);
                     }
 #endif
 
@@ -5638,19 +5646,31 @@ void *CUDT::tsbpd(void *param)
              */
             self->s_UDTUnited.m_EPoll.update_events(self->m_SocketID, self->m_sPollID, SRT_EPOLL_IN, true);
 #if ENABLE_EXPERIMENTAL_BONDING
-            if (self->m_parent->m_IncludedGroup)
-            {
-                InvertedLock unlk_recv (self->m_RecvLock);
-                ScopedLock lock_glob (CUDT::s_UDTUnited.m_GlobControlLock);
-                if (self->m_parent->m_IncludedGroup) // check again. The above was before locks.
-                {
-                    // The current "APP reader" needs to simply decide as to whether
-                    // the next CUDTGroup::recv() call should return with no blocking or not.
-                    // When the group is read-ready, it should update its pollers as it sees fit.
+            // If this is NULL, it means:
+            // - the socket never was a group member
+            // - the socket was a group member, but:
+            //    - was just removed as a part of closure
+            //    - and will never be member of the group anymore
 
-                    // NOTE: this call will set lock to m_IncludedGroup->m_GroupLock
-                    self->m_parent->m_IncludedGroup->updateReadState(self->m_SocketID, current_pkt_seq);
-                }
+            // If this is not NULL, it means:
+            // - This socket is currently member of the group
+            // - This socket WAS a member of the group, though possibly removed from it already, BUT:
+            //   - the group that this socket IS OR WAS member of is in the GroupKeeper
+            //   - the GroupKeeper prevents the group from being deleted
+            //   - it is then completely safe to access the group here,
+            //     EVEN IF THE SOCKET THAT WAS ITS MEMBER IS BEING DELETED.
+
+            // It is ensured that the group object exists here because GroupKeeper
+            // keeps it busy, even if you just closed the socket, remove it as a member
+            // or even the group is empty and was explicitly closed.
+            if (gkeeper.group)
+            {
+                // The current "APP reader" needs to simply decide as to whether
+                // the next CUDTGroup::recv() call should return with no blocking or not.
+                // When the group is read-ready, it should update its pollers as it sees fit.
+
+                // NOTE: this call will set lock to m_IncludedGroup->m_GroupLock
+                gkeeper.group->updateReadState(self->m_SocketID, current_pkt_seq);
             }
 #endif
             CGlobEvent::triggerEvent();
@@ -7732,7 +7752,7 @@ int32_t CUDT::ackDataUpTo(int32_t ack)
         // A group may need to update the parallelly used idle links,
         // should it have any. Pass the current socket position in order
         // to skip it from the group loop.
-        m_parent->m_IncludedGroup->updateLatestRcv(m_parent->m_IncludedIter);
+        m_parent->m_IncludedGroup->updateLatestRcv(m_parent);
     }
 #endif
 

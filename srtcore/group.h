@@ -743,7 +743,7 @@ public:
     bool applyGroupSequences(SRTSOCKET, int32_t& w_snd_isn, int32_t& w_rcv_isn);
     void synchronizeDrift(CUDT* cu, duration udrift, time_point newtimebase);
 
-    void updateLatestRcv(gli_t);
+    void updateLatestRcv(CUDTSocket*);
 
     // Property accessors
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);

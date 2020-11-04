@@ -285,7 +285,6 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     , m_selfManaged(true)
     , m_bSyncOnMsgNo(false)
     , m_type(gtype)
-    , m_listener()
     , m_iBusy()
     , m_iSndOldestMsgNo(SRT_MSGNO_NONE)
     , m_iSndAckedMsgNo(SRT_MSGNO_NONE)
@@ -797,6 +796,12 @@ void CUDTGroup::getOpt(SRT_SOCKOPT optname, void* pw_optval, int& w_optlen)
     default:; // pass on
     }
 
+    // XXX Suspicous: may require locking of GlobControlLock
+    // to prevent from deleting a socket in the meantime.
+    // Deleting a socket requires removing from the group first,
+    // so after GroupLock this will be either already NULL or
+    // a valid socket that will only be closed after time in
+    // the GC, so this is likely safe like all other API functions.
     CUDTSocket* ps = 0;
 
     {
@@ -899,10 +904,9 @@ SRT_SOCKSTATUS CUDTGroup::getStatus()
     return SRTS_BROKEN;
 }
 
+// [[using locked(m_GroupLock)]];
 void CUDTGroup::syncWithSocket(const CUDT& core, const HandshakeSide side)
 {
-    // [[using locked(m_GroupLock)]];
-
     if (side == HSD_RESPONDER)
     {
         // On the listener side you should synchronize ISN with the incoming
@@ -979,7 +983,10 @@ void CUDTGroup::close()
     }
 
     // Release blocked clients
-    CSync::lock_signal(m_RcvDataCond, m_RcvDataLock);
+    // XXX This looks like a dead code. Group receiver functions
+    // do not use any lock on m_RcvDataLock, it is likely a remainder
+    // of the old, internal impementation. 
+    // CSync::lock_signal(m_RcvDataCond, m_RcvDataLock);
 }
 
 // [[using locked(m_pGlobal->m_GlobControlLock)]]
@@ -1512,7 +1519,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             HLOGC(gslog.Debug,
                   log << "Will block on blocked socket @" << (*b)->id << " as only blocked socket remained");
-            srt_epoll_add_usock(m_SndEID, (*b)->id, &modes);
+            CUDT::s_UDTUnited.epoll_add_usock_INTERNAL(m_SndEID, (*b)->ps, &modes);
         }
 
         const int blocklen = blocked.size();
@@ -2120,7 +2127,8 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
            int connect_modes = SRT_EPOLL_OUT | SRT_EPOLL_ERR;
            for (vector<SRTSOCKET>::iterator i = connect_pending.begin(); i != connect_pending.end(); ++i)
            {
-           srt_epoll_add_usock(m_RcvEID, *i, &connect_modes);
+           XXX This is wrong code; this should use the internal function and pass CUDTSocket*
+           epoll_add_usock_INTERNAL(m_RcvEID, i->second, &connect_modes);
            }
 
            AND this below additionally for sockets that were so far pending connection,
@@ -3306,12 +3314,12 @@ void CUDTGroup::send_CloseBrokenSockets(vector<SRTSOCKET>& w_wipeme)
     {
         InvertedLock ug(m_GroupLock);
 
+        // With unlocked GroupLock, we can now lock GlobControlLock.
+        // This is a requirement for makeClosed.
+        ScopedLock globlock(CUDT::s_UDTUnited.m_GlobControlLock);
+
         for (vector<SRTSOCKET>::iterator p = w_wipeme.begin(); p != w_wipeme.end(); ++p)
         {
-            // With unlocked GroupLock, we can now lock GlobControlLock.
-            // This is a requirement for makeClosed.
-            ScopedLock globlock(CUDT::s_UDTUnited.m_GlobControlLock);
-
             CUDTSocket* s = CUDT::s_UDTUnited.locateSocket_LOCKED(*p);
 
             // If the socket has been just moved to ClosedSockets, it means that
@@ -4081,6 +4089,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
     return final_stat;
 }
 
+// [[using locked(this->m_GroupLock)]]
 int32_t CUDTGroup::addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& w_mc)
 {
     if (m_iSndAckedMsgNo == SRT_MSGNO_NONE)
@@ -4126,6 +4135,7 @@ int32_t CUDTGroup::addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& 
     return m_SenderBuffer.front().mc.pktseq;
 }
 
+// [[using locked(this->m_GroupLock)]]
 int CUDTGroup::sendBackupRexmit(CUDT& core, SRT_MSGCTRL& w_mc)
 {
     // This should resend all packets
@@ -4354,20 +4364,28 @@ void CUDTGroup::setGroupConnected()
     }
 }
 
-void CUDTGroup::updateLatestRcv(CUDTGroup::gli_t current)
+void CUDTGroup::updateLatestRcv(CUDTSocket* s)
 {
     // Currently only Backup groups use connected idle links.
     if (m_type != SRT_GTYPE_BACKUP)
         return;
 
     HLOGC(grlog.Debug,
-          log << "updateLatestRcv: BACKUP group, updating from active link @" << current->id << " with %"
-              << current->ps->m_pUDT->m_iRcvLastSkipAck);
+          log << "updateLatestRcv: BACKUP group, updating from active link @" << s->m_SocketID << " with %"
+              << s->m_pUDT->m_iRcvLastSkipAck);
 
-    CUDT*         source = current->ps->m_pUDT;
+    CUDT*         source = s->m_pUDT;
     vector<CUDT*> targets;
 
     UniqueLock lg(m_GroupLock);
+    // Sanity check for a case when getting a deleted socket
+    if (!s->m_IncludedGroup)
+        return;
+
+    // Under a group lock, we block execution of removal of the socket
+    // from the group, so if m_IncludedGroup is not NULL, we are granted
+    // that m_IncludedIter is valid.
+    gli_t current = s->m_IncludedIter;
 
     for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
     {

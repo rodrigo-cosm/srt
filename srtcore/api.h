@@ -114,6 +114,8 @@ modified by
 // ----------------
 //  - CUDTUnited::m_GlobControlLock
 //
+//             --- CUDTGroup::m_GroupLock
+//
 //      - CUDT::m_ConnectionLock
 //
 //  - CUDT::m_SendLock
@@ -320,6 +322,8 @@ public:
    int epoll_remove_usock(const int eid, const SRTSOCKET u);
    template <class EntityType>
    int epoll_remove_entity(const int eid, EntityType* ent);
+   int epoll_remove_socket_INTERNAL(const int eid, CUDTSocket* ent);
+   int epoll_remove_group_INTERNAL(const int eid, CUDTGroup* ent);
    int epoll_remove_ssock(const int eid, const SYSSOCKET s);
    int epoll_update_ssock(const int eid, const SYSSOCKET s, const int* events = NULL);
    int epoll_uwait(const int eid, SRT_EPOLL_EVENT* fdsSet, int fdsSize, int64_t msTimeOut);
@@ -419,12 +423,25 @@ private:
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
 
 #if ENABLE_EXPERIMENTAL_BONDING
+   CUDTGroup* locateAcquireGroup(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
+   CUDTGroup* acquireSocketsGroup(CUDTSocket* s);
+
    struct GroupKeeper
    {
        CUDTGroup* group;
+
+       // This is intended for API functions to lock the group's existence
+       // for the lifetime of their call.
        GroupKeeper(CUDTUnited& glob, SRTSOCKET id, ErrorHandling erh)
        {
            group = glob.locateAcquireGroup(id, erh);
+       }
+
+       // This is intended for TSBPD thread that should lock the group's
+       // existence until it exits.
+       GroupKeeper(CUDTUnited& glob, CUDTSocket* s)
+       {
+           group = glob.acquireSocketsGroup(s);
        }
 
        ~GroupKeeper()
@@ -442,7 +459,6 @@ private:
        }
    };
 
-   CUDTGroup* locateAcquireGroup(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
 #endif
    void updateMux(CUDTSocket* s, const sockaddr_any& addr, const UDPSOCKET* = NULL);
    bool updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
