@@ -5547,6 +5547,9 @@ void *CUDT::tsbpd(void *param)
         int32_t                  current_pkt_seq = 0;
         steady_clock::time_point tsbpdtime;
         bool                     rxready = false;
+#if ENABLE_EXPERIMENTAL_BONDING
+        bool shall_update_group = false;
+#endif
 
         enterCS(self->m_RcvBufferLock);
 
@@ -5588,14 +5591,7 @@ void *CUDT::tsbpd(void *param)
 
                     self->m_iRcvLastSkipAck = skiptoseqno;
 #if ENABLE_EXPERIMENTAL_BONDING
-                    if (gkeeper.group)
-                    {
-                        // A group may need to update the parallelly used idle links,
-                        // should it have any. Pass the current socket position in order
-                        // to skip it from the group loop.
-                        // NOTE: SELF LOCKING.
-                        gkeeper.group->updateLatestRcv(self->m_parent);
-                    }
+                    shall_update_group = true;
 #endif
 
 #if ENABLE_LOGGING
@@ -5665,12 +5661,25 @@ void *CUDT::tsbpd(void *param)
             // or even the group is empty and was explicitly closed.
             if (gkeeper.group)
             {
+                // Functions called below will lock m_GroupLock, which in hierarchy
+                // lies after m_RecvLock. Must unlock m_RecvLock to be able to lock
+                // m_GroupLock inside the calls.
+                InvertedLock unrecv(self->m_RecvLock);
                 // The current "APP reader" needs to simply decide as to whether
                 // the next CUDTGroup::recv() call should return with no blocking or not.
                 // When the group is read-ready, it should update its pollers as it sees fit.
 
                 // NOTE: this call will set lock to m_IncludedGroup->m_GroupLock
                 gkeeper.group->updateReadState(self->m_SocketID, current_pkt_seq);
+
+                if (shall_update_group)
+                {
+                    // A group may need to update the parallelly used idle links,
+                    // should it have any. Pass the current socket position in order
+                    // to skip it from the group loop.
+                    // NOTE: SELF LOCKING.
+                    gkeeper.group->updateLatestRcv(self->m_parent);
+                }
             }
 #endif
             CGlobEvent::triggerEvent();
