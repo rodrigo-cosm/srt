@@ -673,7 +673,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    CIPAddress::pton((ns->m_SelfAddr), ns->m_pUDT->m_piSelfIP, ns->m_SelfAddr.family(), peer);
 
    {
-       // protect the m_PeerRec structure.
+       // protect the m_PeerRec structure (and group existence)
        ScopedLock glock (m_GlobControlLock);
        try
        {
@@ -1304,7 +1304,7 @@ int CUDTUnited::singleMemberConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* gd)
     return gstat;
 }
 
-// [using busy(pg)]]
+// [[using assert(pg->m_iBusy > 0)]]
 int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int arraysize)
 {
     CUDTGroup& g = *pg;
@@ -3159,7 +3159,6 @@ int CUDT::removeSocketFromGroup(SRTSOCKET socket)
     if (!s->m_IncludedGroup)
         return APIError(MJ_NOTSUP, MN_INVAL, 0);
 
-    ScopedLock grd (s->m_ControlLock);
     ScopedLock glob_grd (s_UDTUnited.m_GlobControlLock);
     s->removeFromGroup(false);
     return 0;

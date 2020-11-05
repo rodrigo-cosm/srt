@@ -152,7 +152,8 @@ void CUDT::construct()
     m_bBroken             = false;
     m_bPeerHealth         = true;
     m_RejectReason        = SRT_REJ_UNKNOWN;
-    m_tsLastReqTime         = steady_clock::time_point();
+    m_tsLastReqTime       = steady_clock::time_point();
+    m_SrtHsSide           = HSD_DRAW;
 
     m_lSrtVersion            = SRT_DEF_VERSION;
     m_lPeerSrtVersion        = 0; // not defined until connected.
@@ -1307,6 +1308,11 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void *optval, int &optlen)
 
         strcpy((char *)optval, m_OPT_PktFilterConfigString.c_str());
         optlen = m_OPT_PktFilterConfigString.size();
+        break;
+
+    case SRTO_RETRANSMITALGO:
+        *(int32_t *)optval = m_iOPT_RetransmitAlgo;
+        optlen         = sizeof(int32_t);
         break;
 
     default:
@@ -5095,7 +5101,8 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
             // LEAVING as comment for historical reasons. Locking is here most
             // likely not necessary because the socket cannot be removed from the
             // group until the socket isn't removed, and this requires locking of
-            // m_GlobControlLock.
+            // m_GlobControlLock. This should ensure that when m_IncludedGroup is
+            // not NULL, m_IncludedIter is also valid.
             // ScopedLock glock(g->m_GroupLock);
 
             HLOGC(cnlog.Debug, log << "group: Socket @" << m_parent->m_SocketID << " fresh connected, setting IDLE");
@@ -7306,7 +7313,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
         throw CUDTException(MJ_NOTSUP, MN_INVALBUFFERAPI, 0);
     }
 
-    ScopedLock recvguard(m_RecvLock);
+    UniqueLock recvguard(m_RecvLock);
 
     // Well, actually as this works over a FILE (fstream), not just a stream,
     // the size can be measured anyway and predicted if setting the offset might
@@ -7366,8 +7373,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
         }
 
         {
-            UniqueLock gl   (m_RecvDataLock);
-            CSync rcond (m_RecvDataCond,  gl);
+            CSync rcond (m_RecvDataCond, recvguard);
 
             THREAD_PAUSED();
             while (stillConnected() && !m_pRcvBuffer->isRcvDataReady())
@@ -7716,7 +7722,6 @@ void CUDT::initSynch()
 {
     setupMutex(m_SendBlockLock, "SendBlock");
     setupCond(m_SendBlockCond, "SendBlock");
-    setupMutex(m_RecvDataLock, "RecvData");
     setupCond(m_RecvDataCond, "RecvData");
     setupMutex(m_SendLock, "Send");
     setupMutex(m_RecvLock, "Recv");
@@ -7738,7 +7743,6 @@ void CUDT::destroySynch()
     // cause the call to destroy a CV hang up.
     m_SendBlockCond.notify_all();
     releaseCond(m_SendBlockCond);
-    releaseMutex(m_RecvDataLock);
 
     m_RecvDataCond.notify_all();
     releaseCond(m_RecvDataCond);
@@ -7756,22 +7760,29 @@ void CUDT::destroySynch()
 
 void CUDT::releaseSynch()
 {
+    SRT_ASSERT(m_bClosing);
     // wake up user calls
     CSync::lock_signal(m_SendBlockCond, m_SendBlockLock);
 
     enterCS(m_SendLock);
     leaveCS(m_SendLock);
 
-    CSync::lock_signal(m_RecvDataCond, m_RecvDataLock);
+    // Awake tsbpd() and srt_recv*(..) threads for them to check m_bClosing.
+    CSync::lock_signal(m_RecvDataCond, m_RecvLock);
     CSync::lock_signal(m_RcvTsbPdCond, m_RecvLock);
 
-    enterCS(m_RecvDataLock);
+    // Azquiring m_RcvTsbPdStartupLock protects race in starting
+    // the tsbpd() thread in CUDT::processData().
+    // Wait for tsbpd() thread to finish.
+    enterCS(m_RcvTsbPdStartupLock);
     if (m_RcvTsbPdThread.joinable())
     {
         m_RcvTsbPdThread.join();
     }
-    leaveCS(m_RecvDataLock);
+    leaveCS(m_RcvTsbPdStartupLock);
 
+    // Acquiring the m_RecvLock it is assumed that both tsbpd()
+    // and srt_recv*(..) threads will be aware about the state of m_bClosing.
     enterCS(m_RecvLock);
     leaveCS(m_RecvLock);
 }
@@ -7841,245 +7852,12 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
     setPacketTS(ctrlpkt, steady_clock::now());
 
     int nbsent        = 0;
-    int local_prevack = 0;
-
-#if ENABLE_HEAVY_LOGGING
-    struct SaveBack
-    {
-        int &      target;
-        const int &source;
-
-        ~SaveBack() { target = source; }
-    } l_saveback = {m_iDebugPrevLastAck, m_iRcvLastAck};
-    (void)l_saveback; // kill compiler warning: unused variable `l_saveback` [-Wunused-variable]
-
-    local_prevack = m_iDebugPrevLastAck;
-
-    string reason; // just for "a reason" of giving particular % for ACK
-#endif
 
     switch (pkttype)
     {
     case UMSG_ACK: // 010 - Acknowledgement
     {
-        int32_t ack;
-
-        // If there is no loss, the ACK is the current largest sequence number plus 1;
-        // Otherwise it is the smallest sequence number in the receiver loss list.
-        if (m_pRcvLossList->getLossLength() == 0)
-        {
-            ack = CSeqNo::incseq(m_iRcvCurrSeqNo);
-#if ENABLE_HEAVY_LOGGING
-            reason = "expected next";
-#endif
-        }
-        else
-        {
-            ScopedLock lock(m_RcvLossLock);
-            ack = m_pRcvLossList->getFirstLostSeq();
-#if ENABLE_HEAVY_LOGGING
-            reason = "first lost";
-#endif
-        }
-
-        if (m_iRcvLastAckAck == ack)
-        {
-            HLOGC(xtlog.Debug, log << "sendCtrl(UMSG_ACK): last ACK %" << ack << "(" << reason << ") == last ACKACK");
-            break;
-        }
-
-        // send out a lite ACK
-        // to save time on buffer processing and bandwidth/AS measurement, a lite ACK only feeds back an ACK number
-        if (size == SEND_LITE_ACK)
-        {
-            ctrlpkt.pack(pkttype, NULL, &ack, size);
-            ctrlpkt.m_iID = m_PeerID;
-            nbsent        = m_pSndQueue->sendto(m_PeerAddr, ctrlpkt);
-            DebugAck("sendCtrl(lite):" + CONID(), local_prevack, ack);
-            break;
-        }
-
-        // There are new received packets to acknowledge, update related information.
-        /* tsbpd thread may also call ackData when skipping packet so protect code */
-        enterCS(m_RcvBufferLock);
-
-        // IF ack %> m_iRcvLastAck
-        if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
-        {
-            const int32_t first_seq ATR_UNUSED = ackDataUpTo(ack);
-            leaveCS(m_RcvBufferLock);
-
-#if ENABLE_EXPERIMENTAL_BONDING
-            // This actually should be done immediately after the ACK pointers were
-            // updated in this socket, but it can't be done inside this function due
-            // to being run under a lock.
-
-            // At this moment no locks are applied. The only lock used so far
-            // was m_RcvBufferLock, but this was lifed above. At this moment
-            // it is safe to apply any locks here. This function is affined
-            // to CRcvQueue::worker thread, so it is free to apply locks as
-            // required in the defined order. At present we only need the lock
-            // on m_GlobControlLock to prevent the group from being deleted
-            // in the meantime
-            if (m_parent->m_IncludedGroup)
-            {
-                // Check is first done before locking to avoid unnecessary
-                // mutex locking. The condition for this field is that it
-                // can be either never set, already reset, or ever set
-                // and possibly dangling. The re-check after lock eliminates
-                // the dangling case.
-                ScopedLock glock (s_UDTUnited.m_GlobControlLock);
-
-                // Note that updateLatestRcv will lock m_IncludedGroup->m_GroupLock,
-                // but this is an intended order.
-                if (m_parent->m_IncludedGroup)
-                {
-                    // A group may need to update the parallelly used idle links,
-                    // should it have any. Pass the current socket position in order
-                    // to skip it from the group loop.
-                    m_parent->m_IncludedGroup->updateLatestRcv(m_parent);
-                }
-            }
-#endif
-            IF_HEAVY_LOGGING(int32_t oldack = m_iRcvLastSkipAck);
-
-            // If TSBPD is enabled, then INSTEAD OF signaling m_RecvDataCond,
-            // signal m_RcvTsbPdCond. This will kick in the tsbpd thread, which
-            // will signal m_RecvDataCond when there's time to play for particular
-            // data packet.
-            HLOGC(xtlog.Debug, log << "ACK: clip %" << oldack << "-%" << ack
-                    << ", REVOKED " << CSeqNo::seqoff(ack, m_iRcvLastAck) << " from RCV buffer");
-
-            if (m_bTsbPd)
-            {
-                /* Newly acknowledged data, signal TsbPD thread */
-                UniqueLock rcvlock (m_RecvLock);
-                CSync tscond   (m_RcvTsbPdCond, rcvlock);
-                if (m_bTsbPdAckWakeup)
-                    tscond.signal_locked(rcvlock);
-            }
-            else
-            {
-                if (m_bSynRecving)
-                {
-                    // signal a waiting "recv" call if there is any data available
-                    CSync::lock_signal(m_RecvDataCond, m_RecvDataLock);
-                }
-                // acknowledge any waiting epolls to read
-                s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, true);
-#if ENABLE_EXPERIMENTAL_BONDING
-                if (m_parent->m_IncludedGroup)
-                {
-                    // See above explanation for double-checking
-                    ScopedLock glock (s_UDTUnited.m_GlobControlLock);
-
-                    if (m_parent->m_IncludedGroup)
-                    {
-                        // The current "APP reader" needs to simply decide as to whether
-                        // the next CUDTGroup::recv() call should return with no blocking or not.
-                        // When the group is read-ready, it should update its pollers as it sees fit.
-                        m_parent->m_IncludedGroup->updateReadState(m_SocketID, first_seq);
-                    }
-                }
-#endif
-                CGlobEvent::triggerEvent();
-            }
-            enterCS(m_RcvBufferLock);
-        }
-        else if (ack == m_iRcvLastAck)
-        {
-            // If the ACK was just sent already AND elapsed time did not exceed RTT,
-            if ((steady_clock::now() - m_tsLastAckTime) <
-                (microseconds_from(m_iRTT + 4 * m_iRTTVar)))
-            {
-                HLOGC(xtlog.Debug, log << "sendCtrl(UMSG_ACK): ACK %" << ack << " just sent - too early to repeat");
-                leaveCS(m_RcvBufferLock);
-                break;
-            }
-        }
-        else
-        {
-            // Not possible (m_iRcvCurrSeqNo+1 <% m_iRcvLastAck ?)
-            LOGC(xtlog.Error, log << "sendCtrl(UMSG_ACK): IPE: curr %" << ack
-                  << " <% last %" << m_iRcvLastAck);
-            leaveCS(m_RcvBufferLock);
-            break;
-        }
-
-        // [[using locked(m_RcvBufferLock)]];
-
-        // [[using assert( ack >= m_iRcvLastAck && is_periodic_ack ) ]];
-
-        // Send out the ACK only if has not been received by the sender before
-        if (CSeqNo::seqcmp(m_iRcvLastAck, m_iRcvLastAckAck) > 0)
-        {
-            // NOTE: The BSTATS feature turns on extra fields above size 6
-            // also known as ACKD_TOTAL_SIZE_VER100.
-            int32_t data[ACKD_TOTAL_SIZE];
-
-            // Case you care, CAckNo::incack does exactly the same thing as
-            // CSeqNo::incseq. Logically the ACK number is a different thing
-            // than sequence number (it's a "journal" for ACK request-response,
-            // and starts from 0, unlike sequence, which starts from a random
-            // number), but still the numbers are from exactly the same domain.
-            m_iAckSeqNo           = CAckNo::incack(m_iAckSeqNo);
-            data[ACKD_RCVLASTACK] = m_iRcvLastAck;
-            data[ACKD_RTT]        = m_iRTT;
-            data[ACKD_RTTVAR]     = m_iRTTVar;
-            data[ACKD_BUFFERLEFT] = m_pRcvBuffer->getAvailBufSize();
-            // a minimum flow window of 2 is used, even if buffer is full, to break potential deadlock
-            if (data[ACKD_BUFFERLEFT] < 2)
-                data[ACKD_BUFFERLEFT] = 2;
-
-            if (steady_clock::now() - m_tsLastAckTime > m_tdACKInterval)
-            {
-                int rcvRate;
-                int ctrlsz = ACKD_TOTAL_SIZE_UDTBASE * ACKD_FIELD_SIZE; // Minimum required size
-
-                data[ACKD_RCVSPEED]  = m_RcvTimeWindow.getPktRcvSpeed((rcvRate));
-                data[ACKD_BANDWIDTH] = m_RcvTimeWindow.getBandwidth();
-
-                //>>Patch while incompatible (1.0.2) receiver floating around
-                if (m_lPeerSrtVersion == SrtVersion(1, 0, 2))
-                {
-                    data[ACKD_RCVRATE] = rcvRate;                                     // bytes/sec
-                    data[ACKD_XMRATE]  = data[ACKD_BANDWIDTH] * m_iMaxSRTPayloadSize; // bytes/sec
-                    ctrlsz             = ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE_VER102;
-                }
-                else if (m_lPeerSrtVersion >= SrtVersion(1, 0, 3))
-                {
-                    // Normal, currently expected version.
-                    data[ACKD_RCVRATE] = rcvRate; // bytes/sec
-                    ctrlsz             = ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE_VER101;
-                }
-                // ELSE: leave the buffer with ...UDTBASE size.
-
-                ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, ctrlsz);
-                m_tsLastAckTime = steady_clock::now();
-            }
-            else
-            {
-                ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE_SMALL);
-            }
-
-            ctrlpkt.m_iID        = m_PeerID;
-            setPacketTS(ctrlpkt, steady_clock::now());
-            nbsent               = m_pSndQueue->sendto(m_PeerAddr, ctrlpkt);
-            DebugAck("sendCtrl(UMSG_ACK): " + CONID(), local_prevack, ack);
-
-            m_ACKWindow.store(m_iAckSeqNo, m_iRcvLastAck);
-
-            enterCS(m_StatsLock);
-            ++m_stats.sentACK;
-            ++m_stats.sentACKTotal;
-            leaveCS(m_StatsLock);
-        }
-        else
-        {
-            HLOGC(xtlog.Debug, log << "sendCtrl(UMSG_ACK): " << CONID() << "ACK %" << m_iRcvLastAck
-                    << " <=%  ACKACK %" << m_iRcvLastAckAck << " - NOT SENDING ACK");
-        }
-        leaveCS(m_RcvBufferLock);
+        nbsent = sendCtrlAck(ctrlpkt, size);
         break;
     }
 
@@ -8205,6 +7983,245 @@ void CUDT::sendCtrl(UDTMessageType pkttype, const int32_t* lparam, void* rparam,
     // Fix keepalive
     if (nbsent)
         m_tsLastSndTime = steady_clock::now();
+}
+
+int CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
+{
+    SRT_ASSERT(ctrlpkt.getMsgTimeStamp() != 0);
+    int32_t ack;
+    int nbsent = 0;
+    int local_prevack = 0;
+
+#if ENABLE_HEAVY_LOGGING
+    struct SaveBack
+    {
+        int& target;
+        const int& source;
+
+        ~SaveBack() { target = source; }
+    } l_saveback = { m_iDebugPrevLastAck, m_iRcvLastAck };
+    (void)l_saveback; // kill compiler warning: unused variable `l_saveback` [-Wunused-variable]
+
+    local_prevack = m_iDebugPrevLastAck;
+
+    string reason; // just for "a reason" of giving particular % for ACK
+#endif
+
+    // If there is no loss, the ACK is the current largest sequence number plus 1;
+    // Otherwise it is the smallest sequence number in the receiver loss list.
+    if (m_pRcvLossList->getLossLength() == 0)
+    {
+        ack = CSeqNo::incseq(m_iRcvCurrSeqNo);
+#if ENABLE_HEAVY_LOGGING
+        reason = "expected next";
+#endif
+    }
+    else
+    {
+        ScopedLock lock(m_RcvLossLock);
+        ack = m_pRcvLossList->getFirstLostSeq();
+#if ENABLE_HEAVY_LOGGING
+        reason = "first lost";
+#endif
+    }
+
+    if (m_iRcvLastAckAck == ack)
+    {
+        HLOGC(xtlog.Debug, log << "sendCtrl(UMSG_ACK): last ACK %" << ack << "(" << reason << ") == last ACKACK");
+        return nbsent;
+    }
+
+    // send out a lite ACK
+    // to save time on buffer processing and bandwidth/AS measurement, a lite ACK only feeds back an ACK number
+    if (size == SEND_LITE_ACK)
+    {
+        ctrlpkt.pack(UMSG_ACK, NULL, &ack, size);
+        ctrlpkt.m_iID = m_PeerID;
+        nbsent = m_pSndQueue->sendto(m_PeerAddr, ctrlpkt);
+        DebugAck("sendCtrl(lite):" + CONID(), local_prevack, ack);
+        return nbsent;
+    }
+
+    // There are new received packets to acknowledge, update related information.
+    /* tsbpd thread may also call ackData when skipping packet so protect code */
+    UniqueLock bufflock(m_RcvBufferLock);
+
+    // IF ack %> m_iRcvLastAck
+    if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
+    {
+        const int32_t first_seq ATR_UNUSED = ackDataUpTo(ack);
+        bufflock.unlock();
+
+#if ENABLE_EXPERIMENTAL_BONDING
+            // This actually should be done immediately after the ACK pointers were
+            // updated in this socket, but it can't be done inside this function due
+            // to being run under a lock.
+
+            // At this moment no locks are applied. The only lock used so far
+            // was m_RcvBufferLock, but this was lifed above. At this moment
+            // it is safe to apply any locks here. This function is affined
+            // to CRcvQueue::worker thread, so it is free to apply locks as
+            // required in the defined order. At present we only need the lock
+            // on m_GlobControlLock to prevent the group from being deleted
+            // in the meantime
+            if (m_parent->m_IncludedGroup)
+            {
+                // Check is first done before locking to avoid unnecessary
+                // mutex locking. The condition for this field is that it
+                // can be either never set, already reset, or ever set
+                // and possibly dangling. The re-check after lock eliminates
+                // the dangling case.
+                ScopedLock glock (s_UDTUnited.m_GlobControlLock);
+
+                // Note that updateLatestRcv will lock m_IncludedGroup->m_GroupLock,
+                // but this is an intended order.
+                if (m_parent->m_IncludedGroup)
+                {
+                    // A group may need to update the parallelly used idle links,
+                    // should it have any. Pass the current socket position in order
+                    // to skip it from the group loop.
+                    m_parent->m_IncludedGroup->updateLatestRcv(m_parent);
+                }
+            }
+#endif
+        IF_HEAVY_LOGGING(int32_t oldack = m_iRcvLastSkipAck);
+
+        // If TSBPD is enabled, then INSTEAD OF signaling m_RecvDataCond,
+        // signal m_RcvTsbPdCond. This will kick in the tsbpd thread, which
+        // will signal m_RecvDataCond when there's time to play for particular
+        // data packet.
+        HLOGC(xtlog.Debug, log << "ACK: clip %" << oldack << "-%" << ack
+            << ", REVOKED " << CSeqNo::seqoff(ack, m_iRcvLastAck) << " from RCV buffer");
+
+        if (m_bTsbPd)
+        {
+            /* Newly acknowledged data, signal TsbPD thread */
+            UniqueLock rcvlock(m_RecvLock);
+            CSync tscond(m_RcvTsbPdCond, rcvlock);
+            // m_bTsbPdAckWakeup is protected by m_RecvLock in the tsbpd() thread
+            if (m_bTsbPdAckWakeup)
+                tscond.signal_locked(rcvlock);
+        }
+        else
+        {
+            if (m_bSynRecving)
+            {
+                // signal a waiting "recv" call if there is any data available
+                CSync::lock_signal(m_RecvDataCond, m_RecvLock);
+            }
+            // acknowledge any waiting epolls to read
+            s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, true);
+#if ENABLE_EXPERIMENTAL_BONDING
+            if (m_parent->m_IncludedGroup)
+            {
+                    // See above explanation for double-checking
+                    ScopedLock glock (s_UDTUnited.m_GlobControlLock);
+
+                    if (m_parent->m_IncludedGroup)
+                    {
+                        // The current "APP reader" needs to simply decide as to whether
+                        // the next CUDTGroup::recv() call should return with no blocking or not.
+                        // When the group is read-ready, it should update its pollers as it sees fit.
+                        m_parent->m_IncludedGroup->updateReadState(m_SocketID, first_seq);
+                    }
+            }
+#endif
+            CGlobEvent::triggerEvent();
+        }
+        bufflock.lock();
+    }
+    else if (ack == m_iRcvLastAck)
+    {
+        // If the ACK was just sent already AND elapsed time did not exceed RTT,
+        if ((steady_clock::now() - m_tsLastAckTime) <
+            (microseconds_from(m_iRTT + 4 * m_iRTTVar)))
+        {
+            HLOGC(xtlog.Debug, log << "sendCtrl(UMSG_ACK): ACK %" << ack << " just sent - too early to repeat");
+            return nbsent;
+        }
+    }
+    else
+    {
+        // Not possible (m_iRcvCurrSeqNo+1 <% m_iRcvLastAck ?)
+        LOGC(xtlog.Error, log << "sendCtrl(UMSG_ACK): IPE: curr %" << ack
+            << " <% last %" << m_iRcvLastAck);
+        return nbsent;
+    }
+
+    // [[using assert( ack >= m_iRcvLastAck && is_periodic_ack ) ]];
+    // [[using locked(m_RcvBufferLock)]];
+
+    // Send out the ACK only if has not been received by the sender before
+    if (CSeqNo::seqcmp(m_iRcvLastAck, m_iRcvLastAckAck) > 0)
+    {
+        // NOTE: The BSTATS feature turns on extra fields above size 6
+        // also known as ACKD_TOTAL_SIZE_VER100.
+        int32_t data[ACKD_TOTAL_SIZE];
+
+        // Case you care, CAckNo::incack does exactly the same thing as
+        // CSeqNo::incseq. Logically the ACK number is a different thing
+        // than sequence number (it's a "journal" for ACK request-response,
+        // and starts from 0, unlike sequence, which starts from a random
+        // number), but still the numbers are from exactly the same domain.
+        m_iAckSeqNo = CAckNo::incack(m_iAckSeqNo);
+        data[ACKD_RCVLASTACK] = m_iRcvLastAck;
+        data[ACKD_RTT] = m_iRTT;
+        data[ACKD_RTTVAR] = m_iRTTVar;
+        data[ACKD_BUFFERLEFT] = m_pRcvBuffer->getAvailBufSize();
+        // a minimum flow window of 2 is used, even if buffer is full, to break potential deadlock
+        if (data[ACKD_BUFFERLEFT] < 2)
+            data[ACKD_BUFFERLEFT] = 2;
+
+        if (steady_clock::now() - m_tsLastAckTime > m_tdACKInterval)
+        {
+            int rcvRate;
+            int ctrlsz = ACKD_TOTAL_SIZE_UDTBASE * ACKD_FIELD_SIZE; // Minimum required size
+
+            data[ACKD_RCVSPEED] = m_RcvTimeWindow.getPktRcvSpeed((rcvRate));
+            data[ACKD_BANDWIDTH] = m_RcvTimeWindow.getBandwidth();
+
+            //>>Patch while incompatible (1.0.2) receiver floating around
+            if (m_lPeerSrtVersion == SrtVersion(1, 0, 2))
+            {
+                data[ACKD_RCVRATE] = rcvRate;                                     // bytes/sec
+                data[ACKD_XMRATE] = data[ACKD_BANDWIDTH] * m_iMaxSRTPayloadSize; // bytes/sec
+                ctrlsz = ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE_VER102;
+            }
+            else if (m_lPeerSrtVersion >= SrtVersion(1, 0, 3))
+            {
+                // Normal, currently expected version.
+                data[ACKD_RCVRATE] = rcvRate; // bytes/sec
+                ctrlsz = ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE_VER101;
+            }
+            // ELSE: leave the buffer with ...UDTBASE size.
+
+            ctrlpkt.pack(UMSG_ACK, &m_iAckSeqNo, data, ctrlsz);
+            m_tsLastAckTime = steady_clock::now();
+        }
+        else
+        {
+            ctrlpkt.pack(UMSG_ACK, &m_iAckSeqNo, data, ACKD_FIELD_SIZE * ACKD_TOTAL_SIZE_SMALL);
+        }
+
+        ctrlpkt.m_iID = m_PeerID;
+        setPacketTS(ctrlpkt, steady_clock::now());
+        nbsent = m_pSndQueue->sendto(m_PeerAddr, ctrlpkt);
+        DebugAck("sendCtrl(UMSG_ACK): " + CONID(), local_prevack, ack);
+
+        m_ACKWindow.store(m_iAckSeqNo, m_iRcvLastAck);
+
+        enterCS(m_StatsLock);
+        ++m_stats.sentACK;
+        ++m_stats.sentACKTotal;
+        leaveCS(m_StatsLock);
+    }
+    else
+    {
+        HLOGC(xtlog.Debug, log << "sendCtrl(UMSG_ACK): " << CONID() << "ACK %" << m_iRcvLastAck
+            << " <=%  ACKACK %" << m_iRcvLastAckAck << " - NOT SENDING ACK");
+    }
+
+    return nbsent;
 }
 
 void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
@@ -9542,8 +9559,6 @@ int CUDT::processData(CUnit* in_unit)
 
     CPacket &packet = in_unit->m_Packet;
 
-    // XXX This should be called (exclusively) here:
-    // m_pRcvBuffer->addLocalTsbPdDriftSample(packet.getMsgTimeStamp());
     // Just heard from the peer, reset the expiration count.
     m_iEXPCount = 1;
     m_tsLastRspTime = steady_clock::now();
@@ -9553,6 +9568,11 @@ int CUDT::processData(CUnit* in_unit)
     // We are receiving data, start tsbpd thread if TsbPd is enabled
     if (need_tsbpd && !m_RcvTsbPdThread.joinable())
     {
+        ScopedLock lock(m_RcvTsbPdStartupLock);
+
+        if (m_bClosing) // Check again to protect join() in CUDT::releaseSync()
+            return -1;
+
         HLOGP(qrlog.Debug, "Spawning Socket TSBPD thread");
 #if ENABLE_HEAVY_LOGGING
         std::ostringstream tns1, tns2;
@@ -9569,8 +9589,6 @@ int CUDT::processData(CUnit* in_unit)
         if (!StartThread(m_RcvTsbPdThread, CUDT::tsbpd, this, thname))
             return -1;
     }
-    // NOTE: In case of group TSBPD, this facility will be started
-    // in different place. Group TSBPD is a concept implementation - not done here.
 
     const int pktrexmitflag = m_bPeerRexmitFlag ? (packet.getRexmitFlag() ? 1 : 0) : 2;
 #if ENABLE_HEAVY_LOGGING
@@ -11116,12 +11134,12 @@ void CUDT::updateBrokenConnection(int errorcode)
             token = m_parent->m_IncludedIter->token;
             if (m_parent->m_IncludedIter->sndstate == SRT_GST_PENDING)
             {
-                HLOGC(gmlog.Debug, log << "checkExpTimer: a pending link was broken - will be removed");
+                HLOGC(gmlog.Debug, log << "updateBrokenConnection: a pending link was broken - will be removed");
                 pending_broken = true;
             }
             else
             {
-                HLOGC(gmlog.Debug, log << "checkExpTimer: state=" << CUDTGroup::StateStr(m_parent->m_IncludedIter->sndstate) << " a used link was broken - not closing automatically");
+                HLOGC(gmlog.Debug, log << "updateBrokenConnection: state=" << CUDTGroup::StateStr(m_parent->m_IncludedIter->sndstate) << " a used link was broken - not closing automatically");
             }
 
             m_parent->m_IncludedIter->sndstate = SRT_GST_BROKEN;
@@ -11149,19 +11167,13 @@ void CUDT::updateBrokenConnection(int errorcode)
         CUDTGroup* pg = m_parent->m_IncludedGroup;
         if (pg)
         {
-            // DO NOT close it, if it wasn't pending because if it passed through
-            // the "connected" state and was used for sending the data, the sending/receiving
-            // function might want to check it up.
-            if (!pending_broken)
-            {
-                m_parent->m_bMarkSweep = true;
-            }
-
             // Bound to one call because this requires locking
             pg->updateFailedLink();
         }
     }
 
+    // Sockets that never succeeded to connect must be deleted
+    // explicitly, otherwise they will never be deleted.
     if (pending_broken)
     {
         s_UDTUnited.close(m_parent);

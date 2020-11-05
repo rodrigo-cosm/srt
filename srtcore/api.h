@@ -75,17 +75,29 @@ modified by
 // is as follows:
 //
 // CUDTUnited (singleton) {
-//      CONTAINER m_Sockets { CUDTSocket }
-//      CONTAINER m_ClosedSockets { CUDTSocket }
-//      CONTAINER m_Groups { CUDTGroup }
+//      CONTAINER<CUDTSocket> m_Sockets;
+//      CONTAINER<CUDTSocket> m_ClosedSockets;
+//      CONTAINER<CUDTGroup> m_Groups;
+//      CONTAINER<CUDTGroup> m_ClosedGroups;
 // }
 //
 // CUDTGroup {
-//      CONTAINER m_Group { CUDTSocket }
+//      type SocketData { CUDTSocket* ps; SRTSOCKET id; int state; ... }
+//      CONTAINER<SocketData> m_Group;
 // }
 //
 // Dead sockets (either closed manually or broken after connection) are
-// moved first from m_Sockets to m_ClosedSockets.
+// moved first from m_Sockets to m_ClosedSockets. The GC thread will take
+// care to delete them physically after making sure all inside facilities
+// do not contain any remaining data of interest.
+//
+// Groups may only be manually closed, however a closed group is moved
+// to m_ClosedGroups. The GC thread will take care to delete them, as long
+// as their usage counter is 0. Every call to an API function (as well as
+// TSBPD thread) increases the usage counter in the beginning and decreases
+// upon exit. A group may be closed in one thread and still being used in
+// another. The group will persist up to the time when the current API function
+// using it exits and decreases the usage counter back to 0.
 //
 // Containers and contents guarded by mutex:
 //
@@ -99,7 +111,14 @@ modified by
 // CUDTGroup::m_GroupLock - guards the m_Group container inside a group that collects member sockets.
 //
 // There are unfortunately many situations when multiple locks have to be applied at a time. This
-// is then the hierarchy of the mutexes that must be preserved everywhere in the code:
+// is then the hierarchy of the mutexes that must be preserved everywhere in the code.
+//
+// As mutexes cannot be really ordered unanimously, below are two trees, with also
+// some possible branches inside. The mutex marked with (T) is terminal, that is, no
+// other locks shall be allowed in the section where this mutex is locked.
+//
+// Note that the list isn't exactly complete, but it should contain all
+// mutexes for which the locking order must be preserved.
 //
 //  - CUDTSocket::m_ControlLock
 //
@@ -140,7 +159,6 @@ public:
 #if ENABLE_EXPERIMENTAL_BONDING
        , m_IncludedGroup()
 #endif
-       , m_bMarkSweep(false)
        , m_iISN(0)
        , m_pUDT(NULL)
        , m_pQueuedSockets(NULL)
@@ -177,7 +195,6 @@ public:
    CUDTGroup::gli_t m_IncludedIter;          //< Container's iterator of the group to which it belongs, or gli_NULL() if it isn't
    CUDTGroup* m_IncludedGroup;               //< Group this socket is a member of, or NULL if it isn't
 #endif
-   volatile bool m_bMarkSweep;
 
    int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
 
@@ -210,7 +227,7 @@ public:
 
    static int64_t getPeerSpec(SRTSOCKET id, int32_t isn)
    {
-       return (id << 30) + isn;
+       return (int64_t(id) << 30) + isn;
    }
    int64_t getPeerSpec()
    {
