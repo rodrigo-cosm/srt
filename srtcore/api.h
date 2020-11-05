@@ -109,18 +109,19 @@ modified by
 //
 //  - CUDTGroup::m_GroupLock
 // 
-//     - CUDT::m_RecvAckLock  || CEPoll::m_EPollLock
+//     - CUDT::m_RecvAckLock  || CEPoll::m_EPollLock(T)
 //
 // ----------------
 //  - CUDTUnited::m_GlobControlLock
 //
-//             --- CUDTGroup::m_GroupLock
+//         - CUDTGroup::m_GroupLock  || CSndUList::m_ListLock(T)
 //
 //      - CUDT::m_ConnectionLock
 //
 //  - CUDT::m_SendLock
 //
 //     - CUDT::m_RecvLock
+
 //        - CUDT::m_RecvBufferLock
 //
 //  - CUDT::m_RecvAckLock || CUDT::m_SendBlockLock

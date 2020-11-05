@@ -154,21 +154,26 @@ public:
     gli_t begin() { return m_Group.begin(); }
     gli_t end() { return m_Group.end(); }
 
-    // REMEMBER: the group spec should be taken from the socket
-    // (set m_IncludedGroup to NULL and m_IncludedIter to grp->gli_NULL())
-    // PRIOR TO calling this function.
+    /// Remove the socket from the group container.
+    /// REMEMBER: the group spec should be taken from the socket
+    /// (set m_IncludedGroup to NULL and m_IncludedIter to grp->gli_NULL())
+    /// PRIOR TO calling this function.
+    /// @param id Socket ID to look for in the container to remove
+    /// @return true if the container still contains any sockets after the operation
     bool remove(SRTSOCKET id)
     {
         srt::sync::ScopedLock g(m_GroupLock);
         return remove_LOCKED(id);
     }
 
+    // No-locking version of the function above.
     bool remove_LOCKED(SRTSOCKET id)
     {
         using srt_logging::gmlog;
-        bool                  s = false;
+        bool empty = false;
         HLOGC(gmlog.Debug, log << "group/remove: going to remove @" << id << " from $" << m_GroupID);
-        gli_t                 f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
+
+        gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
         if (f != m_Group.end())
         {
             m_Group.erase(f);
@@ -190,12 +195,13 @@ public:
                 // Also since now every socket will derive this ISN.
                 m_iLastSchedSeqNo = generateISN();
                 resetInitialRxSequence();
+                empty = true;
             }
-            s = true;
         }
         else
         {
-            HLOGC(gmlog.Debug, log << "group/remove: id @" << id << " NOT FOUND!");
+            HLOGC(gmlog.Debug, log << "group/remove: IPE: id @" << id << " NOT FOUND!");
+            empty = true; // not exactly true, but this is to cause error on group in the APP
         }
 
         if (m_Group.empty())
@@ -207,7 +213,7 @@ public:
         // XXX BUGFIX
         m_Positions.erase(id);
 
-        return s;
+        return !empty;
     }
 
     bool groupEmpty()
@@ -298,7 +304,7 @@ public:
     void              updateReadState(SRTSOCKET sock, int32_t sequence);
     void              updateWriteState();
     void              updateFailedLink();
-    void              activateUpdateEvent();
+    void              activateUpdateEvent(bool still_have_items);
 
     /// Update the in-group array of packet providers per sequence number.
     /// Also basing on the information already provided by possibly other sockets,

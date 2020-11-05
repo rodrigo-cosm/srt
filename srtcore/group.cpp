@@ -4430,17 +4430,11 @@ void CUDTGroup::updateLatestRcv(CUDTSocket* s)
     }
 }
 
-void CUDTGroup::activateUpdateEvent()
+void CUDTGroup::activateUpdateEvent(bool still_have_items)
 {
     // This function actually reacts on the fact that a socket
     // was deleted from the group. This might make the group empty.
-    bool isempty = false;
-    {
-        ScopedLock lock (m_GroupLock);
-        isempty = m_Group.empty();
-    }
-
-    if (isempty)
+    if (!still_have_items) // empty, or removal of unknown socket attempted - set error on group
     {
         m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
     }

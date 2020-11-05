@@ -157,12 +157,14 @@ void CUDTSocket::makeMemberClosed()
 #if ENABLE_EXPERIMENTAL_BONDING
     if (m_IncludedGroup)
     {
-        HLOGC(smlog.Debug, log << "@" << m_SocketID << " IS MEMBER OF $" << m_IncludedGroup->id() << " - REMOVING FROM GROUP");
-        m_IncludedGroup->remove_LOCKED(m_SocketID);
+        CUDTGroup* g = m_IncludedGroup;
+        HLOGC(smlog.Debug, log << "@" << m_SocketID << " IS MEMBER OF $" << g->id() << " - REMOVING FROM GROUP");
 
-        HLOGC(smlog.Debug, log << "removeFromGroup: socket @" << m_SocketID << " NO LONGER A MEMBER of $" << m_IncludedGroup->id());
         m_IncludedIter = CUDTGroup::gli_NULL();
         m_IncludedGroup = NULL;
+        g->remove_LOCKED(m_SocketID);
+
+        HLOGC(smlog.Debug, log << "makeMemberClosed: socket @" << m_SocketID << " NO LONGER A MEMBER of $" << g->id());
     }
 #endif
     m_Status = SRTS_CLOSED;
@@ -670,106 +672,111 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    // by getsockaddr)
    CIPAddress::pton((ns->m_SelfAddr), ns->m_pUDT->m_piSelfIP, ns->m_SelfAddr.family(), peer);
 
-   // protect the m_Sockets structure.
-   enterCS(m_GlobControlLock);
-   try
    {
-       HLOGF(cnlog.Debug,
-               "newConnection: mapping peer %d to that socket (%d)\n",
-               ns->m_PeerID, ns->m_SocketID);
-       m_PeerRec[ns->getPeerSpec()].insert(ns->m_SocketID);
-   }
-   catch (...)
-   {
-      LOGC(cnlog.Error, log << "newConnection: error when mapping peer!");
-      error = 2;
-   }
-   leaveCS(m_GlobControlLock);
+       // protect the m_PeerRec structure.
+       ScopedLock glock (m_GlobControlLock);
+       try
+       {
+           HLOGF(cnlog.Debug,
+                   "newConnection: mapping peer %d to that socket (%d)\n",
+                   ns->m_PeerID, ns->m_SocketID);
+           m_PeerRec[ns->getPeerSpec()].insert(ns->m_SocketID);
+       }
+       catch (...)
+       {
+           LOGC(cnlog.Error, log << "newConnection: error when mapping peer!");
+           error = 2;
+       }
+
+       // The access to m_IncludedGroup should be also protected, as the group
+       // could be requested deletion in the meantime. This will hold any possible
+       // removal from group and resetting m_IncludedGroup field.
 
 #if ENABLE_EXPERIMENTAL_BONDING
-   if (ns->m_IncludedGroup)
-   {
-      // XXX this might require another check of group type.
-      // For redundancy group, at least, update the status in the group
-      CUDTGroup* g = ns->m_IncludedGroup;
-      ScopedLock glock (g->m_GroupLock);
-      CUDTGroup::gli_t gi;
+       if (ns->m_IncludedGroup)
+       {
+           // XXX this might require another check of group type.
+           // For redundancy group, at least, update the status in the group
+           CUDTGroup* g = ns->m_IncludedGroup;
+           ScopedLock glock (g->m_GroupLock);
+           CUDTGroup::gli_t gi;
 
-      // Check if this is the first socket in the group.
-      // If so, give it up to accept, otherwise just do nothing
-      // The client will be informed about the newly added connection at the
-      // first moment when attempting to get the group status.
-      for (gi = g->m_Group.begin(); gi != g->m_Group.end(); ++gi)
-      {
-         if (gi->laststatus == SRTS_CONNECTED)
-         {
-            HLOGC(cnlog.Debug, log << "Found another connected socket in the group: $"
-                  << gi->id << " - socket will be NOT given up for accepting");
-            should_submit_to_accept = false;
-            break;
-         }
-      }
+           // Check if this is the first socket in the group.
+           // If so, give it up to accept, otherwise just do nothing
+           // The client will be informed about the newly added connection at the
+           // first moment when attempting to get the group status.
+           for (gi = g->m_Group.begin(); gi != g->m_Group.end(); ++gi)
+           {
+               if (gi->laststatus == SRTS_CONNECTED)
+               {
+                   HLOGC(cnlog.Debug, log << "Found another connected socket in the group: $"
+                           << gi->id << " - socket will be NOT given up for accepting");
+                   should_submit_to_accept = false;
+                   break;
+               }
+           }
 
-      // Update the status in the group so that the next
-      // operation can include the socket in the group operation.
-      gi = ns->m_IncludedIter;
+           // Update the status in the group so that the next
+           // operation can include the socket in the group operation.
+           gi = ns->m_IncludedIter;
 
-      HLOGC(cnlog.Debug, log << "newConnection(GROUP): Socket @" << ns->m_SocketID << " BELONGS TO $" << g->id()
-            << " - will " << (should_submit_to_accept? "" : "NOT ") << "report in accept");
-      gi->sndstate = SRT_GST_IDLE;
-      gi->rcvstate = SRT_GST_IDLE;
-      gi->laststatus = SRTS_CONNECTED;
+           HLOGC(cnlog.Debug, log << "newConnection(GROUP): Socket @" << ns->m_SocketID << " BELONGS TO $" << g->id()
+                   << " - will " << (should_submit_to_accept? "" : "NOT ") << "report in accept");
+           gi->sndstate = SRT_GST_IDLE;
+           gi->rcvstate = SRT_GST_IDLE;
+           gi->laststatus = SRTS_CONNECTED;
 
-      if (!g->m_bConnected)
-      {
-         HLOGC(cnlog.Debug, log << "newConnection(GROUP): First socket connected, SETTING GROUP CONNECTED");
-         g->m_bConnected = true;
-      }
+           if (!g->m_bConnected)
+           {
+               HLOGC(cnlog.Debug, log << "newConnection(GROUP): First socket connected, SETTING GROUP CONNECTED");
+               g->m_bConnected = true;
+           }
 
-      // XXX PROLBEM!!! These events are subscribed here so that this is done once, lazily,
-      // but groupwise connections could be accepted from multiple listeners for the same group!
-      // m_listener MUST BE A CONTAINER, NOT POINTER!!!
-      // ALSO: Maybe checking "the same listener" is not necessary as subscruption may be done
-      // multiple times anyway?
-      if (!g->m_listener)
-      {
-         // Newly created group from the listener, which hasn't yet
-         // the listener set.
-         g->m_listener = ls;
+           // XXX PROLBEM!!! These events are subscribed here so that this is done once, lazily,
+           // but groupwise connections could be accepted from multiple listeners for the same group!
+           // m_listener MUST BE A CONTAINER, NOT POINTER!!!
+           // ALSO: Maybe checking "the same listener" is not necessary as subscruption may be done
+           // multiple times anyway?
+           if (!g->m_listener)
+           {
+               // Newly created group from the listener, which hasn't yet
+               // the listener set.
+               g->m_listener = ls;
 
-         // Listen on both first connected socket and continued sockets.
-         // This might help with jump-over situations, and in regular continued
-         // sockets the IN event won't be reported anyway.
-         int listener_modes = SRT_EPOLL_ACCEPT | SRT_EPOLL_UPDATE;
-         epoll_add_usock_INTERNAL(g->m_RcvEID, ls, &listener_modes);
+               // Listen on both first connected socket and continued sockets.
+               // This might help with jump-over situations, and in regular continued
+               // sockets the IN event won't be reported anyway.
+               int listener_modes = SRT_EPOLL_ACCEPT | SRT_EPOLL_UPDATE;
+               epoll_add_usock_INTERNAL(g->m_RcvEID, ls, &listener_modes);
 
-         // This listening should be done always when a first connected socket
-         // appears as accepted off the listener. This is for the sake of swait() calls
-         // inside the group receiving and sending functions so that they get
-         // interrupted when a new socket is connected.
-      }
+               // This listening should be done always when a first connected socket
+               // appears as accepted off the listener. This is for the sake of swait() calls
+               // inside the group receiving and sending functions so that they get
+               // interrupted when a new socket is connected.
+           }
 
-      // Add also per-direction subscription for the about-to-be-accepted socket.
-      // Both first accepted socket that makes the group-accept and every next
-      // socket that adds a new link.
-      int read_modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
-      int write_modes = SRT_EPOLL_OUT | SRT_EPOLL_ERR;
-      epoll_add_usock_INTERNAL(g->m_RcvEID, ns, &read_modes);
-      epoll_add_usock_INTERNAL(g->m_SndEID, ns, &write_modes);
+           // Add also per-direction subscription for the about-to-be-accepted socket.
+           // Both first accepted socket that makes the group-accept and every next
+           // socket that adds a new link.
+           int read_modes = SRT_EPOLL_IN | SRT_EPOLL_ERR;
+           int write_modes = SRT_EPOLL_OUT | SRT_EPOLL_ERR;
+           epoll_add_usock_INTERNAL(g->m_RcvEID, ns, &read_modes);
+           epoll_add_usock_INTERNAL(g->m_SndEID, ns, &write_modes);
 
-      // With app reader, do not set groupPacketArrival (block the
-      // provider array feature completely for now).
+           // With app reader, do not set groupPacketArrival (block the
+           // provider array feature completely for now).
 
 
-      /* SETUP HERE IF NEEDED
-         ns->m_pUDT->m_cbPacketArrival.set(ns->m_pUDT, &CUDT::groupPacketArrival);
-       */
-   }
-   else
-   {
-      HLOGC(cnlog.Debug, log << "newConnection: Socket @" << ns->m_SocketID << " is not in a group");
-   }
+           /* SETUP HERE IF NEEDED
+              ns->m_pUDT->m_cbPacketArrival.set(ns->m_pUDT, &CUDT::groupPacketArrival);
+            */
+       }
+       else
+       {
+           HLOGC(cnlog.Debug, log << "newConnection: Socket @" << ns->m_SocketID << " is not in a group");
+       }
 #endif
+   }
 
    if (should_submit_to_accept)
    {
@@ -1159,21 +1166,31 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* pw_addr, int* pw_
    if (s == NULL)
       throw CUDTException(MJ_SETUP, MN_CLOSED, 0);
 
+   // Set properly the SRTO_GROUPCONNECT flag
+   s->core().m_OPT_GroupConnect = 0;
+
    // Check if LISTENER has the SRTO_GROUPCONNECT flag set,
    // and the already accepted socket has successfully joined
    // the mirror group. If so, RETURN THE GROUP ID, not the socket ID.
 #if ENABLE_EXPERIMENTAL_BONDING
    if (ls->m_pUDT->m_OPT_GroupConnect == 1 && s->m_IncludedGroup)
    {
-       u = s->m_IncludedGroup->m_GroupID;
-       s->core().m_OPT_GroupConnect = 1; // should be derived from ls, but make sure
+       // Put a lock to protect the group against accidental deletion
+       // in the meantime.
+       ScopedLock glock (m_GlobControlLock);
+       // Check again; it's unlikely to happen, but
+       // it's a theoretically possible scenario
+       if (s->m_IncludedGroup)
+       {
+           u = s->m_IncludedGroup->m_GroupID;
+           s->core().m_OPT_GroupConnect = 1; // should be derived from ls, but make sure
+       }
+       else
+       {
+           LOGC(smlog.Error, log << "accept: IPE: socket's group deleted in the meantime of accept process???");
+       }
    }
-   else
 #endif
-   {
-       // Set properly the SRTO_GROUPCONNECT flag
-       s->core().m_OPT_GroupConnect = 0;
-   }
 
    ScopedLock cg(s->m_ControlLock);
    
@@ -1287,6 +1304,7 @@ int CUDTUnited::singleMemberConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* gd)
     return gstat;
 }
 
+// [using busy(pg)]]
 int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int arraysize)
 {
     CUDTGroup& g = *pg;
@@ -2271,6 +2289,9 @@ int CUDTUnited::epoll_add_usock(
    return ret;
 }
 
+// NOTE: WILL LOCK (serially):
+// - CEPoll::m_EPollLock
+// - CUDT::m_RecvLock
 int CUDTUnited::epoll_add_usock_INTERNAL(const int eid, CUDTSocket* s, const int* events)
 {
     int ret = m_EPoll.update_usock(eid, s->m_SocketID, events);
@@ -3144,10 +3165,21 @@ int CUDT::removeSocketFromGroup(SRTSOCKET socket)
     return 0;
 }
 
-// [[using locked(m_GlobControlLock)]]
+// [[using locked(m_ControlLock)]]
+// [[using locked(CUDT::s_UDTUnited.m_GlobControlLock)]]
 void CUDTSocket::removeFromGroup(bool broken)
 {
-    m_IncludedGroup->remove(m_SocketID);
+    CUDTGroup* g = m_IncludedGroup;
+
+    // Reset group-related fields immediately. They won't be accessed
+    // in the below calls, while the iterator will be invalidated for
+    // a short moment between removal from the group container and the end,
+    // while the GroupLock would be already taken out. It is safer to reset
+    // it to a NULL iterator before removal.
+    m_IncludedIter = CUDTGroup::gli_NULL();
+    m_IncludedGroup = NULL;
+
+    bool still_have = g->remove(m_SocketID);
     if (broken)
     {
         // Activate the SRT_EPOLL_UPDATE event on the group
@@ -3155,21 +3187,20 @@ void CUDTSocket::removeFromGroup(bool broken)
         // and became broken. This is not to be sent in case when
         // it is a failure during connection, or the socket was
         // explicitly removed from the group.
-        m_IncludedGroup->activateUpdateEvent();
+        g->activateUpdateEvent(still_have);
     }
 
-    HLOGC(smlog.Debug, log << "removeFromGroup: socket @" << m_SocketID << " NO LONGER A MEMBER of $" << m_IncludedGroup->id());
-    m_IncludedIter = CUDTGroup::gli_NULL();
-    m_IncludedGroup = NULL;
+    HLOGC(smlog.Debug, log << "removeFromGroup: socket @" << m_SocketID << " NO LONGER A MEMBER of $" << g->id() << "; group is "
+            << (still_have ? "still ACTIVE" : "now EMPTY"));
 }
 
 SRTSOCKET CUDT::getGroupOfSocket(SRTSOCKET socket)
 {
-    CUDTSocket* s = s_UDTUnited.locateSocket(socket);
-    if (!s)
-        return APIError(MJ_NOTSUP, MN_INVAL, 0);
-
-    if (!s->m_IncludedGroup)
+    // Lock this for the whole function as we need the group
+    // to persist the call.
+    ScopedLock glock (s_UDTUnited.m_GlobControlLock);
+    CUDTSocket* s = s_UDTUnited.locateSocket_LOCKED(socket);
+    if (!s || !s->m_IncludedGroup)
         return APIError(MJ_NOTSUP, MN_INVAL, 0);
 
     return s->m_IncludedGroup->id();
