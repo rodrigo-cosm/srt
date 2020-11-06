@@ -80,7 +80,7 @@ void listening_thread()
     // srt_accept..
 }
 
-void ConnectCallback(void* opaq, SRTSOCKET sock, int error, const sockaddr* /*peer*/, int token)
+void ConnectCallback(void* /*opaq*/, SRTSOCKET sock, int error, const sockaddr* /*peer*/, int token)
 {
     std::cout << "Connect callback. Socket: " << sock
         << ", error: " << error
