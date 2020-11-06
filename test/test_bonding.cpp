@@ -17,7 +17,7 @@
 
 #include "srt.h"
 
-TEST(Bonding, DISABLED_SRTConnectGroup)
+TEST(Bonding, SRTConnectGroup)
 {
     struct sockaddr_in sa;
 
