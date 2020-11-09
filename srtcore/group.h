@@ -405,7 +405,6 @@ private:
     }
 
 public:
-
     void apiAcquire() { ++m_iBusy; }
     void apiRelease() { --m_iBusy; }
 
@@ -418,17 +417,19 @@ public:
     //           - Set BUSY flag
     //       - UNLOCK GroupLock
     //    - UNLOCK GlobControlLock
-    //    - [Call the sending function (sendBroadcast/sendBackup)]
-    //    - LOCK: GroupLock
+    // - [Call the sending function (sendBroadcast/sendBackup)]
+    //    - LOCK GroupLock
     //       - Preparation activities
     //       - Loop over group members
     //       - Send over a single socket
     //       - Check send status and conditions
     //       - Exit, if nothing else to be done
     //       - Check links to send extra
-    //       - Wait for first ready link
+    //           - UNLOCK GroupLock
+    //               - Wait for first ready link
+    //           - LOCK GroupLock
     //       - Check status and find sendable link
-    //        - Send over a single socket
+    //       - Send over a single socket
     //       - Check status and update data
     //    - UNLOCK GroupLock, Exit
     // - GroupKeeper - dtor

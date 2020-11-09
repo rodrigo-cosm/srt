@@ -4275,8 +4275,8 @@ bool CUDT::processAsyncConnectRequest(EReadStatus         rst,
         LOGC(cnlog.Warn,
              log << "processAsyncConnectRequest: REJECT reported from HS processing:"
              << srt_rejectreason_str(m_RejectReason)
-             << "- not processing further; REQ-TIME LOW");
-        m_tsLastReqTime = steady_clock::time_point();
+             << "- not processing further"); //; REQ-TIME LOW"); XXX ?
+        // m_tsLastReqTime = steady_clock::time_point(); XXX ?
         return false;
     }
     else
@@ -11178,9 +11178,7 @@ void CUDT::updateBrokenConnection(int errorcode)
     {
         s_UDTUnited.close(m_parent);
     }
-
 #endif
-
 }
 
 void CUDT::addEPoll(const int eid)

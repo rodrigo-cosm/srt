@@ -1308,6 +1308,8 @@ int CUDTUnited::singleMemberConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* gd)
 int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int arraysize)
 {
     CUDTGroup& g = *pg;
+    SRT_ASSERT(g.m_iBusy > 0);
+
     // The group must be managed to use srt_connect on it,
     // as it must create particular socket automatically.
 
@@ -1434,10 +1436,9 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
         if (targets[tii].errorcode != SRT_SUCCESS)
         {
             ScopedLock cs(m_GlobControlLock);
-            SRTSOCKET id = ns->m_SocketID;
             targets[tii].id = CUDT::INVALID_SOCK;
             delete ns;
-            m_Sockets.erase(id);
+            m_Sockets.erase(sid);
 
             // If failed to set options, then do not continue
             // neither with binding, nor with connecting.
@@ -1461,10 +1462,20 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
             targets[tii].token = data.token;
         }
 
-        CUDTGroup::gli_t f = g.add(data);
-        ns->m_IncludedIter = f;
-        ns->m_IncludedGroup = &g;
-        f->weight = targets[tii].weight;
+        {
+            ScopedLock cs(m_GlobControlLock);
+            if (m_Sockets.count(sid) == 0)
+            {
+                // Someone deleted the socket in the meantime?
+                // Unlikely, but possible in theory.
+                // Don't delete anyhting - it's alreay done.
+                continue;
+            }
+            CUDTGroup::gli_t f = g.add(data);
+            ns->m_IncludedIter = f;
+            ns->m_IncludedGroup = &g;
+            f->weight = targets[tii].weight;
+        }
 
         // XXX This should be reenabled later, this should
         // be probably still in use to exchange information about
@@ -1557,6 +1568,22 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
 
         {
             ScopedLock grd (g.m_GroupLock);
+
+            if (!ns->m_IncludedGroup)
+            {
+                // The situation could get changed between the unlock and lock of m_GroupLock.
+                // This must be checked again.
+                // If a socket has been removed from group, it means that some other thread is
+                // currently trying to delete the socket. Therefore it doesn't have, and even shouldn't,
+                // be deleted here. Just exit with error report.
+                LOGC(aclog.Error, log << "groupConnect: self-created member socket deleted during process, SKIPPING.");
+
+                // Do not report the error from here, just ignore this socket.
+                continue;
+            }
+
+            // If m_IncludedGroup is not NULL, the m_IncludedIter is still valid.
+            CUDTGroup::gli_t f = ns->m_IncludedIter;
 
             if (was_empty)
             {
@@ -2339,10 +2366,12 @@ int CUDTUnited::epoll_remove_socket_INTERNAL(const int eid, CUDTSocket* s)
     return epoll_remove_entity(eid, s->m_pUDT);
 }
 
+#if ENABLE_EXPERIMENTAL_BONDING
 int CUDTUnited::epoll_remove_group_INTERNAL(const int eid, CUDTGroup* g)
 {
     return epoll_remove_entity(eid, g);
 }
+#endif
 
 int CUDTUnited::epoll_remove_usock(const int eid, const SRTSOCKET u)
 {
@@ -3140,12 +3169,12 @@ int CUDT::addSocketToGroup(SRTSOCKET socket, SRTSOCKET group)
     {
         // XXX This is internal error. Report it, but continue
         LOGC(aclog.Error, log << "IPE (non-fatal): the socket is in the group, but has no clue about it!");
-        s->m_IncludedGroup = g;
         s->m_IncludedIter = f;
+        s->m_IncludedGroup = g;
         return 0;
     }
-    s->m_IncludedGroup = g;
     s->m_IncludedIter = g->add(g->prepareData(s));
+    s->m_IncludedGroup = g;
 
     return 0;
 }
