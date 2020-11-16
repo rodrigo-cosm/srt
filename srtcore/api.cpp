@@ -2739,7 +2739,7 @@ void CUDTUnited::checkBrokenSockets()
 }
 
 // [[using locked(m_GlobControlLock)]]
-void CUDTUnited::removeSocket(const SRTSOCKET u)
+void CUDTUnited::removeSocket(const SRTSOCKET u) SRTSYNC_REQUIRES(m_GlobControlLock)
 {
    sockets_t::iterator i = m_ClosedSockets.find(u);
 
@@ -3201,7 +3201,7 @@ CUDT::APIError::APIError(CodeMajor mj, CodeMinor mn, int syserr)
 // This doesn't have argument of GroupType due to header file conflicts.
 
 // [[using locked(s_UDTUnited.m_GlobControlLock)]]
-CUDTGroup& CUDT::newGroup(const int type)
+CUDTGroup& CUDT::newGroup(const int type) SRTSYNC_REQUIRES(s_UDTUnited.m_GlobControlLock)
 {
     const SRTSOCKET id = s_UDTUnited.generateSocketID(true);
 
@@ -4226,7 +4226,7 @@ CUDT* CUDT::getUDTHandle(SRTSOCKET u)
    }
 }
 
-vector<SRTSOCKET> CUDT::existingSockets()
+vector<SRTSOCKET> CUDT::existingSockets() SRTSYNC_REQUIRES(s_UDTUnited.m_GlobControlLock)
 {
     vector<SRTSOCKET> out;
     for (CUDTUnited::sockets_t::iterator i = s_UDTUnited.m_Sockets.begin();

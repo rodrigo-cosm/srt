@@ -124,6 +124,7 @@ option(ENABLE_INET_PTON "Set to OFF to prevent usage of inet_pton when building 
 option(ENABLE_CODE_COVERAGE "Enable code coverage reporting" OFF)
 option(ENABLE_MONOTONIC_CLOCK "Enforced clock_gettime with monotonic clock on GC CV /temporary fix for #729/" OFF)
 option(ENABLE_STDCXX_SYNC "Use C++11 chrono and threads for timing instead of pthreads" OFF)
+option(ENABLE_THREAD_ANALYZER "Enable thread static analyzer flags" OFF)
 option(USE_OPENSSL_PC "Use pkg-config to find OpenSSL libraries" ON)
 option(USE_BUSY_WAITING "Enable more accurate sending times at a cost of potentially higher CPU load" OFF)
 option(USE_GNUSTL "Get c++ library/headers from the gnustl.pc" OFF)
@@ -606,6 +607,10 @@ if (ENABLE_LOGGING)
 			list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_HAICRYPT_LOGGING=1")
 		endif()
 	endif()
+endif()
+
+if (ENABLE_THREAD_ANALYZER)
+	list(APPEND SRT_EXTRA_CFLAGS "-Wthread-safety")
 endif()
 
 if (ENABLE_GETNAMEINFO)

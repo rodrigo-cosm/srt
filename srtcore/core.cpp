@@ -3658,6 +3658,7 @@ bool CUDT::interpretGroup(const int32_t groupdata[], size_t data_size SRT_ATR_UN
 
 // [[using locked(s_UDTUnited.m_GlobControlLock)]]
 SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp, uint32_t link_flags)
+    SRTSYNC_REQUIRES(s_UDTUnited.m_GlobControlLock)
 {
     // Note: This function will lock pg->m_GroupLock!
 
@@ -7426,6 +7427,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
         else if ((m_bBroken || m_bClosing) && !m_pRcvBuffer->isRcvDataReady())
         {
+
             if (!m_bMessageAPI && m_bShutdown)
                 return 0;
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -7552,7 +7554,8 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
 
     perf->mbpsBandwidth = Bps2Mbps(availbw * (m_iMaxSRTPayloadSize + pktHdrSize));
 
-    if (tryEnterCS(m_ConnectionLock))
+    bool locked = tryEnterCS(m_ConnectionLock);
+    if (locked)
     {
         if (m_pSndBuffer)
         {

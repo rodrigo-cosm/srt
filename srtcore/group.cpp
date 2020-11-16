@@ -17,6 +17,7 @@ bool CUDTGroup::getBufferTimeBase(CUDT*                     forthesakeof,
                                   steady_clock::time_point& w_tb,
                                   bool&                     w_wp,
                                   steady_clock::duration&   w_dr)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     CUDT* master = 0;
     for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
@@ -59,6 +60,7 @@ bool CUDTGroup::getBufferTimeBase(CUDT*                     forthesakeof,
 
 // [[using locked(this->m_GroupLock)]];
 bool CUDTGroup::applyGroupSequences(SRTSOCKET target, int32_t& w_snd_isn, int32_t& w_rcv_isn)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     if (m_bConnected) // You are the first one, no need to change.
     {
@@ -1051,6 +1053,7 @@ void CUDTGroup::close()
 // [[using locked(m_pGlobal->m_GlobControlLock)]]
 // [[using locked(m_GroupLock)]]
 void CUDTGroup::send_CheckValidSockets()
+    SRTSYNC_REQUIRES(m_pGlobal->m_GlobControlLock, m_GroupLock)
 {
     vector<gli_t> toremove;
 
@@ -1754,6 +1757,7 @@ int CUDTGroup::getGroupData(SRT_SOCKGROUPDATA* pdata, size_t* psize)
 
 // [[using locked(this->m_GroupLock)]]
 int CUDTGroup::getGroupData_LOCKED(SRT_SOCKGROUPDATA* pdata, size_t* psize)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     SRT_ASSERT(psize != NULL);
     const size_t size = *psize;
@@ -1782,6 +1786,7 @@ int CUDTGroup::getGroupData_LOCKED(SRT_SOCKGROUPDATA* pdata, size_t* psize)
 
 // [[using locked(this->m_GroupLock)]]
 void CUDTGroup::copyGroupData(const CUDTGroup::SocketData& source, SRT_SOCKGROUPDATA& w_target)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     w_target.id = source.id;
     memcpy((&w_target.peeraddr), &source.peer, source.peer.size());
@@ -1851,6 +1856,7 @@ void CUDTGroup::getGroupCount(size_t& w_size, bool& w_still_alive)
 void CUDTGroup::fillGroupData(SRT_MSGCTRL&       w_out, // MSGCTRL to be written
                               const SRT_MSGCTRL& in     // MSGCTRL read from the data-providing socket
 )
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     // Preserve the data that will be overwritten by assignment
     SRT_SOCKGROUPDATA* grpdata      = w_out.grpdata;
@@ -1897,6 +1903,7 @@ struct FLookupSocketWithEvent_LOCKED
     typedef CUDTSocket* result_type;
 
     pair<CUDTSocket*, bool> operator()(const pair<SRTSOCKET, int>& es)
+        SRTSYNC_REQUIRES(glob->m_GlobControlLock)
     {
         CUDTSocket* so = NULL;
         if ((es.second & evtype) == 0)
@@ -3309,6 +3316,7 @@ size_t CUDTGroup::sendBackup_CheckNeedActivate(const vector<gli_t>&        idler
 
 // [[using locked(this->m_GroupLock)]]
 void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pending, vector<SRTSOCKET>& w_wipeme)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     // If we have at least one stable link, then select a link that have the
     // highest priority and silence the rest.
@@ -3380,6 +3388,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pending, vecto
 
 // [[using locked(this->m_GroupLock)]]
 void CUDTGroup::send_CloseBrokenSockets(vector<SRTSOCKET>& w_wipeme)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     if (!w_wipeme.empty())
     {
@@ -3433,6 +3442,7 @@ void CUDTGroup::sendBackup_CheckParallelLinks(const vector<gli_t>& unstable,
                                               bool&                w_none_succeeded,
                                               SRT_MSGCTRL&         w_mc,
                                               CUDTException&       w_cx)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     // In contradiction to broadcast sending, backup sending must check
     // the blocking state in total first. We need this information through
@@ -4165,6 +4175,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
 // [[using locked(this->m_GroupLock)]]
 int32_t CUDTGroup::addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& w_mc)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     if (m_iSndAckedMsgNo == SRT_MSGNO_NONE)
     {
@@ -4211,6 +4222,7 @@ int32_t CUDTGroup::addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& 
 
 // [[using locked(this->m_GroupLock)]]
 int CUDTGroup::sendBackupRexmit(CUDT& core, SRT_MSGCTRL& w_mc)
+    SRTSYNC_REQUIRES(m_GroupLock)
 {
     // This should resend all packets
     if (m_SenderBuffer.empty())

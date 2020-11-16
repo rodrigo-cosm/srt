@@ -151,8 +151,8 @@ public:
     }
 
     // NEED LOCKING
-    gli_t begin() { return m_Group.begin(); }
-    gli_t end() { return m_Group.end(); }
+    gli_t begin() SRTSYNC_REQUIRES(m_GroupLock) { return m_Group.begin(); }
+    gli_t end() SRTSYNC_REQUIRES(m_GroupLock) { return m_Group.end(); }
 
     /// Remove the socket from the group container.
     /// REMEMBER: the group spec should be taken from the socket
@@ -167,7 +167,7 @@ public:
     }
 
     // No-locking version of the function above.
-    bool remove_LOCKED(SRTSOCKET id)
+    bool remove_LOCKED(SRTSOCKET id) SRTSYNC_REQUIRES(m_GroupLock)
     {
         using srt_logging::gmlog;
         bool empty = false;
@@ -297,7 +297,8 @@ public:
         return m_type == SRT_GTYPE_BROADCAST;
     }
 
-    srt::sync::Mutex* exp_groupLock() { return &m_GroupLock; }
+    srt::sync::Mutex* exp_groupLock() SRTSYNC_RETURN_CAPABILITY(&m_GroupLock)
+    { return &m_GroupLock; }
     void              addEPoll(int eid);
     void              removeEPollEvents(const int eid);
     void              removeEPollID(const int eid);
@@ -392,7 +393,7 @@ private:
 
         void erase(gli_t it);
     };
-    GroupContainer m_Group;
+    GroupContainer m_Group SRTSYNC_GUARDED_BY(m_GroupLock);
     bool           m_selfManaged;
     bool           m_bSyncOnMsgNo;
     SRT_GROUP_TYPE m_type;

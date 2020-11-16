@@ -480,7 +480,7 @@ private:
    int m_iIDSeed;                            // seed to generate a new ID
    srt::sync::Mutex m_SeedLock;
 
-   std::map<int, CEPollDesc> m_mPolls;       // all epolls
+   std::map<int, CEPollDesc> m_mPolls SRTSYNC_GUARDED_BY(m_EPollLock);       // all epolls
    srt::sync::Mutex m_EPollLock;
 };
 

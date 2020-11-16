@@ -223,7 +223,8 @@ public:
    // socket.
    int m_iMuxID;                             //< multiplexer ID
 
-   srt::sync::Mutex m_ControlLock;           //< lock this socket exclusively for control APIs: bind/listen/connect
+   /// lock this socket exclusively for control APIs: bind/listen/connect/close
+   srt::sync::Mutex m_ControlLock;
 
    CUDT& core() { return *m_pUDT; }
 
@@ -360,6 +361,7 @@ public:
 #if ENABLE_EXPERIMENTAL_BONDING
    // [[using locked(m_GlobControlLock)]]
    CUDTGroup& addGroup(SRTSOCKET id, SRT_GROUP_TYPE type)
+       SRTSYNC_REQUIRES(m_GlobControlLock)
    {
        // This only ensures that the element exists.
        // If the element was newly added, it will be NULL.
@@ -381,6 +383,7 @@ public:
 
    // [[using locked(m_GlobControlLock)]]
    CUDTGroup* findPeerGroup_LOCKED(SRTSOCKET peergroup)
+       SRTSYNC_REQUIRES(m_GlobControlLock)
    {
        for (groups_t::iterator i = m_Groups.begin();
                i != m_Groups.end(); ++i)
@@ -411,11 +414,11 @@ private:
 
 private:
    typedef std::map<SRTSOCKET, CUDTSocket*> sockets_t;       // stores all the socket structures
-   sockets_t m_Sockets;
+   sockets_t m_Sockets SRTSYNC_GUARDED_BY(m_GlobControlLock);
 
 #if ENABLE_EXPERIMENTAL_BONDING
    typedef std::map<SRTSOCKET, CUDTGroup*> groups_t;
-   groups_t m_Groups;
+   groups_t m_Groups SRTSYNC_GUARDED_BY(m_GlobControlLock);
 #endif
 
    srt::sync::Mutex m_GlobControlLock;               // used to synchronize UDT API
@@ -424,7 +427,7 @@ private:
 
    static const int32_t MAX_SOCKET_VAL = 1 << 29;    // maximum value for a regular socket
 
-   SRTSOCKET m_SocketIDGenerator;                    // seed to generate a new unique socket ID
+   SRTSOCKET m_SocketIDGenerator SRTSYNC_GUARDED_BY(m_IDLock);// seed to generate a new unique socket ID
    SRTSOCKET m_SocketIDGenerator_init;               // Keeps track of the very first one
 
    std::map<int64_t, std::set<SRTSOCKET> > m_PeerRec;// record sockets from peers to avoid repeated connection request, int64_t = (socker_id << 30) + isn
@@ -436,7 +439,7 @@ private:
    // This function does the same as locateSocket, except that:
    // - lock on m_GlobControlLock is expected (so that you don't unlock between finding and using)
    // - only return NULL if not found
-   CUDTSocket* locateSocket_LOCKED(SRTSOCKET u);
+   CUDTSocket* locateSocket_LOCKED(SRTSOCKET u) SRTSYNC_REQUIRES(m_GlobControlLock);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
 
 #if ENABLE_EXPERIMENTAL_BONDING
