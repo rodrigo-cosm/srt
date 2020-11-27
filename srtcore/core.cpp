@@ -490,7 +490,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         // When not connected, this will do nothing, however this
         // event will be repeated just after connecting anyway.
         if (m_bConnected)
-            updateCC(TEV_INIT, TEV_INIT_RESET);
+            updateCC(TEV_INIT, EventVariant(TEV_INIT_RESET));
         break;
 
     case SRTO_IPTTL:
@@ -534,7 +534,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         // (only if connected; if not, then the value
         // from m_iOverheadBW will be used initially)
         if (m_bConnected)
-            updateCC(TEV_INIT, TEV_INIT_INPUTBW);
+            updateCC(TEV_INIT, EventVariant(TEV_INIT_INPUTBW));
         break;
 
     case SRTO_OHEADBW:
@@ -546,7 +546,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
         // (only if connected; if not, then the value
         // from m_iOverheadBW will be used initially)
         if (m_bConnected)
-            updateCC(TEV_INIT, TEV_INIT_OHEADBW);
+            updateCC(TEV_INIT, EventVariant(TEV_INIT_OHEADBW));
         break;
 
     case SRTO_SENDER:
@@ -2514,7 +2514,8 @@ bool CUDT::processSrtMsg(const CPacket *ctrlpkt)
                         LOGC(cnlog.Warn,
                              log << "KMREQ FAILURE: " << KmStateStr(SRT_KM_STATE(srtdata_out[0]))
                                  << " - rejecting per enforced encryption");
-                        return false;
+                        res = SRT_CMD_NONE;
+                        break;
                     }
                     HLOGC(cnlog.Debug,
                           log << "MKREQ -> KMRSP FAILURE state: " << KmStateStr(SRT_KM_STATE(srtdata_out[0])));
@@ -5088,7 +5089,14 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
     // because otherwise the packets that are coming for this socket before the
     // connection process is complete will be rejected as "attack", instead of
     // being enqueued for later pickup from the queue.
-    m_pRcvQueue->removeConnector(m_SocketID, synchro);
+    if (synchro)
+    {
+        m_pRcvQueue->removeConnector(m_SocketID);
+    }
+    else
+    {
+        m_pRcvQueue->removeConnector_LOCKED(m_SocketID);
+    }
 
     // Ok, no more things to be done as per "clear connecting state"
     if (!s)
@@ -5114,7 +5122,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
     // acknowledde any waiting epolls to write
     s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_CONNECT, true);
 
-    int token = -1;
+    //int token = -1;
 #if ENABLE_EXPERIMENTAL_BONDING
     {
         ScopedLock cl (s_UDTUnited.m_GlobControlLock);
@@ -5137,17 +5145,28 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
             gi->sndstate   = SRT_GST_IDLE;
             gi->rcvstate   = SRT_GST_IDLE;
             gi->laststatus = SRTS_CONNECTED;
-            token = gi->token;
+            //token = gi->token;
             g->setGroupConnected();
         }
     }
 #endif
 
     CGlobEvent::triggerEvent();
+
+/* XXX Likely it should NOT be called here for two reasons:
+
+  - likely lots of mutexes are locked here so any
+    API call from here might cause a deadlock
+  - if called from an asynchronous connection process, it was
+    already called from inside updateConnStatus
+  - if called from startConnect (synchronous mode), it is even wrong.
+
     if (m_cbConnectHook)
     {
         CALLBACK_CALL(m_cbConnectHook, m_SocketID, SRT_SUCCESS, m_PeerAddr.get(), token);
     }
+
+    */
 
     LOGC(cnlog.Note, log << CONID() << "Connection established to: " << m_PeerAddr.str());
 
@@ -5704,7 +5723,7 @@ void *CUDT::tsbpd(void *param)
                 // Functions called below will lock m_GroupLock, which in hierarchy
                 // lies after m_RecvLock. Must unlock m_RecvLock to be able to lock
                 // m_GroupLock inside the calls.
-                InvertedLock unrecv(self->m_RecvLock);
+                leaveCS(self->m_RecvLock);
                 // The current "APP reader" needs to simply decide as to whether
                 // the next CUDTGroup::recv() call should return with no blocking or not.
                 // When the group is read-ready, it should update its pollers as it sees fit.
@@ -5721,6 +5740,7 @@ void *CUDT::tsbpd(void *param)
                     // NOTE: SELF LOCKING.
                     gkeeper.group->updateLatestRcv(self->m_parent);
                 }
+                enterCS(self->m_RecvLock);
             }
 #endif
             CGlobEvent::triggerEvent();
@@ -6127,7 +6147,7 @@ SRT_REJECT_REASON CUDT::setupCC()
               << " rcvrate=" << m_iDeliveryRate << "p/s (" << m_iByteDeliveryRate << "B/S)"
               << " rtt=" << m_iRTT << " bw=" << m_iBandwidth);
 
-    if (!updateCC(TEV_INIT, TEV_INIT_RESET))
+    if (!updateCC(TEV_INIT, EventVariant(TEV_INIT_RESET)))
     {
         LOGC(rslog.Error, log << "setupCC: IPE: resrouces not yet initialized!");
         return SRT_REJ_IPE;
@@ -7427,7 +7447,6 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
             throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
         else if ((m_bBroken || m_bClosing) && !m_pRcvBuffer->isRcvDataReady())
         {
-
             if (!m_bMessageAPI && m_bShutdown)
                 return 0;
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -7554,8 +7573,7 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
 
     perf->mbpsBandwidth = Bps2Mbps(availbw * (m_iMaxSRTPayloadSize + pktHdrSize));
 
-    bool locked = tryEnterCS(m_ConnectionLock);
-    if (locked)
+    if (tryEnterCS(m_ConnectionLock))
     {
         if (m_pSndBuffer)
         {
@@ -7601,6 +7619,8 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
             perf->msRcvBuf   = 0;
         }
 
+        // THREAD SANITIZER: reports this as not locked.
+        // This is not true, the mutex is here locked as per tryEnterCS above.
         leaveCS(m_ConnectionLock);
     }
     else
@@ -8532,7 +8552,7 @@ void CUDT::processCtrlAck(const CPacket &ctrlpkt, const steady_clock::time_point
     }
 
     checkSndTimers(REGEN_KM);
-    updateCC(TEV_ACK, ackdata_seqno);
+    updateCC(TEV_ACK, EventVariant(ackdata_seqno));
 
     enterCS(m_StatsLock);
     ++m_stats.recvACK;
@@ -8724,7 +8744,7 @@ void CUDT::processCtrl(const CPacket &ctrlpkt)
         m_iRTTVar = avg_iir<4>(m_iRTTVar, abs(rtt - m_iRTT));
         m_iRTT = avg_iir<8>(m_iRTT, rtt);
 
-        updateCC(TEV_ACKACK, ack);
+        updateCC(TEV_ACKACK, EventVariant(ack));
 
         // This function will put a lock on m_RecvLock by itself, as needed.
         // It must be done inside because this function reads the current time
@@ -8978,7 +8998,7 @@ void CUDT::processCtrl(const CPacket &ctrlpkt)
             }
             else
             {
-                updateCC(TEV_CUSTOM, &ctrlpkt);
+                updateCC(TEV_CUSTOM, EventVariant(&ctrlpkt));
             }
         }
         break;
@@ -9436,7 +9456,7 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet)
     // the CSndQueue::worker thread. All others are reported from
     // CRcvQueue::worker. If you connect to this signal, make sure
     // that you are aware of prospective simultaneous access.
-    updateCC(TEV_SEND, &w_packet);
+    updateCC(TEV_SEND, EventVariant(&w_packet));
 
     // XXX This was a blocked code also originally in UDT. Probably not required.
     // Left untouched for historical reasons.
@@ -9676,7 +9696,7 @@ int CUDT::processData(CUnit* in_unit)
    }
 #endif
 
-    updateCC(TEV_RECEIVE, &packet);
+    updateCC(TEV_RECEIVE, EventVariant(&packet));
     ++m_iPktCount;
 
     const int pktsz = packet.getLength();
@@ -11110,7 +11130,7 @@ void CUDT::checkRexmitTimer(const steady_clock::time_point& currtime)
 
     checkSndTimers(DONT_REGEN_KM);
     const ECheckTimerStage stage = is_fastrexmit ? TEV_CHT_FASTREXMIT : TEV_CHT_REXMIT;
-    updateCC(TEV_CHECKTIMER, stage);
+    updateCC(TEV_CHECKTIMER, EventVariant(stage));
 
     // immediately restart transmission
     m_pSndQueue->m_pSndUList->update(this, CSndUList::DO_RESCHEDULE);
@@ -11119,7 +11139,7 @@ void CUDT::checkRexmitTimer(const steady_clock::time_point& currtime)
 void CUDT::checkTimers()
 {
     // update CC parameters
-    updateCC(TEV_CHECKTIMER, TEV_CHT_INIT);
+    updateCC(TEV_CHECKTIMER, EventVariant(TEV_CHT_INIT));
 
     const steady_clock::time_point currtime = steady_clock::now();
 
@@ -11224,7 +11244,9 @@ void CUDT::completeBrokenConnectionDependencies(int errorcode)
     // explicitly, otherwise they will never be deleted.
     if (pending_broken)
     {
-        s_UDTUnited.close(m_parent);
+        // XXX This somehow can cause a deadlock
+        // s_UDTUnited.close(m_parent);
+        m_parent->setBrokenClosed();
     }
 #endif
 }

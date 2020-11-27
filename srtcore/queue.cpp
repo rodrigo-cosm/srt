@@ -838,11 +838,8 @@ void CRendezvousQueue::insert(
             << " (total connectors: " << m_lRendezvousID.size() << ")");
 }
 
-void CRendezvousQueue::remove(const SRTSOCKET &id, bool should_lock)
+void CRendezvousQueue::remove_LOCKED(const SRTSOCKET& id)
 {
-    if (should_lock)
-        enterCS(m_RIDVectorLock);
-
     for (list<CRL>::iterator i = m_lRendezvousID.begin(); i != m_lRendezvousID.end(); ++i)
     {
         if (i->m_iID == id)
@@ -851,9 +848,12 @@ void CRendezvousQueue::remove(const SRTSOCKET &id, bool should_lock)
             break;
         }
     }
+}
 
-    if (should_lock)
-        leaveCS(m_RIDVectorLock);
+void CRendezvousQueue::remove(const SRTSOCKET &id)
+{
+    ScopedLock vg (m_RIDVectorLock);
+    remove_LOCKED(id);
 }
 
 CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, SRTSOCKET& w_id)
@@ -1051,7 +1051,7 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
                     // cst == CONN_REJECT can only be result of worker_ProcessAddressedPacket and
                     // its already set in this case.
                     LOGC(cnlog.Error, log << "RendezvousQueue: processAsyncConnectRequest FAILED. Setting TTL as EXPIRED.");
-                    FailedLinkInfo fi { i->m_pUDT, i->m_iID, SRT_ECONNREJ, -1};
+                    FailedLinkInfo fi = { i->m_pUDT, i->m_iID, SRT_ECONNREJ, -1};
                     ufailed.push_back(fi);
                     i->m_pUDT->sendCtrl(UMSG_SHUTDOWN);
                     i->m_tsTTL = steady_clock::time_point(); // Make it expire right now, will be picked up at the next iteration
@@ -1686,11 +1686,22 @@ void CRcvQueue::registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_a
     m_pRendezvousQueue->insert(id, u, addr, ttl);
 }
 
-void CRcvQueue::removeConnector(const SRTSOCKET &id, bool should_lock)
+void CRcvQueue::removeConnector(const SRTSOCKET &id)
 {
     HLOGC(cnlog.Debug, log << "removeConnector: removing @" << id);
-    m_pRendezvousQueue->remove(id, should_lock);
+    m_pRendezvousQueue->remove(id);
+    removePrecollectedPackets(id);
+}
 
+void CRcvQueue::removeConnector_LOCKED(const SRTSOCKET &id)
+{
+    HLOGC(cnlog.Debug, log << "removeConnector: removing @" << id);
+    m_pRendezvousQueue->remove_LOCKED(id);
+    removePrecollectedPackets(id);
+}
+
+void CRcvQueue::removePrecollectedPackets(const SRTSOCKET& id)
+{
     ScopedLock bufferlock(m_BufferLock);
 
     map<int32_t, std::queue<CPacket *> >::iterator i = m_mBuffer.find(id);

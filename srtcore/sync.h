@@ -282,8 +282,8 @@ inline bool is_zero(const TimePoint<steady_clock>& t)
 
 #if ENABLE_STDCXX_SYNC
 using Mutex = mutex;
-using UniqueLock = unique_lock<mutex>;
-using ScopedLock = lock_guard<mutex>;
+using UniqueLock SRTSYNC_SCOPED_CAPABILITY = unique_lock<mutex>;
+using ScopedLock SRTSYNC_SCOPED_CAPABILITY = lock_guard<mutex>;
 #else
 /// Mutex is a class wrapper, that should mimic the std::chrono::mutex class.
 /// At the moment the extra function ref() is temporally added to allow calls

@@ -1,3 +1,5 @@
+#include "platform_sys.h"
+
 #include <iterator>
 
 #include "api.h"
@@ -1378,12 +1380,14 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         else
         {
             {
-                InvertedLock ug(m_GroupLock);
+                leaveCS(m_GroupLock);
 
                 THREAD_PAUSED();
                 m_pGlobal->m_EPoll.swait(
                     *m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
                 THREAD_RESUMED();
+
+                enterCS(m_GroupLock);
             }
 
             if (m_bClosing)
@@ -1459,10 +1463,11 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     {
         {
-            InvertedLock ung (m_GroupLock);
+            leaveCS(m_GroupLock);
             enterCS(CUDT::s_UDTUnited.m_GlobControlLock);
             HLOGC(gslog.Debug, log << "grp/sendBroadcast: Locked GlobControlLock, locking back GroupLock");
-        }
+        enterCS(m_GroupLock);
+            }
 
         // Under this condition, as an unlock-lock cycle was done on m_GroupLock,
         // the Sendstate::it field shall not be used here!
@@ -1576,9 +1581,9 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         int            blst = 0;
         CEPoll::fmap_t sready;
 
-        {
             // Lift the group lock for a while, to avoid possible deadlocks.
-            InvertedLock ug(m_GroupLock);
+        {
+            leaveCS(m_GroupLock);
             HLOGC(gslog.Debug, log << "grp/sendBroadcast: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
@@ -1591,6 +1596,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
             // - XTIMEOUT: will be propagated as this what should be reported to API
             // This is the only reason why here the errors are allowed to be handled
             // by exceptions.
+            enterCS(m_GroupLock);
         }
 
         // Re-check after the waiting lock has been reacquired
@@ -2242,15 +2248,16 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
 
         // GlobControlLock is required for dispatching the sockets.
         // Therefore it must be applied only when GroupLock is off.
+        // This call may wait indefinite time, so GroupLock must be unlocked.
         {
-            // This call may wait indefinite time, so GroupLock must be unlocked.
-            InvertedLock ung (m_GroupLock);
+            leaveCS(m_GroupLock);
             THREAD_PAUSED();
             nready  = m_pGlobal->m_EPoll.swait(*m_RcvEpolld, sready, timeout, false /*report by retval*/);
             THREAD_RESUMED();
 
             // HERE GlobControlLock is locked first, then GroupLock is applied back
             enterCS(CUDT::s_UDTUnited.m_GlobControlLock);
+            enterCS(m_GroupLock);
         }
         // BOTH m_GlobControlLock AND m_GroupLock are locked here.
 
@@ -2281,7 +2288,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
             /*FROM*/ sready.begin(),
             sready.end(),
             /*TO*/ std::inserter(broken, broken.begin()),
-            /*VIA*/ FLookupSocketWithEvent_LOCKED(m_pGlobal, SRT_EPOLL_ERR));
+            /*VIA*/ FLookupSocketWithEvent_LOCKED(&CUDT::s_UDTUnited, SRT_EPOLL_ERR));
 
         // Ok, now we need to have some extra qualifications:
         // 1. If a socket has no registry yet, we read anyway, just
@@ -2313,7 +2320,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
             // Check if this socket is in aheads
             // If so, don't read from it, wait until the ahead is flushed.
             SRTSOCKET   id = i->first;
-            CUDTSocket* ps = m_pGlobal->locateSocket_LOCKED(id);
+            CUDTSocket* ps = CUDT::s_UDTUnited.locateSocket_LOCKED(id);
             if (ps)
                 ready_sockets.push_back(ps);
         }
@@ -2528,11 +2535,12 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
 
         // Force closing
         {
-            InvertedLock ung (m_GroupLock);
+            leaveCS(m_GroupLock);
             for (set<CUDTSocket*>::iterator b = broken.begin(); b != broken.end(); ++b)
             {
                 CUDT::s_UDTUnited.close(*b);
             }
+            enterCS(m_GroupLock);
         }
 
         if (broken.size() >= size) // This > is for sanity check
@@ -3349,9 +3357,10 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pending, vecto
                 throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
 
             {
-                InvertedLock ug(m_GroupLock);
+                leaveCS(m_GroupLock);
                 m_pGlobal->m_EPoll.swait(
                     *m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
+                enterCS(m_GroupLock);
             }
 
             if (m_bClosing)
@@ -3392,7 +3401,7 @@ void CUDTGroup::send_CloseBrokenSockets(vector<SRTSOCKET>& w_wipeme)
 {
     if (!w_wipeme.empty())
     {
-        InvertedLock ug(m_GroupLock);
+        leaveCS(m_GroupLock);
 
         // With unlocked GroupLock, we can now lock GlobControlLock.
         // This is needed prevent any of them be deleted from the container
@@ -3415,6 +3424,8 @@ void CUDTGroup::send_CloseBrokenSockets(vector<SRTSOCKET>& w_wipeme)
             // packets will be also abandoned.
             s->setClosed();
         }
+
+        enterCS(m_GroupLock);
     }
 
     HLOGC(gslog.Debug, log << "grp/send...: - wiped " << w_wipeme.size() << " broken sockets");
@@ -3525,7 +3536,7 @@ RetryWaitBlocked:
                 throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
             }
 
-            InvertedLock ug(m_GroupLock);
+            leaveCS(m_GroupLock);
             HLOGC(gslog.Debug,
                     log << "grp/sendBackup: swait call to get at least one link alive up to " << m_iSndTimeOut << "us");
             THREAD_PAUSED();
@@ -3564,6 +3575,7 @@ RetryWaitBlocked:
                 }
             }
             HLOGC(gslog.Debug, log << "grp/sendBackup: swait/?close done, re-acquiring GroupLock");
+            enterCS(m_GroupLock);
         }
 
         // GroupLock is locked back
