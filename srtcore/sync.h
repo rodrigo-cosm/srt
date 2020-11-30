@@ -342,7 +342,7 @@ private:
 #endif // ENABLE_STDCXX_SYNC
 
 inline void enterCS(Mutex& m) SRTSYNC_ACQUIRE(&m) { m.lock(); }
-inline bool tryEnterCS(Mutex& m) SRTSYNC_TRY_ACQUIRE(true) { return m.try_lock(); }
+inline bool tryEnterCS(Mutex& m) SRTSYNC_TRY_ACQUIRE(true, &m) { return m.try_lock(); }
 inline void leaveCS(Mutex& m) SRTSYNC_RELEASE(&m) { m.unlock(); }
 
 class InvertedLock

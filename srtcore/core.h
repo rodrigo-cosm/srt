@@ -480,7 +480,7 @@ public: // internal API
     void skipIncoming(int32_t seq);
 
     // For SRT_tsbpdLoop
-    CUDTUnited* uglobal() { return &s_UDTUnited; } // needed by tsbpdLoop
+    static CUDTUnited* uglobal();
     std::set<int>& pollset() { return m_sPollID; }
 
     SRTU_PROPERTY_RO(SRTSOCKET, id, m_SocketID);
@@ -524,7 +524,7 @@ private:
     /// @retval 1 Connection in progress (m_ConnReq turned into RESPONSE)
     /// @retval -1 Connection failed
 
-    SRT_ATR_NODISCARD EConnectStatus processConnectResponse(const CPacket& pkt, CUDTException* eout, EConnectMethod synchro)
+    SRT_ATR_NODISCARD EConnectStatus processConnectResponse(const CPacket& pkt, CUDTException* eout)
         ATR_NOEXCEPT
         SRTSYNC_REQUIRES(m_ConnectionLock);
 
@@ -546,10 +546,10 @@ private:
     /// @param serv_addr incoming packet's address
     /// @param synchro True when this function was called in blocking mode
     /// @param rst Current read status to know if the HS packet was freshly received from the peer, or this is only a periodic update (RST_AGAIN)
-    SRT_ATR_NODISCARD EConnectStatus processRendezvous(const CPacket &response, const sockaddr_any& serv_addr, bool synchro, EReadStatus,
+    SRT_ATR_NODISCARD EConnectStatus processRendezvous(const CPacket &response, const sockaddr_any& serv_addr, EReadStatus,
             CPacket& reqpkt) SRTSYNC_REQUIRES(m_ConnectionLock);
     SRT_ATR_NODISCARD bool prepareConnectionObjects(const CHandShake &hs, HandshakeSide hsd, CUDTException *eout);
-    SRT_ATR_NODISCARD EConnectStatus postConnect(const CPacket& response, bool rendezvous, CUDTException* eout, bool synchro) ATR_NOEXCEPT;
+    SRT_ATR_NODISCARD EConnectStatus postConnect(const CPacket& response, bool rendezvous, CUDTException* eout) ATR_NOEXCEPT;
     void applyResponseSettings() ATR_NOEXCEPT;
     SRT_ATR_NODISCARD EConnectStatus processAsyncConnectResponse(const CPacket& pkt) ATR_NOEXCEPT;
     SRT_ATR_NODISCARD bool processAsyncConnectRequest(EReadStatus rst, EConnectStatus cst, const CPacket& response, const sockaddr_any& serv_addr);
@@ -750,8 +750,6 @@ private:
 
     static loss_seqs_t defaultPacketArrival(void* vself, CPacket& pkt);
     static loss_seqs_t groupPacketArrival(void* vself, CPacket& pkt);
-
-    static CUDTUnited s_UDTUnited;               // UDT global management base
 
 private: // Identification
     CUDTSocket* const m_parent; // temporary, until the CUDTSocket class is merged with CUDT
@@ -1023,9 +1021,9 @@ private: // synchronization: mutexes and conditions
     srt::sync::Mutex m_RecvAckLock;              // Protects the state changes while processing incomming ACK (SRT_EPOLL_OUT)
 
     srt::sync::Condition m_RecvDataCond;         // used to block "srt_recv*" when there is no data. Use together with m_RecvLock
-    srt::sync::Mutex m_RecvLock;                 // used to synchronize "srt_recv*" call, protects TSBPD drift updates (CRcvBuffer::isRcvDataReady())
+    srt::sync::Mutex m_RecvLock SRTSYNC_ACQUIRED_BEFORE(m_RcvBufferLock);// used to synchronize "srt_recv*" call, protects TSBPD drift updates (CRcvBuffer::isRcvDataReady())
 
-    srt::sync::Mutex m_SendLock;                 // used to synchronize "send" call
+    srt::sync::Mutex m_SendLock SRTSYNC_ACQUIRED_BEFORE(m_RecvLock);                 // used to synchronize "send" call
     srt::sync::Mutex m_RcvLossLock;              // Protects the receiver loss list (access: CRcvQueue::worker, CUDT::tsbpd)
     srt::sync::Mutex m_StatsLock;                // used to synchronize access to trace statistics
 
@@ -1098,7 +1096,8 @@ private: // Generation and processing of packets
     /// @param addr source address from where the request came
     /// @param packet contents of the packet
     /// @return URQ code, possibly containing reject reason
-    int processConnectRequest(const sockaddr_any& addr, CPacket& packet);
+    int processConnectRequest(const sockaddr_any& addr, CPacket& packet)
+        SRTSYNC_REQUIRES(m_pRcvQueue->m_LSLock);
     static void addLossRecord(std::vector<int32_t>& lossrecord, int32_t lo, int32_t hi);
     int32_t bake(const sockaddr_any& addr, int32_t previous_cookie = 0, int correction = 0);
     int32_t ackDataUpTo(int32_t seq);

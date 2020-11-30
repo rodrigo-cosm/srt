@@ -73,127 +73,8 @@ modified by
 // LowLevelInfo.md document.
 
 class CUDT;
-
-class CUDTSocket
-{
-public:
-   CUDTSocket()
-       : m_Status(SRTS_INIT)
-       , m_SocketID(0)
-       , m_ListenSocket(0)
-       , m_PeerID(0)
-#if ENABLE_EXPERIMENTAL_BONDING
-       , m_IncludedGroup()
-#endif
-       , m_iISN(0)
-       , m_pUDT(NULL)
-       , m_pQueuedSockets(NULL)
-       , m_pAcceptSockets(NULL)
-       , m_AcceptCond()
-       , m_AcceptLock()
-       , m_uiBackLog(0)
-       , m_iMuxID(-1)
-   {
-       construct();
-   }
-
-   ~CUDTSocket();
-
-   void construct();
-
-   SRT_SOCKSTATUS m_Status;                  //< current socket state
-
-   /// Time when the socket is closed.
-   /// When the socket is closed, it is not removed immediately from the list
-   /// of sockets in order to prevent other methods from accessing invalid address.
-   /// A timer is started and the socket will be removed after approximately
-   /// 1 second (see CUDTUnited::checkBrokenSockets()).
-   srt::sync::steady_clock::time_point m_tsClosureTimeStamp;
-
-   sockaddr_any m_SelfAddr;                    //< local address of the socket
-   sockaddr_any m_PeerAddr;                    //< peer address of the socket
-
-   SRTSOCKET m_SocketID;                     //< socket ID
-   SRTSOCKET m_ListenSocket;                 //< ID of the listener socket; 0 means this is an independent socket
-
-   SRTSOCKET m_PeerID;                       //< peer socket ID
-#if ENABLE_EXPERIMENTAL_BONDING
-   CUDTGroup::gli_t m_IncludedIter;          //< Container's iterator of the group to which it belongs, or gli_NULL() if it isn't
-   CUDTGroup* m_IncludedGroup;               //< Group this socket is a member of, or NULL if it isn't
-#endif
-
-   int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
-
-   CUDT* m_pUDT;                             //< pointer to the UDT entity
-
-   std::set<SRTSOCKET>* m_pQueuedSockets;    //< set of connections waiting for accept()
-   std::set<SRTSOCKET>* m_pAcceptSockets;    //< set of accept()ed connections
-
-   srt::sync::Condition m_AcceptCond;        //< used to block "accept" call
-   srt::sync::Mutex m_AcceptLock;            //< mutex associated to m_AcceptCond
-
-   unsigned int m_uiBackLog;                 //< maximum number of connections in queue
-
-   // XXX A refactoring might be needed here.
-
-   // There are no reasons found why the socket can't contain a list iterator to a
-   // multiplexer INSTEAD of m_iMuxID. There's no danger in this solution because
-   // the multiplexer is never deleted until there's at least one socket using it.
-   //
-   // The multiplexer may even physically be contained in the CUDTUnited object,
-   // just track the multiple users of it (the listener and the accepted sockets).
-   // When deleting, you simply "unsubscribe" yourself from the multiplexer, which
-   // will unref it and remove the list element by the iterator kept by the
-   // socket.
-   int m_iMuxID;                             //< multiplexer ID
-
-   /// lock this socket exclusively for control APIs: bind/listen/connect/close
-   srt::sync::Mutex m_ControlLock; // XXX SRTSYNC_ACQUIRED_BEFORE(s_UDTUnited::m_GlobControlLock)
-
-   CUDT& core() { return *m_pUDT; }
-
-   static int64_t getPeerSpec(SRTSOCKET id, int32_t isn)
-   {
-       return (int64_t(id) << 30) + isn;
-   }
-   int64_t getPeerSpec()
-   {
-       return getPeerSpec(m_PeerID, m_iISN);
-   }
-
-   SRT_SOCKSTATUS getStatus();
-
-   /// This function shall be called always wherever
-   /// you'd like to call cudtsocket->m_pUDT->close(),
-   /// from within the GC thread only (that is, only when
-   /// the socket should be no longer visible in the
-   /// connection, including for sending remaining data).
-   void breakSocket_LOCKED();
-
-
-   /// This makes the socket no longer capable of performing any transmission
-   /// operation, but continues to be responsive in the connection in order
-   /// to finish sending the data that were scheduled for sending so far.
-   void setClosed();
-
-   /// This does the same as setClosed, plus sets the m_bBroken to true.
-   /// Such a socket can still be read from so that remaining data from
-   /// the receiver buffer can be read, but no longer sends anything.
-   void setBrokenClosed();
-   void removeFromGroup(bool broken);
-
-   // Instrumentally used by select() and also required for non-blocking
-   // mode check in groups
-   bool readReady();
-   bool writeReady();
-   bool broken();
-
-private:
-   CUDTSocket(const CUDTSocket&);
-   CUDTSocket& operator=(const CUDTSocket&);
-};
-
-////////////////////////////////////////////////////////////////////////////////
+class CUDTSocket;
+class CUDTGroup;
 
 class CUDTUnited
 {
@@ -345,7 +226,7 @@ private:
    groups_t m_Groups SRTSYNC_GUARDED_BY(m_GlobControlLock);
 #endif
 
-   srt::sync::Mutex m_GlobControlLock;               // used to synchronize UDT API
+   srt::sync::Mutex m_GlobControlLock SRTSYNC_ACQUIRED_BEFORE(CUDT::m_ConnectionLock);               // used to synchronize UDT API
 
    srt::sync::Mutex m_IDLock;                        // used to synchronize ID generation
 
@@ -439,6 +320,134 @@ private:
 private:
    CUDTUnited(const CUDTUnited&);
    CUDTUnited& operator=(const CUDTUnited&);
+
+   friend class CUDT;
+   friend class CUDTGroup;
+   friend class CUDTSocket;
+
+   static CUDTUnited s_UDTUnited;               // UDT global management base
 };
+
+
+class CUDTSocket
+{
+public:
+   CUDTSocket()
+       : m_Status(SRTS_INIT)
+       , m_SocketID(0)
+       , m_ListenSocket(0)
+       , m_PeerID(0)
+#if ENABLE_EXPERIMENTAL_BONDING
+       , m_IncludedGroup()
+#endif
+       , m_iISN(0)
+       , m_pUDT(NULL)
+       , m_pQueuedSockets(NULL)
+       , m_pAcceptSockets(NULL)
+       , m_AcceptCond()
+       , m_AcceptLock()
+       , m_uiBackLog(0)
+       , m_iMuxID(-1)
+   {
+       construct();
+   }
+
+   ~CUDTSocket();
+
+   void construct();
+
+   SRT_SOCKSTATUS m_Status;                  //< current socket state
+
+   /// Time when the socket is closed.
+   /// When the socket is closed, it is not removed immediately from the list
+   /// of sockets in order to prevent other methods from accessing invalid address.
+   /// A timer is started and the socket will be removed after approximately
+   /// 1 second (see CUDTUnited::checkBrokenSockets()).
+   srt::sync::steady_clock::time_point m_tsClosureTimeStamp;
+
+   sockaddr_any m_SelfAddr;                    //< local address of the socket
+   sockaddr_any m_PeerAddr;                    //< peer address of the socket
+
+   SRTSOCKET m_SocketID;                     //< socket ID
+   SRTSOCKET m_ListenSocket;                 //< ID of the listener socket; 0 means this is an independent socket
+
+   SRTSOCKET m_PeerID;                       //< peer socket ID
+#if ENABLE_EXPERIMENTAL_BONDING
+   CUDTGroup::gli_t m_IncludedIter;          //< Container's iterator of the group to which it belongs, or gli_NULL() if it isn't
+   CUDTGroup* m_IncludedGroup;               //< Group this socket is a member of, or NULL if it isn't
+#endif
+
+   int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
+
+   CUDT* m_pUDT;                             //< pointer to the UDT entity
+
+   std::set<SRTSOCKET>* m_pQueuedSockets;    //< set of connections waiting for accept()
+   std::set<SRTSOCKET>* m_pAcceptSockets;    //< set of accept()ed connections
+
+   srt::sync::Condition m_AcceptCond;        //< used to block "accept" call
+   srt::sync::Mutex m_AcceptLock;            //< mutex associated to m_AcceptCond
+
+   unsigned int m_uiBackLog;                 //< maximum number of connections in queue
+
+   // XXX A refactoring might be needed here.
+
+   // There are no reasons found why the socket can't contain a list iterator to a
+   // multiplexer INSTEAD of m_iMuxID. There's no danger in this solution because
+   // the multiplexer is never deleted until there's at least one socket using it.
+   //
+   // The multiplexer may even physically be contained in the CUDTUnited object,
+   // just track the multiple users of it (the listener and the accepted sockets).
+   // When deleting, you simply "unsubscribe" yourself from the multiplexer, which
+   // will unref it and remove the list element by the iterator kept by the
+   // socket.
+   int m_iMuxID;                             //< multiplexer ID
+
+   /// lock this socket exclusively for control APIs: bind/listen/connect/close
+   srt::sync::Mutex m_ControlLock SRTSYNC_ACQUIRED_BEFORE(CUDTUnited::s_UDTUnited.m_GlobControlLock);
+
+   CUDT& core() { return *m_pUDT; }
+
+   static int64_t getPeerSpec(SRTSOCKET id, int32_t isn)
+   {
+       return (int64_t(id) << 30) + isn;
+   }
+   int64_t getPeerSpec()
+   {
+       return getPeerSpec(m_PeerID, m_iISN);
+   }
+
+   SRT_SOCKSTATUS getStatus();
+
+   /// This function shall be called always wherever
+   /// you'd like to call cudtsocket->m_pUDT->close(),
+   /// from within the GC thread only (that is, only when
+   /// the socket should be no longer visible in the
+   /// connection, including for sending remaining data).
+   void breakSocket_LOCKED();
+
+
+   /// This makes the socket no longer capable of performing any transmission
+   /// operation, but continues to be responsive in the connection in order
+   /// to finish sending the data that were scheduled for sending so far.
+   void setClosed();
+
+   /// This does the same as setClosed, plus sets the m_bBroken to true.
+   /// Such a socket can still be read from so that remaining data from
+   /// the receiver buffer can be read, but no longer sends anything.
+   void setBrokenClosed();
+   void removeFromGroup(bool broken);
+
+   // Instrumentally used by select() and also required for non-blocking
+   // mode check in groups
+   bool readReady();
+   bool writeReady();
+   bool broken();
+
+private:
+   CUDTSocket(const CUDTSocket&);
+   CUDTSocket& operator=(const CUDTSocket&);
+};
+
+////////////////////////////////////////////////////////////////////////////////
 
 #endif

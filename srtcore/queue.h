@@ -512,7 +512,6 @@ private:
 
    void registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, const srt::sync::steady_clock::time_point& ttl);
    void removeConnector(const SRTSOCKET& id); // will lock
-   void removeConnector_LOCKED(const SRTSOCKET& id); // SRTSYNC_REQUIRES(m_pRendezvousQueue->m_RIDVectorLock);
    void removePrecollectedPackets(const SRTSOCKET& id);
 
    void setNewEntry(CUDT* u);
@@ -523,7 +522,7 @@ private:
 
 private:
    srt::sync::Mutex m_LSLock;
-   CUDT* m_pListener;                                   // pointer to the (unique, if any) listening UDT entity
+   CUDT* m_pListener SRTSYNC_GUARDED_BY(m_LSLock);      // pointer to the (unique, if any) listening UDT entity
    CRendezvousQueue* m_pRendezvousQueue;                // The list of sockets in rendezvous mode
 
    std::vector<CUDT*> m_vNewEntry;                      // newly added entries, to be inserted
