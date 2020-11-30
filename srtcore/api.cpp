@@ -574,7 +574,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    {
        ns->m_SocketID = generateSocketID();
    }
-   catch (const CUDTException& e)
+   catch (const CUDTException&)
    {
        LOGF(cnlog.Fatal, "newConnection: IPE: all sockets occupied? Last gen=%d", m_SocketIDGenerator);
        // generateSocketID throws exception, which can be naturally handled
@@ -654,7 +654,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
    // - OVERWRITE just the IP address itself by a value taken from piSelfIP
    // (the family is used exactly as the one taken from what has been returned
    // by getsockaddr)
-   CIPAddress::pton((ns->m_SelfAddr), ns->m_pUDT->m_piSelfIP, ns->m_SelfAddr.family(), peer);
+   CIPAddress::pton((ns->m_SelfAddr), ns->m_pUDT->m_piSelfIP, peer);
 
    {
        // protect the m_PeerRec structure (and group existence)
@@ -2970,7 +2970,7 @@ void CUDTUnited::updateMux(
        s->m_pUDT->m_pRcvQueue = m.m_pRcvQueue;
        s->m_iMuxID = m.m_iID;
    }
-   catch (CUDTException& e)
+   catch (const CUDTException&)
    {
        m.destroy();
        throw;

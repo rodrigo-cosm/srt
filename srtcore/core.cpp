@@ -5115,7 +5115,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
     // otherwise if startConnect() fails, the multiplexer cannot be located
     // by garbage collection and will cause leak
     s->m_pUDT->m_pSndQueue->m_pChannel->getSockAddr((s->m_SelfAddr));
-    CIPAddress::pton((s->m_SelfAddr), s->m_pUDT->m_piSelfIP, s->m_SelfAddr.family(), m_PeerAddr);
+    CIPAddress::pton((s->m_SelfAddr), s->m_pUDT->m_piSelfIP, m_PeerAddr);
 
     s->m_Status = SRTS_CONNECTED;
 
@@ -5912,7 +5912,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& agent, const sockaddr_any& peer,
     // get local IP address and send the peer its IP address (because UDP cannot get local IP address)
     memcpy((m_piSelfIP), w_hs.m_piPeerIP, sizeof m_piSelfIP);
     m_parent->m_SelfAddr = agent;
-    CIPAddress::pton((m_parent->m_SelfAddr), m_piSelfIP, agent.family(), peer);
+    CIPAddress::pton((m_parent->m_SelfAddr), m_piSelfIP, peer);
     CIPAddress::ntop(peer, (w_hs.m_piPeerIP));
 
     int udpsize          = m_iMSS - CPacket::UDP_HDR_SIZE;
@@ -8067,25 +8067,23 @@ int CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
 
     local_prevack = m_iDebugPrevLastAck;
 
-    string reason; // just for "a reason" of giving particular % for ACK
+    string reason = "first lost"; // just for "a reason" of giving particular % for ACK
 #endif
 
-    // If there is no loss, the ACK is the current largest sequence number plus 1;
-    // Otherwise it is the smallest sequence number in the receiver loss list.
-    if (m_pRcvLossList->getLossLength() == 0)
     {
-        ack = CSeqNo::incseq(m_iRcvCurrSeqNo);
-#if ENABLE_HEAVY_LOGGING
-        reason = "expected next";
-#endif
-    }
-    else
-    {
+        // If there is no loss, the ACK is the current largest sequence number plus 1;
+        // Otherwise it is the smallest sequence number in the receiver loss list.
         ScopedLock lock(m_RcvLossLock);
         ack = m_pRcvLossList->getFirstLostSeq();
-#if ENABLE_HEAVY_LOGGING
-        reason = "first lost";
-#endif
+    }
+
+    // We don't need to check the length prematurely,
+    // if length is 0, this will return SRT_SEQNO_NONE.
+    // If so happened, simply use the latest received pkt + 1.
+    if (ack == SRT_SEQNO_NONE)
+    {
+        ack = CSeqNo::incseq(m_iRcvCurrSeqNo);
+        IF_HEAVY_LOGGING(reason = "expected next");
     }
 
     if (m_iRcvLastAckAck == ack)
@@ -8289,10 +8287,10 @@ int CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
 
 void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
 {
+#if ENABLE_EXPERIMENTAL_BONDING
     // This is for the call of CSndBuffer::getMsgNoAt that returns
     // this value as a notfound-trap.
     int32_t msgno_at_last_acked_seq = SRT_MSGNO_CONTROL;
-#if ENABLE_EXPERIMENTAL_BONDING
     bool is_group = m_parent->m_IncludedGroup;
 #endif
 
@@ -8370,6 +8368,18 @@ void CUDT::processCtrlAck(const CPacket &ctrlpkt, const steady_clock::time_point
 {
     const int32_t* ackdata       = (const int32_t*)ctrlpkt.m_pcData;
     const int32_t  ackdata_seqno = ackdata[ACKD_RCVLASTACK];
+
+    // Check the value of ACK in case when it was some rogue peer
+    if (ackdata_seqno < 0)
+    {
+        // This embraces all cases when the most significant bit is set,
+        // as the variable is of a signed type. So, SRT_SEQNO_NONE is
+        // included, but it also triggers for any other kind of invalid value.
+        // This check MUST BE DONE before making any operation on this number.
+        LOGC(inlog.Error, log << CONID() << "ACK: IPE/EPE: received invalid ACK value: " << ackdata_seqno
+                << " " << std::hex << ackdata_seqno << " (IGNORED)");
+        return;
+    }
 
     const bool isLiteAck = ctrlpkt.getLength() == (size_t)SEND_LITE_ACK;
     HLOGC(inlog.Debug,
@@ -11195,9 +11205,9 @@ void CUDT::updateBrokenConnection()
 void CUDT::completeBrokenConnectionDependencies(int errorcode)
 {
     int token = -1;
-    bool pending_broken = false;
 
 #if ENABLE_EXPERIMENTAL_BONDING
+    bool pending_broken = false;
     {
         ScopedLock guard_group_existence (s_UDTUnited.m_GlobControlLock);
         if (m_parent->m_IncludedGroup)
