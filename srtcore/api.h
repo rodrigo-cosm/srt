@@ -289,8 +289,8 @@ private:
    bool updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
 
 private:
-   std::map<int, CMultiplexer> m_mMultiplexer;		// UDP multiplexer
-   srt::sync::Mutex            m_MultiplexerLock;
+   std::map<int, CMultiplexer> m_mMultiplexer SRTSYNC_GUARDED_BY(m_GlobControlLock); // UDP multiplexer
+   srt::sync::Mutex            m_MultiplexerLock; // XXX UNUSED???
 
 private:
    CCache<CInfoBlock>* m_pCache;			// UDT network information cache
