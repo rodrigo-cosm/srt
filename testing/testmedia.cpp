@@ -145,7 +145,7 @@ public:
     {
         ofile.write(data.payload.data(), data.payload.size());
 #ifdef PLEASE_LOG
-        applog.Debug() << "FileTarget::Write: " << data.size() << " written to a file";
+        applog.Debug() << "FileTarget::Write: " << data.payload.size() << " written to a file";
 #endif
     }
 
@@ -890,9 +890,64 @@ void SrtCommon::PrepareClient()
 }
 
 #if ENABLE_EXPERIMENTAL_BONDING
-void TransmitGroupSocketConnect(void* srtcommon, SRTSOCKET sock, int error, const sockaddr* /*peer*/, int token)
+
+struct SrtConn;
+#define SRTC_ENDPOINTLEN (INET6_ADDRSTRLEN+3+5) //room for "[<ipv6addr>]:<port>"
+
+const char *srtconn_StrEndPoint(SrtConn *srtc, const struct sockaddr *psa, char *pszEndPoint, size_t buflen, ushort *pusPort)
 {
+    char szAddr[INET6_ADDRSTRLEN] = "0.0.0.0";
+    const char *pszFmt = "%s:%hu";
+    uint16_t usPort = 0;
+    int rc = 0;
+
+    (void)srtc; //was initially used to log (srtcLog(srtc,...)
+    if (!psa || !pszEndPoint || buflen < SRTC_ENDPOINTLEN) {
+        rc = -1;
+    }else{
+        struct sockaddr_in* psin = 0;
+        struct sockaddr_in6* psin6 = 0;
+
+        if(pusPort)*pusPort = 0;
+        switch (psa->sa_family )
+        {
+        case AF_INET:
+            psin = (struct sockaddr_in*)psa;
+            if ( !inet_ntop(AF_INET, &psin->sin_addr, szAddr, sizeof(szAddr)) ){
+                rc = -1;
+            }
+            usPort = ntohs(psin->sin_port);
+            break;
+
+        case AF_INET6:
+            psin6 = (struct sockaddr_in6*)psa;
+            if ( !inet_ntop(AF_INET6, &psin6->sin6_addr, szAddr, sizeof(szAddr)) ){
+                rc = -1;
+            }
+            usPort = ntohs(psin6->sin6_port);
+            pszFmt = "[%s]:%hu";
+            break;
+
+        default:
+            rc = -1;
+            break;
+        }
+    }
+    if(rc){
+        return "INVALID.ADDRESS";
+    }
+    snprintf(pszEndPoint, buflen, pszFmt, szAddr, usPort);
+    if(pusPort) *pusPort=usPort;
+    return pszEndPoint;
+}
+
+
+void TransmitGroupSocketConnect(void* srtcommon, SRTSOCKET sock, int error, const sockaddr* peer, int token)
+{
+    char szEndPoint[SRTC_ENDPOINTLEN];
+
     SrtCommon* that = (SrtCommon*)srtcommon;
+    SrtConn* srtc = (SrtConn*)srtcommon;
 
     if (error == SRT_SUCCESS)
     {
@@ -903,14 +958,23 @@ void TransmitGroupSocketConnect(void* srtcommon, SRTSOCKET sock, int error, cons
     applog.Debug("connect callback: error on @", sock, " erc=", error, " token=", token);
 #endif
 
+    applog.Note().form("connectCB(%p,%x,%d,%s,%d)",
+            that, sock, error,
+            srtconn_StrEndPoint(srtc, peer, szEndPoint, sizeof(szEndPoint), NULL),
+            token
+            );
+
     /* Example: identify by target address
     sockaddr_any peersa = peer;
     sockaddr_any agentsa;
     bool haveso = (srt_getsockname(sock, agentsa.get(), &agentsa.len) != -1);
     */
 
+    std::ostringstream checked;
+
     for (auto& n: that->m_group_nodes)
     {
+        checked << n.token << "(" << n.host << ":" << n.port << ") ";
         if (n.token != -1 && n.token == token)
         {
             n.error = error;
@@ -931,7 +995,7 @@ void TransmitGroupSocketConnect(void* srtcommon, SRTSOCKET sock, int error, cons
         */
     }
 
-    Verb() << " IPE: LINK NOT FOUND???]";
+    Verb() << " IPE: LINK NOT FOUND???] Checked: " << checked.str() << " token=" << token << " peer=" << peer;
 }
 
 void SrtCommon::OpenGroupClient()
@@ -1001,6 +1065,7 @@ void SrtCommon::OpenGroupClient()
     int i = 1;
     for (Connection& c: m_group_nodes)
     {
+        c.error = SRT_SUCCESS; // case when was broken
         auto sa = CreateAddr(c.host, c.port);
         c.target = sa;
         Verb() << "\t[" << c.token << "] " << c.host << ":" << c.port << VerbNoEOL;
@@ -1019,11 +1084,12 @@ void SrtCommon::OpenGroupClient()
         }
 
         Verb();
-        ++i;
         const sockaddr* source = c.source.empty() ? nullptr : c.source.get();
         SRT_SOCKGROUPCONFIG gd = srt_prepare_endpoint(source, sa.get(), namelen);
         gd.weight = c.weight;
         gd.config = c.options;
+        gd.token = i;
+        ++i;
 
         targets.push_back(gd);
     }
@@ -1479,6 +1545,8 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
 
     // Note: sockets are not necessarily in the same order. Find
     // the socket by id.
+
+    size_t nch = 0;
     for (size_t i = 0; i < grpdata_size; ++i)
     {
         const SRT_SOCKGROUPDATA& d = grpdata[i];
@@ -1491,7 +1559,22 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
         if (result != -1 && status == SRTS_CONNECTED)
         {
             // Short report with the state.
-            Verb() << "G@" << id << "<" << MemberStatusStr(mstatus) << "> " << VerbNoEOL;
+            Verb() << "[" << d.token << "] G@" << id << "<" << MemberStatusStr(mstatus) << "> " << VerbNoEOL;
+
+            bool f = false;
+            // Find the token in the connection table and fix if needed
+            for (auto& n: m_group_nodes)
+            {
+                if (n.token == d.token)
+                {
+                    n.error = SRT_SUCCESS;
+                    f = true;
+                    break;
+                }
+            }
+            if (f)
+                ++nch;
+
             continue;
         }
         // id, status, result, peeraddr
@@ -1507,12 +1590,11 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
     // This was only informative. Now we check all nodes if they
     // are not active
 
-    int i = 1;
     for (auto& n: m_group_nodes)
     {
         if (n.error != SRT_SUCCESS)
         {
-            Verb() << "[" << i << "] CONNECTION FAILURE to '" << n.host << ":" << n.port << "': "
+            Verb() << "[" << n.token << "] @" << n.socket << " CONNECTION FAILURE to '" << n.host << ":" << n.port << "': "
                 << srt_strerror(n.error, 0) << ":" << srt_rejectreason_str(n.reason);
         }
 
@@ -1521,8 +1603,7 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
             continue;
 
         auto sa = CreateAddr(n.host, n.port);
-        Verb() << "[" << i << "] RECONNECTING to node " << n.host << ":" << n.port << " ... " << VerbNoEOL;
-        ++i;
+        Verb() << "[" << n.token << "] RECONNECTING to node " << n.host << ":" << n.port << " ... " << VerbNoEOL;
 
         n.error = SRT_SUCCESS;
         n.reason = SRT_REJ_UNKNOWN;
@@ -2326,7 +2407,7 @@ Epoll_again:
 #if PLEASE_LOG
         extern srt_logging::Logger applog;
         LOGC(applog.Debug, log << "recv: #" << mctrl.msgno << " %" << mctrl.pktseq << "  "
-                << BufferStamp(data.data(), stat) << " BELATED: " << ((CTimer::getTime()-mctrl.srctime)/1000.0) << "ms");
+                << BufferStamp(data.data(), stat) << " BELATED: " << ((srt_time_now()-mctrl.srctime)/1000.0) << "ms");
 #endif
 
         Verb() << "(#" << mctrl.msgno << " %" << mctrl.pktseq << "  " << BufferStamp(data.data(), stat) << ") " << VerbNoEOL;

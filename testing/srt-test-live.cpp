@@ -815,6 +815,7 @@ int main( int argc, char** argv )
     unique_ptr<Source> src;
     unique_ptr<Target> tar;
 
+RestartTransmission:
     try
     {
         src = Source::Create(source_spec);
@@ -966,6 +967,24 @@ int main( int argc, char** argv )
                 this_thread::sleep_for(chrono::seconds(1));
             }
         }
+    } catch (TransmissionError&) {
+
+        if (transmit_retry_always)
+        {
+            // Reinitialize just for a case
+            transmit_retry_connect = stoi(retryphrase);
+            // Close both first.
+            src.reset();
+            tar.reset();
+            goto RestartTransmission;
+        }
+
+        if (final_delay > 0)
+        {
+            Verror() << "Waiting " << final_delay << "s for possible cleanup...";
+            this_thread::sleep_for(chrono::seconds(final_delay));
+        }
+
     } catch (std::exception& x) { // Catches TransmissionError and AlarmExit
 
         if (stoptime != 0 && ::timer_state)
@@ -979,7 +998,7 @@ int main( int argc, char** argv )
         }
         else
         {
-            Verror() << "STD EXCEPTION: " << x.what();
+            Verror() << "STD EXCEPTION(" << typeid(x).name() << "): " << x.what();
         }
 
         if ( crashonx )
