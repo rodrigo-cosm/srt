@@ -4119,6 +4119,33 @@ CUDTException& CUDT::getlasterror()
    return GetThreadLocalError();
 }
 
+int CUDT::bstats(SRTSOCKET u, SrtStatsCell* array, size_t size, bool clear)
+{
+    /* TBD
+#if ENABLE_EXPERIMENTAL_BONDING
+   if (u & SRTGROUP_MASK)
+       return groupsockbstats(u, array, size, clear);
+#endif
+*/
+
+   try
+   {
+      CUDT* udt = s_UDTUnited.locateSocket(u, s_UDTUnited.ERH_THROW)->m_pUDT;
+      udt->bstats(array, size, clear);
+      return 0;
+   }
+   catch (const CUDTException& e)
+   {
+      return APIError(e);
+   }
+   catch (const std::exception& ee)
+   {
+      LOGC(aclog.Fatal, log << "bstats: UNEXPECTED EXCEPTION: "
+         << typeid(ee).name() << ": " << ee.what());
+      return APIError(MJ_UNKNOWN, MN_NONE, 0);
+   }
+}
+
 int CUDT::bstats(SRTSOCKET u, CBytePerfMon* perf, bool clear, bool instantaneous)
 {
 #if ENABLE_EXPERIMENTAL_BONDING

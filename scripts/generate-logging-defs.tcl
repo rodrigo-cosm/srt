@@ -99,6 +99,9 @@ set special {
 	}
 }
 
+set here [file dirname [file normalize $argv0]]
+source $here/utilities.tcl
+
 proc GenerateModelForSrtH {} {
 
 	# `path` will be set to the git top path
@@ -283,28 +286,12 @@ set generation {
 
 # EXECUTION
 
-set here [file dirname [file normalize $argv0]]
-
 if {[lindex [file split $here] end] != "scripts"} {
 	puts stderr "The script is in weird location."
 	exit 1
 }
 
 set path [file join {*}[lrange [file split $here] 0 end-1]]
-
-# Utility. Allows to put line-oriented comments and have empty lines
-proc no_comments {input} {
-	set output ""
-	foreach line [split $input \n] {
-		set nn [string trim $line]
-		if { $nn == "" || [string index $nn 0] == "#" } {
-			continue
-		}
-		append output $line\n
-	}
-
-	return $output
-}
 
 proc generate_file {od target} {
 

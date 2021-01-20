@@ -15,6 +15,7 @@ socketoptions.cpp
 transmitmedia.cpp
 uriparser.cpp
 verbose.cpp
+statlabels.cpp
 
 PRIVATE HEADERS
 apputil.hpp

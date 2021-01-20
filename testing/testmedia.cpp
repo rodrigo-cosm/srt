@@ -1566,6 +1566,7 @@ SrtSource::SrtSource(string host, int port, std::string path, const map<string,s
 
 static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
 {
+    /*
     CBytePerfMon perf;
     // clear only if stats report is to be read
     srt_bstats(sock, &perf, clr);
@@ -1574,6 +1575,17 @@ static void PrintSrtStats(SRTSOCKET sock, bool clr, bool bw, bool stats)
         cout << transmit_stats_writer->WriteBandwidth(perf.mbpsBandwidth);
     if (stats)
         cout << transmit_stats_writer->WriteStats(sock, perf);
+        */
+
+    vector<SRT_STATS> perf (SRT_STATS_SIZE);
+
+    srt_stats(sock, perf.data(), perf.size(), clr);
+
+    if (bw)
+        cout << transmit_stats_writer->WriteBandwidth(SRTM_GET(perf, BANDWIDTH));
+
+    if (stats)
+        cout << transmit_stats_writer->WriteDynStats(sock, perf.data(), SRT_STATS_SIZE);
 }
 
 

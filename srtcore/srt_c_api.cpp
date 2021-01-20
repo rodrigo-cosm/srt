@@ -257,6 +257,7 @@ void srt_clearlasterror()
 
 int srt_bstats(SRTSOCKET u, SRT_TRACEBSTATS * perf, int clear) { return CUDT::bstats(u, perf, 0!=  clear); }
 int srt_bistats(SRTSOCKET u, SRT_TRACEBSTATS * perf, int clear, int instantaneous) { return CUDT::bstats(u, perf, 0!=  clear, 0!= instantaneous); }
+int srt_stats(SRTSOCKET u, SRT_STATS* perf, size_t size, int clear) { return CUDT::bstats(u, perf, size, 0!=  clear); }
 
 SRT_SOCKSTATUS srt_getsockstate(SRTSOCKET u) { return SRT_SOCKSTATUS((int)CUDT::getsockstate(u)); }
 

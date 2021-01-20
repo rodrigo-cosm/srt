@@ -20,6 +20,10 @@
 #include "netinet_any.h"
 #include "srt_compat.h"
 
+// SRT
+#include <utilities.h>
+#include <srt.h>
+
 using namespace std;
 
 
@@ -351,6 +355,28 @@ string OptionHelpItem(const OptionName& o)
 
 // Stats module
 
+static string FormatStat(const SRT_STATS* array, SrtStatsKey key)
+{
+    const SRT_STATS& cell = array[key];
+
+#define RESOLVE(sym) sym
+#define CASE(type) case SRTMT_##type : return Sprint(cell. RESOLVE(SRTMF_##type))
+
+    switch (cell.type)
+    {
+        CASE(INT);
+        CASE(LONG);
+        CASE(ULONG);
+        CASE(DOUBLE);
+    default: ;
+    }
+
+#undef CASE
+#undef RESOLVE
+
+    return "<undefined>";
+}
+
 class SrtStatsJson : public SrtStatsWriter
 {
 public: 
@@ -401,6 +427,11 @@ public:
         output << "}" << endl;
         return output.str();
     } 
+
+    string WriteDynStats(int sid, const SrtStatsCell* mon, size_t size)
+    {
+        return "";
+    }
 
     string WriteBandwidth(double mbpsBandwidth) override 
     {
@@ -501,6 +532,11 @@ public:
         return output.str();
     }
 
+    string WriteDynStats(int sid, const SrtStatsCell* mon, size_t size)
+    {
+        return "";
+    }
+
     string WriteBandwidth(double mbpsBandwidth) override
     {
         std::ostringstream output;
@@ -529,7 +565,22 @@ public:
         output << "LINK         RTT: " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s " << endl;
         output << "BUFFERLEFT:  SND: " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
         return output.str();
-    } 
+    }
+
+    string WriteDynStats(int sid, const SrtStatsCell* mon, size_t size)
+    {
+        extern const std::string transmit_stats_labels[];
+
+        std::ostringstream output;
+        output << "======= SRT STATS: sid=" << sid << endl;
+
+        for (int i = 0; i < SRTM_E_SIZE; ++i)
+        {
+            output << transmit_stats_labels[i] << " : " << FormatStat(mon, SrtStatsKey(i)) << endl;
+        }
+
+        return output.str();
+    }
 
     string WriteBandwidth(double mbpsBandwidth) override 
     {

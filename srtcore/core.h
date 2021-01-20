@@ -294,6 +294,7 @@ public: //API
     static int32_t epoll_set(const int eid, int32_t flags);
     static int epoll_release(const int eid);
     static CUDTException& getlasterror();
+    static int bstats(SRTSOCKET u, SrtStatsCell* statsra, size_t size, bool clear = true);
     static int bstats(SRTSOCKET u, CBytePerfMon* perf, bool clear = true, bool instantaneous = false);
 #if ENABLE_EXPERIMENTAL_BONDING
     static int groupsockbstats(SRTSOCKET u, CBytePerfMon* perf, bool clear = true);
@@ -698,6 +699,14 @@ private:
     /// @param instantaneous [in] flag to request instantaneous data 
     /// instead of moving averages.
     void bstats(CBytePerfMon* perf, bool clear = true, bool instantaneous = false);
+
+    /// read the performance data with bytes counters since bstats() 
+    ///  
+    /// @param statsra [out] pointer to a SRT_STATS array to be filled
+    /// @param clear [in] flag to decide if the local performance trace should be cleared. 
+    /// @param instantaneous [in] flag to request instantaneous data 
+    /// instead of moving averages.
+    void bstats(SrtStatsCell* statsra, size_t size, bool clear);
 
     /// Mark sequence contained in the given packet as not lost. This
     /// removes the loss record from both current receiver loss list and

@@ -7487,6 +7487,259 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
     return size - torecv;
 }
 
+template<typename Type>
+struct Statvar
+{
+    static SrtStatsCell of(const Type& src)
+    {
+        typename Type::type wrong_usage_of_stats_type = Type::type;
+        return SrtStatsCell();
+    }
+};
+
+template<>
+struct Statvar<int32_t>
+{
+    static SrtStatsCell of(const int32_t& src)
+    {
+        SrtStatsCell cell;
+        cell.ull = 0; // clear unused bits
+        cell.i = src;
+        cell.type = SRTMT_INT;
+        return cell;
+    }
+};
+
+template<>
+struct Statvar<int64_t>
+{
+    static SrtStatsCell of(const int64_t& src)
+    {
+        SrtStatsCell cell;
+        cell.ll = src;
+        cell.type = SRTMT_LONG;
+        return cell;
+    }
+};
+
+template<>
+struct Statvar<uint64_t>
+{
+    static SrtStatsCell of(const uint64_t& src)
+    {
+        SrtStatsCell cell;
+        cell.ull = src;
+        cell.type = SRTMT_ULONG;
+        return cell;
+    }
+};
+
+template<>
+struct Statvar<double>
+{
+    static SrtStatsCell of(const double& src)
+    {
+        SrtStatsCell cell;
+        cell.d = src;
+        cell.type = SRTMT_DOUBLE;
+        return cell;
+    }
+};
+
+template <class Type>
+inline static bool SetStat(SrtStatsCell* array, size_t asize, SrtStatsKey key,
+        SrtStatsTypes typecheck ATR_UNUSED, const Type& value)
+{
+    if (key >= asize)
+        return false;
+
+    array[key] = Statvar<Type>::of(value);
+    SRT_ASSERT(array[key].type == typecheck);
+    return true;
+}
+
+void CUDT::bstats(SrtStatsCell* statsra, size_t size, bool clear)
+{
+    if (!m_bConnected)
+        throw CUDTException(MJ_CONNECTION, MN_NOCONN, 0);
+    if (m_bBroken || m_bClosing)
+        throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
+
+    ScopedLock statsguard(m_StatsLock);
+
+    const steady_clock::time_point currtime = steady_clock::now();
+
+    // Fill all stats up to the cell which still exists in the array.
+    // Stop on first cell that could not be filled.
+
+    // Macro required because we want to have free hands with defined
+    // key-to-value association and automated interrupt. This could be
+    // implemented without the macro only with the use of exceptions,
+    // and this may raise concerns for performance and the API could be
+    // tough without C++11.
+
+    // NOTE: this macro is defined only for the area of this function
+    // and it refers to a local variable name!
+#define RESOLVE1(type) RESOLVE2(type)
+#define RESOLVE2(type) RESOLVE3(SRTMT_##type)
+#define RESOLVE3(type) type
+#define EXPAND(typevalue) RESOLVE1(typevalue)
+
+#define FILL(statskey_noprefix, value) \
+    if (!SetStat(statsra, size, SRTM_##statskey_noprefix, EXPAND(SRTM_TYPE_##statskey_noprefix), (value))) \
+        break
+    // ^^^ no semicolon at the end to enforce semicolon after macro
+
+    // Version that can be used with a pre-check, so no need to check every time.
+#define NCFILL(statskey_noprefix, value) \
+    SetStat(statsra, size, SRTM_##statskey_noprefix, EXPAND(SRTM_TYPE_##statskey_noprefix), (value))
+
+    // Clear the values. This sets 0 to all numeric data
+    // and the type field to SRTMT_UNDEFINED. Data not filled later
+    // will be reported as unavailable.
+    memset(statsra, 0, size * sizeof (SrtStatsCell));
+
+    const int pktHdrSize = CPacket::HDR_SIZE + CPacket::UDP_HDR_SIZE;
+
+    do { //NOTE: BREAKABLE BLOCK, not a loop.
+
+        FILL(TIMESTAMP, count_milliseconds(currtime - m_stats.tsStartTime));
+        FILL(SNDPERIOD, count_microseconds(m_tdSendInterval));
+        FILL(WINDOW_FLOW, int(m_iFlowWindowSize));
+        FILL(WINDOW_CONG, int(m_dCongestionWindow));
+        FILL(FLIGHTSIZE, getFlightSpan());
+        FILL(RTT, double(m_iRTT / 1000.0));
+
+        const int64_t availbw = m_iBandwidth == 1 ? m_RcvTimeWindow.getBandwidth() : m_iBandwidth;
+        FILL(BANDWIDTH, Bps2Mbps(availbw * (m_iMaxSRTPayloadSize + pktHdrSize)));
+        FILL(MAXBW, m_llMaxBW > 0 ? Bps2Mbps(m_llMaxBW) : m_CongCtl.ready() ? Bps2Mbps(m_CongCtl->sndBandwidth()) : 0);
+        FILL(MSS, m_iMSS);
+        FILL(RDISTANCE, m_stats.traceReorderDistance);
+        FILL(RTOLERANCE, m_iReorderTolerance);
+
+        bool have_buffer_stats = false;
+
+        // Do not enter the CS if buffer stats not wanted
+        bool want_buffer_stats = (size > SRTM_RCV_MS_LATENCY);
+
+        // Temporary variables
+        int snd_ms_buf = 0, snd_byte_buf = 0, snd_pkt_buf = 0;
+        int snd_ms_buf_avg = 0, snd_byte_buf_avg = 0, snd_pkt_buf_avg = 0;
+        int snd_byte_avail_buf = 0, snd_byte_avail_buf_avg = 0;
+
+        int rcv_ms_buf = 0, rcv_byte_buf = 0, rcv_pkt_buf = 0;
+        int rcv_ms_buf_avg = 0, rcv_byte_buf_avg = 0, rcv_pkt_buf_avg = 0;
+        int rcv_byte_avail_buf = 0, rcv_byte_avail_buf_avg = 0;
+
+        if (want_buffer_stats && tryEnterCS(m_ConnectionLock))
+        {
+            // Buffer
+            if (m_pSndBuffer)
+            {
+                /* Get instant SndBuf instead of moving average for application-based Algorithm
+                   (such as NAE) in need of fast reaction to network condition changes. */
+                snd_pkt_buf = m_pSndBuffer->getCurrBufSize((snd_byte_buf), (snd_ms_buf));
+                snd_pkt_buf_avg = m_pSndBuffer->getAvgBufSize((snd_byte_buf_avg), (snd_ms_buf_avg));
+
+                snd_byte_buf += (snd_pkt_buf * pktHdrSize);
+                snd_byte_buf_avg += (snd_pkt_buf_avg * pktHdrSize);
+                snd_byte_avail_buf = (m_iSndBufSize - snd_pkt_buf) * m_iMSS;
+                snd_byte_avail_buf_avg = (m_iSndBufSize - snd_pkt_buf_avg) * m_iMSS;
+            }
+
+
+            if (m_pRcvBuffer)
+            {
+                rcv_pkt_buf = m_pRcvBuffer->getRcvDataSize((rcv_byte_buf), (rcv_ms_buf));
+                rcv_pkt_buf_avg = m_pRcvBuffer->getRcvAvgDataSize((rcv_byte_buf_avg), (rcv_ms_buf_avg));
+
+                rcv_byte_buf += (rcv_pkt_buf * pktHdrSize);
+                rcv_byte_buf_avg += (rcv_pkt_buf_avg * pktHdrSize);
+                rcv_byte_avail_buf = m_pRcvBuffer->getAvailBufSize() * m_iMSS;
+                rcv_byte_avail_buf_avg = (m_iRcvBufSize - rcv_pkt_buf_avg) * m_iMSS;
+            }
+
+            have_buffer_stats = true;
+            leaveCS(m_ConnectionLock);
+        }
+        if (have_buffer_stats)
+        {
+            NCFILL(SND_PKT_BUF, snd_pkt_buf);
+            NCFILL(SND_BYTE_BUF, snd_byte_buf);
+            NCFILL(SND_MS_BUF, snd_ms_buf);
+            NCFILL(SND_BYTE_AVAIL_BUF, snd_byte_avail_buf);
+
+            NCFILL(SND_PKT_BUF, snd_pkt_buf);
+            NCFILL(SND_BYTE_BUF, snd_byte_buf);
+            NCFILL(SND_MS_BUF, snd_ms_buf);
+            NCFILL(SND_BYTE_AVAIL_BUF, snd_byte_avail_buf);
+            NCFILL(SND_PKT_BUF_AVG, snd_pkt_buf_avg);
+            NCFILL(SND_BYTE_BUF_AVG, snd_byte_buf_avg);
+            NCFILL(SND_MS_BUF_AVG, snd_ms_buf_avg);
+            NCFILL(SND_BYTE_AVAIL_BUF_AVG, snd_byte_avail_buf_avg);
+
+            NCFILL(RCV_PKT_BUF, rcv_pkt_buf);
+            NCFILL(RCV_BYTE_BUF, rcv_byte_buf);
+            NCFILL(RCV_MS_BUF, rcv_ms_buf);
+            NCFILL(RCV_BYTE_AVAIL_BUF, rcv_byte_avail_buf);
+            NCFILL(RCV_PKT_BUF_AVG, rcv_pkt_buf_avg);
+            NCFILL(RCV_BYTE_BUF_AVG, rcv_byte_buf_avg);
+            NCFILL(RCV_MS_BUF_AVG, rcv_ms_buf_avg);
+            NCFILL(RCV_BYTE_AVAIL_BUF_AVG, rcv_byte_avail_buf_avg);
+        }
+
+        FILL(SND_MS_LATENCY, m_bPeerTsbPd ? m_iPeerTsbPdDelay_ms : 0);
+        FILL(RCV_MS_LATENCY, isOPT_TsbPd() ? m_iTsbPdDelay_ms : 0);
+
+        // Packet transmission stats
+        //
+        // Sender
+        FILL(SND_PKT_LOCAL, m_stats.traceSent);
+        FILL(SND_PKT_TOTAL, m_stats.sentTotal);
+        FILL(SND_BYTE_LOCAL, m_stats.traceBytesSent + (m_stats.traceSent * pktHdrSize));
+        FILL(SND_BYTE_TOTAL, m_stats.bytesSentTotal + (m_stats.sentTotal * pktHdrSize));
+        FILL(SND_PKT_LOSS_LOCAL, m_stats.traceSndLoss);
+        FILL(SND_PKT_LOSS_TOTAL, m_stats.sndLossTotal);
+
+        // Receiver will follow
+
+    } while (false);
+#undef FILL
+#undef NCFILL
+#undef EXPAND
+#undef RESOLVE1
+#undef RESOLVE2
+#undef RESOLVE3
+
+    if (clear)
+    {
+        m_stats.traceSndDrop           = 0;
+        m_stats.traceRcvDrop           = 0;
+        m_stats.traceSndBytesDrop      = 0;
+        m_stats.traceRcvBytesDrop      = 0;
+        m_stats.traceRcvUndecrypt      = 0;
+        m_stats.traceRcvBytesUndecrypt = 0;
+        m_stats.traceBytesSent = m_stats.traceBytesRecv = m_stats.traceBytesRetrans = 0;
+        m_stats.traceBytesSentUniq = m_stats.traceBytesRecvUniq = 0;
+        m_stats.traceSent = m_stats.traceRecv
+            = m_stats.traceSentUniq = m_stats.traceRecvUniq
+            = m_stats.traceSndLoss = m_stats.traceRcvLoss = m_stats.traceRetrans
+            = m_stats.sentACK = m_stats.recvACK = m_stats.sentNAK = m_stats.recvNAK = 0;
+        m_stats.sndDuration                                                       = 0;
+        m_stats.traceRcvRetrans                                                   = 0;
+        m_stats.traceRcvBelated                                                   = 0;
+        m_stats.traceRcvBytesLoss = 0;
+
+        m_stats.sndFilterExtra = 0;
+        m_stats.rcvFilterExtra = 0;
+
+        m_stats.rcvFilterSupply = 0;
+        m_stats.rcvFilterLoss   = 0;
+
+        m_stats.tsLastSampleTime = currtime;
+    }
+}
+
 void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
 {
     if (!m_bConnected)

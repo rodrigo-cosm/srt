@@ -9,4 +9,4 @@ testmedia.cpp
 ../apps/uriparser.cpp
 ../apps/logsupport.cpp
 ../apps/logsupport_appdefs.cpp
-
+../apps/statlabels.cpp
