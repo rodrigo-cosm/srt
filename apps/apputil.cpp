@@ -374,7 +374,7 @@ static string FormatStat(const SRT_STATS* array, SrtStatsKey key)
 #undef CASE
 #undef RESOLVE
 
-    return "<undefined>";
+    return "00";
 }
 
 template <class TYPE>
@@ -530,7 +530,7 @@ public:
     {
         return "";
     }
-    
+
     string WriteBandwidth(double mbpsBandwidth) override
     {
         std::ostringstream output;
@@ -547,12 +547,35 @@ private:
 public: 
     SrtStatsCsv() : first_line_printed(false) {}
 
-    string WriteStats(int sid, const CBytePerfMon& mon) override
-    {
-        // Note: std::put_time is supported only in GCC 5 and higher
+// Note: std::put_time is supported only in GCC 5 and higher
 #if !defined(__GNUC__) || defined(__clang__) || (__GNUC__ >= 5)
 #define HAS_PUT_TIME
 #endif
+
+#ifdef HAS_PUT_TIME
+        // Follows ISO 8601
+     void print_timestamp(std::ostream& output)
+     {
+         using namespace std;
+         using namespace std::chrono;
+
+         const auto   systime_now = system_clock::now();
+         const time_t time_now    = system_clock::to_time_t(systime_now);
+
+         // SysLocalTime returns zeroed tm_now on failure, which is ok for put_time.
+         const tm tm_now = SysLocalTime(time_now);
+         output << std::put_time(&tm_now, "%FT%T.") << std::setfill('0') << std::setw(6);
+         const auto    since_epoch = systime_now.time_since_epoch();
+         const seconds s           = duration_cast<seconds>(since_epoch);
+         output << duration_cast<microseconds>(since_epoch - s).count();
+         output << std::put_time(&tm_now, "%z");
+         output << ",";
+     }
+#endif // HAS_PUT_TIME
+
+    string WriteStats(int sid, const CBytePerfMon& mon) override
+    {
+        // Note: std::put_time is supported only in GCC 5 and higher
         std::ostringstream output;
 
         // Header
@@ -578,25 +601,7 @@ public:
 
 #ifdef HAS_PUT_TIME
         // HDR: Timepoint
-        // Follows ISO 8601
-        auto print_timestamp = [&output]() {
-            using namespace std;
-            using namespace std::chrono;
-
-            const auto   systime_now = system_clock::now();
-            const time_t time_now    = system_clock::to_time_t(systime_now);
-
-            // SysLocalTime returns zeroed tm_now on failure, which is ok for put_time.
-            const tm tm_now = SysLocalTime(time_now);
-            output << std::put_time(&tm_now, "%FT%T.") << std::setfill('0') << std::setw(6);
-            const auto    since_epoch = systime_now.time_since_epoch();
-            const seconds s           = duration_cast<seconds>(since_epoch);
-            output << duration_cast<microseconds>(since_epoch - s).count();
-            output << std::put_time(&tm_now, "%z");
-            output << ",";
-        };
-
-        print_timestamp();
+        print_timestamp((output));
 #endif // HAS_PUT_TIME
 
         // HDR: Time,SocketID
@@ -615,9 +620,40 @@ public:
 
     string WriteDynStats(int sid, const SrtStatsCell* mon, size_t size)
     {
-        return "";
+        extern const std::string transmit_stats_labels[];
+        std::ostringstream output;
+
+        size_t minsize = min(size, size_t(SRT_STATS_SIZE));
+        if (!first_line_printed)
+        {
+#ifdef HAS_PUT_TIME
+            output << "Timepoint,";
+#endif
+            output << "Time,SocketID,";
+
+            for (size_t i = 1; i < minsize; ++i)
+                output << transmit_stats_labels[i] << ",";
+            output << endl;
+            first_line_printed = true;
+        }
+
+#ifdef HAS_PUT_TIME
+        print_timestamp((output));
+#endif // HAS_PUT_TIME
+
+        // Timestamp is the first field, so you can
+        // print it manually, then start from value 1.
+        output << SRTM_GET(mon, TIMESTAMP) << "," << sid << ",";
+
+        for (size_t i = 1; i < minsize; ++i)
+        {
+            output << FormatStat(mon, SrtStatsKey(i)) << ",";
+        }
+        output << endl;
+
+        return output.str();
     }
-    
+
     string WriteBandwidth(double mbpsBandwidth) override
     {
         std::ostringstream output;
@@ -655,7 +691,9 @@ public:
         std::ostringstream output;
         output << "======= SRT STATS: sid=" << sid << endl;
 
-        for (int i = 0; i < SRTM_E_SIZE; ++i)
+        size = min(size, SRT_STATS_SIZE);
+
+        for (size_t i = 0; i < size; ++i)
         {
             output << transmit_stats_labels[i] << " : " << FormatStat(mon, SrtStatsKey(i)) << endl;
         }
