@@ -146,7 +146,7 @@ public:
     {
         ofile.write(data.payload.data(), data.payload.size());
 #ifdef PLEASE_LOG
-        applog.Debug() << "FileTarget::Write: " << data.size() << " written to a file";
+        applog.Debug() << "FileTarget::Write: " << data.payload.size() << " written to a file";
 #endif
     }
 
@@ -1306,7 +1306,7 @@ void SrtCommon::ConnectClient(string host, int port)
         if (stat == SRT_ERROR)
         {
             int reason = srt_getrejectreason(m_sock);
-#if PLEASE_LOG
+#ifdef PLEASE_LOG
             LOGP(applog.Error, "ERROR reported by srt_connect - closing socket @", m_sock);
 #endif
             if (transmit_retry_connect && (transmit_retry_always || reason == SRT_REJ_TIMEOUT))
@@ -1445,7 +1445,7 @@ void SrtCommon::SetupRendezvous(string adapter, string host, int port)
 
 void SrtCommon::Close()
 {
-#if PLEASE_LOG
+#ifdef PLEASE_LOG
         extern srt_logging::Logger applog;
         LOGP(applog.Error, "CLOSE requested - closing socket @", m_sock);
 #endif
@@ -2357,10 +2357,16 @@ Epoll_again:
         {
             throw ReadEOF(hostport_copy);
         }
-#if PLEASE_LOG
+#ifdef PLEASE_LOG
         extern srt_logging::Logger applog;
+        int64_t conntime = srt_connection_time(m_sock);
+        int delay = 0;
+        if (conntime != -1)
+        {
+            delay = srt_time_now() - (conntime + mctrl.srctime);
+        }
         LOGC(applog.Debug, log << "recv: #" << mctrl.msgno << " %" << mctrl.pktseq << "  "
-                << BufferStamp(data.data(), stat) << " BELATED: " << ((CTimer::getTime()-mctrl.srctime)/1000.0) << "ms");
+                << BufferStamp(data.data(), stat) << " BELATED: " << (delay/1000.0) << "ms");
 #endif
 
         Verb() << "(#" << mctrl.msgno << " %" << mctrl.pktseq << "  " << BufferStamp(data.data(), stat) << ") " << VerbNoEOL;
