@@ -317,6 +317,8 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     m_RcvEID = m_pGlobal->m_EPoll.create(&m_RcvEpolld);
     m_SndEID = m_pGlobal->m_EPoll.create(&m_SndEpolld);
 
+    m_stats.init();
+
     // Set this data immediately during creation before
     // two or more sockets start arguing about it.
     m_iLastSchedSeqNo = CUDT::generateISN();
@@ -465,7 +467,7 @@ void CUDTGroup::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
     {
         // There's at least one socket in the group, so only
         // post-options are allowed.
-        if (!std::binary_search(srt_post_opt_list, srt_post_opt_list + SRT_SOCKOPT_NPOST, optName))
+        if (!binary_search(srt_post_opt_list, srt_post_opt_list + SRT_SOCKOPT_NPOST, optName))
         {
             LOGC(gmlog.Error, log << "setsockopt(group): Group is connected, this option can't be altered");
             throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
@@ -525,16 +527,16 @@ void CUDTGroup::deriveSettings(CUDT* u)
     // the option is altered on the group.
 
     // SRTO_RCVSYN
-    m_bSynRecving = u->m_config.m_bSynRecving;
+    m_bSynRecving = u->m_config.bSynRecving;
 
     // SRTO_SNDSYN
-    m_bSynSending = u->m_config.m_bSynSending;
+    m_bSynSending = u->m_config.bSynSending;
 
     // SRTO_RCVTIMEO
-    m_iRcvTimeOut = u->m_config.m_iRcvTimeOut;
+    m_iRcvTimeOut = u->m_config.iRcvTimeOut;
 
     // SRTO_SNDTIMEO
-    m_iSndTimeOut = u->m_config.m_iSndTimeOut;
+    m_iSndTimeOut = u->m_config.iSndTimeOut;
 
     // Ok, this really is disgusting, but there's only one way
     // to properly do it. Would be nice to have some more universal
@@ -550,57 +552,58 @@ void CUDTGroup::deriveSettings(CUDT* u)
 #define IM(option, field) importOption(m_config, option, u->m_config.field)
 #define IMF(option, field) importOption(m_config, option, u->field)
 
-    IM(SRTO_MSS, m_iMSS);
-    IM(SRTO_FC, m_iFlightFlagSize);
+    IM(SRTO_MSS, iMSS);
+    IM(SRTO_FC, iFlightFlagSize);
 
     // Nonstandard
-    importOption(m_config, SRTO_SNDBUF, u->m_config.m_iSndBufSize * (u->m_config.m_iMSS - CPacket::UDP_HDR_SIZE));
-    importOption(m_config, SRTO_RCVBUF, u->m_config.m_iRcvBufSize * (u->m_config.m_iMSS - CPacket::UDP_HDR_SIZE));
+    importOption(m_config, SRTO_SNDBUF, u->m_config.iSndBufSize * (u->m_config.iMSS - CPacket::UDP_HDR_SIZE));
+    importOption(m_config, SRTO_RCVBUF, u->m_config.iRcvBufSize * (u->m_config.iMSS - CPacket::UDP_HDR_SIZE));
 
-    IM(SRTO_LINGER, m_Linger);
-    IM(SRTO_UDP_SNDBUF, m_iUDPSndBufSize);
-    IM(SRTO_UDP_RCVBUF, m_iUDPRcvBufSize);
+    IM(SRTO_LINGER, Linger);
+    IM(SRTO_UDP_SNDBUF, iUDPSndBufSize);
+    IM(SRTO_UDP_RCVBUF, iUDPRcvBufSize);
     // SRTO_RENDEZVOUS: impossible to have it set on a listener socket.
     // SRTO_SNDTIMEO/RCVTIMEO: groupwise setting
-    IM(SRTO_CONNTIMEO, m_tdConnTimeOut);
-    IM(SRTO_DRIFTTRACER, m_bDriftTracer);
+    IM(SRTO_CONNTIMEO, tdConnTimeOut);
+    IM(SRTO_DRIFTTRACER, bDriftTracer);
     // Reuseaddr: true by default and should only be true.
-    IM(SRTO_MAXBW, m_llMaxBW);
-    IM(SRTO_INPUTBW, m_llInputBW);
-    IM(SRTO_OHEADBW, m_iOverheadBW);
-    IM(SRTO_IPTOS, m_iIpToS);
-    IM(SRTO_IPTTL, m_iIpTTL);
-    IM(SRTO_TSBPDMODE, m_bTSBPD);
-    IM(SRTO_RCVLATENCY, m_iRcvLatency);
-    IM(SRTO_PEERLATENCY, m_iPeerLatency);
-    IM(SRTO_SNDDROPDELAY, m_iSndDropDelay);
-    IM(SRTO_PAYLOADSIZE, m_zExpPayloadSize);
+    IM(SRTO_MAXBW, llMaxBW);
+    IM(SRTO_INPUTBW, llInputBW);
+    IM(SRTO_MININPUTBW, llMinInputBW);
+    IM(SRTO_OHEADBW, iOverheadBW);
+    IM(SRTO_IPTOS, iIpToS);
+    IM(SRTO_IPTTL, iIpTTL);
+    IM(SRTO_TSBPDMODE, bTSBPD);
+    IM(SRTO_RCVLATENCY, iRcvLatency);
+    IM(SRTO_PEERLATENCY, iPeerLatency);
+    IM(SRTO_SNDDROPDELAY, iSndDropDelay);
+    IM(SRTO_PAYLOADSIZE, zExpPayloadSize);
     IMF(SRTO_TLPKTDROP, m_bTLPktDrop);
 
-    importOption(m_config, SRTO_STREAMID, u->m_config.m_StreamName.str());
+    importOption(m_config, SRTO_STREAMID, u->m_config.sStreamName.str());
 
-    IM(SRTO_MESSAGEAPI, m_bMessageAPI);
-    IM(SRTO_NAKREPORT, m_bRcvNakReport);
-    IM(SRTO_MINVERSION, m_lMinimumPeerSrtVersion);
-    IM(SRTO_ENFORCEDENCRYPTION, m_bEnforcedEnc);
-    IM(SRTO_IPV6ONLY, m_iIpV6Only);
-    IM(SRTO_PEERIDLETIMEO, m_iPeerIdleTimeout);
-    IM(SRTO_GROUPSTABTIMEO, m_uStabilityTimeout);
+    IM(SRTO_MESSAGEAPI, bMessageAPI);
+    IM(SRTO_NAKREPORT, bRcvNakReport);
+    IM(SRTO_MINVERSION, uMinimumPeerSrtVersion);
+    IM(SRTO_ENFORCEDENCRYPTION, bEnforcedEnc);
+    IM(SRTO_IPV6ONLY, iIpV6Only);
+    IM(SRTO_PEERIDLETIMEO, iPeerIdleTimeout);
+    IM(SRTO_GROUPSTABTIMEO, uStabilityTimeout);
 
-    importOption(m_config, SRTO_PACKETFILTER, u->m_config.m_PacketFilterConfig.str());
+    importOption(m_config, SRTO_PACKETFILTER, u->m_config.sPacketFilterConfig.str());
 
     importOption(m_config, SRTO_PBKEYLEN, u->m_pCryptoControl->KeyLen());
 
     // Passphrase is empty by default. Decipher the passphrase and
     // store as passphrase option
-    if (u->m_config.m_CryptoSecret.len)
+    if (u->m_config.CryptoSecret.len)
     {
-        string password((const char*)u->m_config.m_CryptoSecret.str, u->m_config.m_CryptoSecret.len);
+        string password((const char*)u->m_config.CryptoSecret.str, u->m_config.CryptoSecret.len);
         m_config.push_back(ConfigItem(SRTO_PASSPHRASE, password.c_str(), password.size()));
     }
 
-    IM(SRTO_KMREFRESHRATE, m_uKmRefreshRatePkt);
-    IM(SRTO_KMPREANNOUNCE, m_uKmPreAnnouncePkt);
+    IM(SRTO_KMREFRESHRATE, uKmRefreshRatePkt);
+    IM(SRTO_KMPREANNOUNCE, uKmPreAnnouncePkt);
 
     string cc = u->m_CongCtl.selected_name();
     if (cc != "live")
@@ -1384,7 +1387,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         // at the connecting stage.
         CEPoll::fmap_t sready;
 
-        if (m_SndEpolld->watch_empty())
+        if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
         {
             // Sanity check - weird pending reported.
             LOGC(gslog.Error,
@@ -3483,7 +3486,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
     // at the connecting stage.
     CEPoll::fmap_t sready;
 
-    if (m_SndEpolld->watch_empty())
+    if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
     {
         // Sanity check - weird pending reported.
         LOGC(gslog.Error, log << "grp/send*: IPE: reported pending sockets, but EID is empty - wiping pending!");
@@ -3491,10 +3494,6 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
     }
     else
     {
-        // Some sockets could have been closed in the meantime.
-        if (m_SndEpolld->watch_empty())
-            throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
-
         {
             InvertedLock ug(m_GroupLock);
             m_pGlobal->m_EPoll.swait(
@@ -3506,6 +3505,11 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
             HLOGC(gslog.Debug, log << "grp/send...: GROUP CLOSED, ABANDONING");
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
         }
+
+        // Some sockets could have been closed in the meantime.
+        if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
+            throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
+
 
         HLOGC(gslog.Debug, log << "grp/send*: RDY: " << DisplayEpollResults(sready));
 
@@ -3630,7 +3634,7 @@ void CUDTGroup::sendBackup_RetryWaitBlocked(const vector<gli_t>& unstableLinks,
     m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
     m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
 
-    if (m_SndEpolld->watch_empty())
+    if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
     {
         // wipeme wiped, pending sockets checked, it can only mean that
         // all sockets are broken.
@@ -3666,7 +3670,7 @@ void CUDTGroup::sendBackup_RetryWaitBlocked(const vector<gli_t>& unstableLinks,
 RetryWaitBlocked:
     {
         // Some sockets could have been closed in the meantime.
-        if (m_SndEpolld->watch_empty())
+        if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
         {
             HLOGC(gslog.Debug, log << "grp/sendBackup: no more sockets available for sending - group broken");
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -4153,6 +4157,9 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
     }
 
+    // At least one link has succeeded, update sending stats.
+    m_stats.sent.Update(len);
+
     // Now fill in the socket table. Check if the size is enough, if not,
     // then set the pointer to NULL and set the correct size.
 
@@ -4209,6 +4216,7 @@ int32_t CUDTGroup::addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& 
         // Very first packet, just set the msgno.
         m_iSndAckedMsgNo  = w_mc.msgno;
         m_iSndOldestMsgNo = w_mc.msgno;
+        HLOGC(gslog.Debug, log << "addMessageToBuffer: initial message no #" << w_mc.msgno);
     }
     else if (m_iSndOldestMsgNo != m_iSndAckedMsgNo)
     {
@@ -4234,6 +4242,8 @@ int32_t CUDTGroup::addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& 
 
         // Position at offset is not included
         m_iSndOldestMsgNo = m_iSndAckedMsgNo;
+        HLOGC(gslog.Debug,
+              log << "addMessageToBuffer: ... after: oldest #" << m_iSndOldestMsgNo);
     }
 
     m_SenderBuffer.resize(m_SenderBuffer.size() + 1);
@@ -4331,6 +4341,7 @@ int CUDTGroup::sendBackupRexmit(CUDT& core, SRT_MSGCTRL& w_mc)
     return stat;
 }
 
+// [[using locked(CUDTGroup::m_GroupLock)]];
 void CUDTGroup::ackMessage(int32_t msgno)
 {
     // The message id could not be identified, skip.

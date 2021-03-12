@@ -223,11 +223,12 @@ The following table lists SRT socket options in alphabetical order. Option detai
 | [`SRTO_LOSSMAXTTL`](#SRTO_LOSSMAXTTL)                  | 1.2.0 | pre      | `int32_t` | packets | 0             | 0..      | RW  | GSD+  |
 | [`SRTO_MAXBW`](#SRTO_MAXBW)                            |       | post     | `int64_t` | B/s     | -1            | -1..     | RW  | GSD   |
 | [`SRTO_MESSAGEAPI`](#SRTO_MESSAGEAPI)                  | 1.3.0 | pre      | `bool`    |         | true          |          | W   | GSD   |
+| [`SRTO_MININPUTBW`](#SRTO_MININPUTBW)                  | 1.4.3 | post     | `int64_t` | B/s     | 0             | 0..      | RW  | GSD   |
 | [`SRTO_MINVERSION`](#SRTO_MINVERSION)                  | 1.3.0 | pre      | `int32_t` | version | 0             | *        | W   | GSD   |
 | [`SRTO_MSS`](#SRTO_MSS)                                |       | pre      | `int32_t` | bytes   | 1500          | 76..     | RW  | GSD   |
 | [`SRTO_NAKREPORT`](#SRTO_NAKREPORT)                    | 1.1.0 | pre      | `bool`    |         |  *            |          | RW  | GSD+  |
 | [`SRTO_OHEADBW`](#SRTO_OHEADBW)                        | 1.0.5 | post     | `int32_t` | %       | 25            | 5..100   | RW  | GSD   |
-| [`SRTO_PACKETFILTER`](#SRTO_PACKETFILTER)              | 1.4.0 | pre      | `string`  |         | ""            | [512]    | W   | GSD   |
+| [`SRTO_PACKETFILTER`](#SRTO_PACKETFILTER)              | 1.4.0 | pre      | `string`  |         | ""            | [512]    | RW  | GSD   |
 | [`SRTO_PASSPHRASE`](#SRTO_PASSPHRASE)                  | 0.0.0 | pre      | `string`  |         | ""            | [10..79] | W   | GSD   |
 | [`SRTO_PAYLOADSIZE`](#SRTO_PAYLOADSIZE)                | 1.3.0 | pre      | `int32_t` | bytes   | \*            | \*       | W   | GSD   |
 | [`SRTO_PBKEYLEN`](#SRTO_PBKEYLEN)                      | 0.0.0 | pre      | `int32_t` | bytes   | 0             | *        | RW  | GSD   |
@@ -501,15 +502,31 @@ context than inside the listener callback handler, the value is undefined.
 | ---------------- | ----- | -------- | ---------- | ------ | -------- | ------ | --- | ------ |
 | `SRTO_INPUTBW`   | 1.0.5 | post     | `int64_t`  | B/s    | 0        | 0..    | RW  | GSD    |
 
-This option is effective only if `SRTO_MAXBW` is set to 0 (relative). It
-controls the maximum bandwidth together with `SRTO_OHEADBW` option according
+This option is effective only if [`SRTO_MAXBW`](#SRTO_MAXBW) is set to 0 (relative). It
+controls the maximum bandwidth together with [`SRTO_OHEADBW`](#SRTO_OHEADBW) option according
 to the formula: `MAXBW = INPUTBW * (100 + OHEADBW) / 100`. When this option
 is set to 0 (automatic) then the real INPUTBW value will be estimated from
 the rate of the input (cases when the application calls the `srt_send*`
-function) during transmission.
+function) during transmission. The minimum allowed estimate value is restricted
+by [`SRTO_MININPUTBW`](#SRTO_MININPUTBW), meaning `INPUTBW = MAX(INPUTBW_ESTIMATE; MININPUTBW)`.
 
 *Recommended: set this option to the anticipated bitrate of your live stream
 and keep the default 25% value for `SRTO_OHEADBW`*.
+
+[Return to list](#list-of-options)
+
+---
+
+#### SRTO_MININPUTBW
+
+| OptName           | Since | Restrict | Type       | Units  | Default  | Range  | Dir | Entity |
+| ----------------- | ----- | -------- | ---------- | ------ | -------- | ------ | --- | ------ |
+| `SRTO_MININPUTBW` | 1.4.3 | post     | `int64_t`  | B/s    | 0        | 0..    | RW  | GSD    |
+
+This option is effective only if both `SRTO_MAXBW` and `SRTO_INPUTBW` are set to 0.
+It controls the minimum allowed value of the input bitrate estimate.
+
+See [`SRTO_INPUTBW`](#SRTO_INPUTBW).
 
 [Return to list](#list-of-options)
 
@@ -854,17 +871,61 @@ and break quickly at any rise in packet loss.
 
 | OptName              | Since | Restrict | Type       |  Units  | Default  | Range  | Dir | Entity |
 | -------------------- | ----- | -------- | ---------- | ------- | -------- | ------ | --- | ------ |
-| `SRTO_PACKETFILTER`  | 1.4.0 | pre      | `string`   |         |  ""      | [512]  | W   | GSD    |
+| `SRTO_PACKETFILTER`  | 1.4.0 | pre      | `string`   |         |  ""      | [512]  | RW  | GSD    |
 
 Set up the packet filter. The string must match appropriate syntax for packet
-filter setup.
+filter setup. Note also that:
 
-As there can only be one configuration for both parties, it is recommended that
-one party defines the full configuration while the other only defines the matching
-packet filter type (for example, one sets `fec,cols:10,rows:-5,layout:staircase`
-and the other just `fec`). Both parties can also set this option to the same value.
-The packet filter function will attempt to merge configuration definitions, but if
-the options specified are in conflict, the connection will be rejected.
+* The configuration is case-sentitive (e.g. "FEC,Cols:20" is not valid).
+* Setting this option will fail if you use an unknown filter type.
+
+An empty value for this option means that for this connection the filter isn't
+required, but it will accept any filter settings if provided by the peer. If
+this option is changed by both parties simultaneously, the result will be a
+configuration integrating parameters from both parties, that is:
+
+* parameters provided by both parties are accepted, if they are identical
+* parameters that are set only on one side will have the value defined by that side
+* parameters not set in either side will be set as default
+
+The connection will be rejected with `SRT_REJ_FILTER` code in the following cases:
+
+* both sides define a different packet filter type
+* for the same key two different values were provided by both sides
+* mandatory parameters weren't provided by either side
+
+In case of the built-in `fec` filter, the mandatory parameter is `cols`, all
+others have their default values. For example, the configuration specified
+as `fec,cols:10` is `fec,cols:10,rows:1,arq:onreq,layout:even`. See how to
+[configure the FEC Filter](packet-filtering-and-fec.md#configuring-the-fec-filter).
+
+Below in the table are examples for the built-in `fec` filter. Note that the
+negotiated config need not have parameters in the given order.
+
+Cases when negotiation succeeds:
+
+| Peer A               | Peer B              | Negotiated Config            
+|----------------------|---------------------|------------------------------------------------------
+| (no filter)          | (no filter)         | 
+| fec,cols:10          | fec                 | fec,cols:10,rows:1,arq:onreq,layout:even                  
+| fec,cols:10          | fec,cols:10,rows:20 | fec,cols:10,rows:20,arq:onreq,layout:even                  
+| fec,layout:staircase | fec,cols:10         | fec,cols:10,rows:1,arq:onreq,layout:staircase 
+
+In these cases the configuration is rejected with SRT_REJ_FILTER code:
+
+| Peer A                | Peer B              | Error reason
+|-----------------------|---------------------|--------------------------
+| fec                   | (no filter)         | missing `cols` parameter 
+| fec,rows:20,arq:never | fec,layout:even     | missing `cols` parameter 
+| fec,cols:20           | fec,cols:10         | `cols` parameter value conflict 
+| fec,cols:20,rows:20   | fec,cols:20,rows:10 | `rows` parameter value conflict 
+
+In general it is recommended that one party defines the full configuration,
+while the other keeps this value empty.
+
+Reading this option after the connection is established will return the full
+configuration that has been agreed upon by both parties (including default
+values).
 
 For details, see [Packet Filtering & FEC](packet-filtering-and-fec.md).
 
