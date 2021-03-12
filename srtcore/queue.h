@@ -415,7 +415,7 @@ private:
    CChannel* m_pChannel;                // The UDP channel for data sending
    srt::sync::CTimer* m_pTimer;         // Timing facility
 
-   volatile bool m_bClosing;            // closing the worker
+   srt::sync::atomic<bool> m_bClosing;            // closing the worker
 
 #if defined(SRT_DEBUG_SNDQ_HIGHRATE)//>>debug high freq worker
    uint64_t m_ullDbgPeriod;
@@ -497,7 +497,7 @@ private:
 
    size_t m_szPayloadSize;      // packet payload size
 
-   volatile bool m_bClosing;    // closing the worker
+   srt::sync::atomic<bool> m_bClosing;            // closing the worker
 #if ENABLE_LOGGING
    static int m_counter;
 #endif
