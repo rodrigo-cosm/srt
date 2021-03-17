@@ -656,7 +656,7 @@ void CSndBuffer::updAvgBufSize(const steady_clock::time_point& now)
 
     int       bytes       = 0;
     int       timespan_ms = 0;
-    const int pkts        = getCurrBufSize((bytes), (timespan_ms));
+    const int pkts        = getCurrBufSize_LOCKED((bytes), (timespan_ms));
     m_mavg.update(now, pkts, bytes, timespan_ms);
 }
 
