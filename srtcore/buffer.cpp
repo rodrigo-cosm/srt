@@ -268,7 +268,7 @@ void CSndBuffer::addBuffer(const char* data, int len, SRT_MSGCTRL& w_mctrl)
     m_pLastBlock = s;
 
     enterCS(m_BufLock);
-    m_iCount += size;
+    m_iCount = m_iCount + size;
 
     m_iBytesCount += len;
     m_tsLastOriginTime = time;
@@ -388,7 +388,7 @@ int CSndBuffer::addBufferFromFile(fstream& ifs, int len)
     m_pLastBlock = s;
 
     enterCS(m_BufLock);
-    m_iCount += size;
+    m_iCount = m_iCount + size;
     m_iBytesCount += total;
 
     leaveCS(m_BufLock);
@@ -621,7 +621,7 @@ void CSndBuffer::ackData(int offset)
     if (move)
         m_pCurrBlock = m_pFirstBlock;
 
-    m_iCount -= offset;
+    m_iCount = m_iCount - offset;
 
     updAvgBufSize(steady_clock::now());
 }
@@ -669,7 +669,7 @@ int CSndBuffer::getCurrBufSize(int& w_bytes, int& w_timespan)
      * Also, if there is only one pkt in buffer, the time difference will be 0.
      * Therefore, always add 1 ms if not empty.
      */
-    w_timespan = 0 < m_iCount ? count_milliseconds(m_tsLastOriginTime - m_pFirstBlock->m_tsOriginTime) + 1 : 0;
+    w_timespan = m_iCount > 0 ? count_milliseconds(m_tsLastOriginTime - m_pFirstBlock->m_tsOriginTime) + 1 : 0;
 
     return m_iCount;
 }
@@ -697,7 +697,7 @@ int CSndBuffer::dropLateData(int& w_bytes, int32_t& w_first_msgno, const steady_
     {
         m_pCurrBlock = m_pFirstBlock;
     }
-    m_iCount -= dpkts;
+    m_iCount = m_iCount - dpkts;
 
     m_iBytesCount -= dbytes;
     w_bytes = dbytes;
