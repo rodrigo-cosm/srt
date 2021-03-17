@@ -412,6 +412,7 @@ steady_clock::time_point CSndBuffer::getSourceTime(const CSndBuffer::Block& bloc
 
 int CSndBuffer::readData(CPacket& w_packet, steady_clock::time_point& w_srctime, int kflgs)
 {
+    ScopedLock bufferguard(m_BufLock);
     // No data to read
     if (m_pCurrBlock == m_pLastBlock)
         return 0;
@@ -627,6 +628,7 @@ void CSndBuffer::ackData(int offset)
 
 int CSndBuffer::getCurrBufSize() const
 {
+    ScopedLock lk (m_BufLock);
     return m_iCount;
 }
 
@@ -646,6 +648,7 @@ int CSndBuffer::getAvgBufSize(int& w_bytes, int& w_tsp)
     return round_val(m_mavg.pkts());
 }
 
+// [[using locked(m_BufLock)]]
 void CSndBuffer::updAvgBufSize(const steady_clock::time_point& now)
 {
     if (!m_mavg.isTimeToUpdate(now))
@@ -659,6 +662,7 @@ void CSndBuffer::updAvgBufSize(const steady_clock::time_point& now)
 
 int CSndBuffer::getCurrBufSize(int& w_bytes, int& w_timespan)
 {
+    ScopedLock lk (m_BufLock);
     w_bytes = m_iBytesCount;
     /*
      * Timespan can be less then 1000 us (1 ms) if few packets.

@@ -58,6 +58,7 @@ modified by
 #include "list.h"
 #include "queue.h"
 #include "utilities.h"
+#include "atomic.h"
 #include <fstream>
 
 // The notation used for "circular numbers" in comments:
@@ -186,6 +187,7 @@ public:
    void updAvgBufSize(const time_point& time);
    int getAvgBufSize(int& bytes, int& timespan);
    int getCurrBufSize(int& bytes, int& timespan);
+   bool empty() { return m_iCount == 0; }
 
    uint64_t getInRatePeriod() const { return m_InRatePeriod; }
 
@@ -221,7 +223,7 @@ private:    // Constants
     static const int      INPUTRATE_INITIAL_BYTESPS = BW_INFINITE;
 
 private:
-   srt::sync::Mutex m_BufLock;           // used to synchronize buffer operation
+   mutable srt::sync::Mutex m_BufLock;           // used to synchronize buffer operation
 
    struct Block
    {
@@ -265,7 +267,7 @@ private:
    int m_iSize;                         // buffer size (number of packets)
    int m_iMSS;                          // maximum seqment/packet size
 
-   int m_iCount;                        // number of used blocks
+   srt::sync::atomic<int> m_iCount;                        // number of used blocks
 
    int m_iBytesCount;                   // number of payload bytes in queue
    time_point m_tsLastOriginTime;

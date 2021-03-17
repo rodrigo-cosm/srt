@@ -6159,7 +6159,7 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
 
     UniqueLock sendguard(m_SendLock);
 
-    if (m_pSndBuffer->getCurrBufSize() == 0)
+    if (m_pSndBuffer->empty())
     {
         // delay the EXP timer to avoid mis-fired timeout
         ScopedLock ack_lock(m_RecvAckLock);
@@ -6255,7 +6255,7 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
 
     // If the sender's buffer is empty,
     // record total time used for sending
-    if (m_pSndBuffer->getCurrBufSize() == 0)
+    if (m_pSndBuffer->empty())
     {
         ScopedLock lock(m_StatsLock);
         m_stats.sndDurationCounter = steady_clock::now();
@@ -6679,7 +6679,7 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
 
     ScopedLock sendguard (m_SendLock);
 
-    if (m_pSndBuffer->getCurrBufSize() == 0)
+    if (m_pSndBuffer->empty())
     {
         // delay the EXP timer to avoid mis-fired timeout
         m_tsLastRspAckTime = steady_clock::now();
@@ -6749,7 +6749,7 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
         }
 
         // record total time used for sending
-        if (m_pSndBuffer->getCurrBufSize() == 0)
+        if (m_pSndBuffer->empty())
         {
             ScopedLock lock(m_StatsLock);
             m_stats.sndDurationCounter = steady_clock::now();
@@ -8624,7 +8624,7 @@ int CUDT::packLostData(CPacket& w_packet, steady_clock::time_point& w_origintime
 
         int msglen;
 
-        const int payload = m_pSndBuffer->readData(offset, (w_packet), (w_origintime), (msglen));
+        const int payload = (ScopedLock(m_RecvAckLock), m_pSndBuffer->readData(offset, (w_packet), (w_origintime), (msglen)));
         SRT_ASSERT(payload != 0);
         if (payload == -1)
         {
@@ -8744,7 +8744,14 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet)
             // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
             // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
             kflg    = m_pCryptoControl->getSndCryptoFlags();
-            payload = m_pSndBuffer->readData((w_packet), (origintime), kflg);
+            {
+                // The `readData`, which may be not obvious by the name, REMOVES
+                // packets being read from the buffer, so as the ACK activities
+                // that happen in CRcvQueue::worker thread that might modify it,
+                // even though from the other end, better be held here.
+                ScopedLock lock_ack (m_RecvAckLock);
+                payload = m_pSndBuffer->readData((w_packet), (origintime), kflg);
+            }
             if (payload)
             {
                 // A CHANGE. The sequence number is currently added to the packet
