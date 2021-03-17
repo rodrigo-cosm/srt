@@ -660,9 +660,14 @@ void CSndBuffer::updAvgBufSize(const steady_clock::time_point& now)
     m_mavg.update(now, pkts, bytes, timespan_ms);
 }
 
-int CSndBuffer::getCurrBufSize(int& w_bytes, int& w_timespan)
+int CSndBuffer::getCurrBufSize(int& w_bytes, int& w_timespan) const
 {
     ScopedLock lk (m_BufLock);
+    return getCurrBufSize_LOCKED((w_bytes), (w_timespan));
+}
+
+int CSndBuffer::getCurrBufSize_LOCKED(int& w_bytes, int& w_timespan) const
+{
     w_bytes = m_iBytesCount;
     /*
      * Timespan can be less then 1000 us (1 ms) if few packets.
