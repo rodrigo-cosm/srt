@@ -186,7 +186,8 @@ public:
 
    void updAvgBufSize(const time_point& time);
    int getAvgBufSize(int& bytes, int& timespan);
-   int getCurrBufSize(int& bytes, int& timespan);
+   int getCurrBufSize(int& bytes, int& timespan) const;
+   int getCurrBufSize_LOCKED(int& bytes, int& timespan) const;
    bool empty() { return m_iCount == 0; }
 
    uint64_t getInRatePeriod() const { return m_InRatePeriod; }

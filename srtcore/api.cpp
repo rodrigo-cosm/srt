@@ -2051,7 +2051,7 @@ int CUDTUnited::close(CUDTSocket* s)
            }
 
            // Sender buffer empty
-           if (sb->getCurrBufSize() == 0)
+           if (sb->empty())
            {
                HLOGC(smlog.Debug, log << "@" << u << " GLOBAL CLOSING: sending buffer depleted. Allowed to close.");
                break;
@@ -2677,7 +2677,7 @@ void CUDTUnited::checkBrokenSockets()
       {
          // asynchronous close:
          if ((!j->second->m_pUDT->m_pSndBuffer)
-            || (0 == j->second->m_pUDT->m_pSndBuffer->getCurrBufSize())
+            || (j->second->m_pUDT->m_pSndBuffer->empty())
             || (j->second->m_pUDT->m_tsLingerExpiration <= steady_clock::now()))
          {
             HLOGC(smlog.Debug, log << "checkBrokenSockets: marking CLOSED qualified @" << j->second->m_SocketID);
