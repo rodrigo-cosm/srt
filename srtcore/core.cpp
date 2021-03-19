@@ -125,7 +125,6 @@ extern const SRT_SOCKOPT srt_post_opt_list [SRT_SOCKOPT_NPOST] = {
     SRTO_MININPUTBW,
     SRTO_OHEADBW,
     SRTO_SNDDROPDELAY,
-    SRTO_CONNTIMEO,
     SRTO_DRIFTTRACER,
     SRTO_LOSSMAXTTL
 };
@@ -172,6 +171,7 @@ struct SrtOptionAction
         flags[SRTO_SNDDROPDELAY]       = SRTO_R_PRE;
         flags[SRTO_NAKREPORT]          = SRTO_R_PRE;
         flags[SRTO_VERSION]            = SRTO_R_PRE;
+        flags[SRTO_CONNTIMEO]          = SRTO_R_PRE;
         flags[SRTO_LOSSMAXTTL]         = 0 | SRTO_POST_SPEC;
         flags[SRTO_RCVLATENCY]         = SRTO_R_PRE;
         flags[SRTO_PEERLATENCY]        = SRTO_R_PRE;
@@ -606,8 +606,8 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void *optval, int &optlen)
         break;
 
     case SRTO_TLPKTDROP:
-        *(int32_t *)optval = m_bTLPktDrop;
-        optlen             = sizeof(int32_t);
+        *(bool *)optval = m_bTLPktDrop;
+        optlen          = sizeof(bool);
         break;
 
     case SRTO_SNDDROPDELAY:
@@ -6464,7 +6464,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
             HLOGP(tslog.Debug, "NOT pinging TSBPD - not set");
         }
 
-        if (!m_pRcvBuffer->isRcvDataReady())
+        if (!(ScopedLock (m_RcvBufferLock), m_pRcvBuffer->isRcvDataReady()))
         {
             // read is not available any more
             s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
@@ -6515,7 +6515,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
             throw CUDTException(MJ_AGAIN, MN_RDAVAIL, 0);
         }
 
-        if (!m_pRcvBuffer->isRcvDataReady())
+        if (!(ScopedLock (m_RcvBufferLock), m_pRcvBuffer->isRcvDataReady()))
         {
             // Kick TsbPd thread to schedule next wakeup (if running)
             if (m_bTsbPd)
