@@ -393,7 +393,7 @@ public: // internal API
     // immediately to free the socket
     void notListening()
     {
-        srt::sync::ScopedLock cg(m_ConnectionLock);
+        //srt::sync::ScopedLock cg(m_ConnectionLock);
         m_bListening = false;
         m_pRcvQueue->removeListener(this);
     }
@@ -902,7 +902,7 @@ private:
 
 
 private: // synchronization: mutexes and conditions
-    srt::sync::Mutex m_ConnectionLock;           // used to synchronize connection operation
+    //srt::sync::Mutex m_ConnectionLock;           // used to synchronize connection operation
     srt::sync::Mutex m_UpdateLock;               // used to synchronize connection-runtime data
 
     srt::sync::Condition m_SendBlockCond;        // used to block "send" call

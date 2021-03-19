@@ -345,7 +345,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
     // Restriction check
     const int oflags = srt_options_action.flags[optName];
 
-    ScopedLock cg (m_ConnectionLock);
+    //ScopedLock cg (m_ConnectionLock);
     ScopedLock sendguard (m_SendLock);
     ScopedLock recvguard (m_RecvLock);
 
@@ -394,7 +394,7 @@ void CUDT::setOpt(SRT_SOCKOPT optName, const void* optval, int optlen)
 
 void CUDT::getOpt(SRT_SOCKOPT optName, void *optval, int &optlen)
 {
-    ScopedLock cg(m_ConnectionLock);
+    //ScopedLock cg(m_ConnectionLock);
 
     switch (optName)
     {
@@ -886,7 +886,7 @@ void CUDT::clearData()
 
 void CUDT::open()
 {
-    ScopedLock cg(m_ConnectionLock);
+    //ScopedLock cg(m_ConnectionLock);
 
     clearData();
 
@@ -936,7 +936,7 @@ void CUDT::open()
 
 void CUDT::setListenState()
 {
-    ScopedLock cg(m_ConnectionLock);
+    //ScopedLock cg(m_ConnectionLock);
 
     if (!m_bOpened)
         throw CUDTException(MJ_NOTSUP, MN_NONE, 0);
@@ -3239,7 +3239,7 @@ void CUDT::synchronizeWithGroup(CUDTGroup* gp)
 #endif
 void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
 {
-    ScopedLock cg (m_ConnectionLock);
+    //ScopedLock cg (m_ConnectionLock);
 
     HLOGC(aclog.Debug, log << CONID() << "startConnect: -> " << serv_addr.str()
             << (m_config.bSynRecving ? " (SYNCHRONOUS)" : " (ASYNCHRONOUS)") << "...");
@@ -3621,7 +3621,7 @@ EConnectStatus CUDT::processAsyncConnectResponse(const CPacket &pkt) ATR_NOEXCEP
     EConnectStatus cst = CONN_CONTINUE;
     CUDTException  e;
 
-    ScopedLock cg(m_ConnectionLock);
+    //ScopedLock cg(m_ConnectionLock);
     HLOGC(cnlog.Debug, log << CONID() << "processAsyncConnectResponse: got response for connect request, processing");
     cst = processConnectResponse(pkt, &e);
 
@@ -3659,7 +3659,7 @@ bool CUDT::processAsyncConnectRequest(EReadStatus         rst,
 
     bool status = true;
 
-    ScopedLock cg(m_ConnectionLock);
+    //ScopedLock cg(m_ConnectionLock);
 
     if (cst == CONN_RENDEZVOUS)
     {
@@ -5306,7 +5306,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& agent, const sockaddr_any& peer,
 {
     HLOGC(cnlog.Debug, log << "acceptAndRespond: setting up data according to handshake");
 
-    ScopedLock cg(m_ConnectionLock);
+    //ScopedLock cg(m_ConnectionLock);
 
     m_tsRcvPeerStartTime = steady_clock::time_point(); // will be set correctly at SRT HS
 
@@ -5792,7 +5792,7 @@ bool CUDT::closeInternal() ATR_NOEXCEPT
 
     HLOGC(smlog.Debug, log << CONID() << "CLOSING STATE. Acquiring connection lock");
 
-    ScopedLock connectguard(m_ConnectionLock);
+    //ScopedLock connectguard(m_ConnectionLock);
 
     // Signal the sender and recver if they are waiting for data.
     releaseSynch();
@@ -7014,7 +7014,7 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
 
     perf->mbpsBandwidth = Bps2Mbps(availbw * (m_iMaxSRTPayloadSize + pktHdrSize));
 
-    if (tryEnterCS(m_ConnectionLock))
+    if (true) // (tryEnterCS(m_ConnectionLock))
     {
         if (m_pSndBuffer)
         {
@@ -7060,7 +7060,7 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
             perf->msRcvBuf   = 0;
         }
 
-        leaveCS(m_ConnectionLock);
+        //leaveCS(m_ConnectionLock);
     }
     else
     {
@@ -7231,7 +7231,7 @@ void CUDT::initSynch()
     setupMutex(m_RcvLossLock, "RcvLoss");
     setupMutex(m_RecvAckLock, "RecvAck");
     setupMutex(m_RcvBufferLock, "RcvBuffer");
-    setupMutex(m_ConnectionLock, "Connection");
+    //setupMutex(m_ConnectionLock, "Connection");
     setupMutex(m_StatsLock, "Stats");
     setupCond(m_RcvTsbPdCond, "RcvTsbPd");
 }
@@ -7254,7 +7254,7 @@ void CUDT::destroySynch()
     releaseMutex(m_RcvLossLock);
     releaseMutex(m_RecvAckLock);
     releaseMutex(m_RcvBufferLock);
-    releaseMutex(m_ConnectionLock);
+    //releaseMutex(m_ConnectionLock);
     releaseMutex(m_StatsLock);
 
     m_RcvTsbPdCond.notify_all();
@@ -8714,7 +8714,7 @@ std::pair<int, steady_clock::time_point> CUDT::packData(CPacket& w_packet) ATR_N
 
     string reason = "reXmit";
 
-    ScopedLock connectguard(m_ConnectionLock);
+    //ScopedLock connectguard(m_ConnectionLock);
     // If a closing action is done simultaneously, then
     // m_bOpened should already be false, and it's set
     // just before releasing this lock.
