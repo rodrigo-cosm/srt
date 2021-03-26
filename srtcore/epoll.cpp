@@ -1025,6 +1025,7 @@ int SrtEPollEventHandler::remove_entity(const int eid)
 
 void SrtEPollEventHandler::close(SRTSOCKET sid)
 {
+    ScopedLock lk (m_EPoll.m_EPollLock);
     int no_events = 0;
     for (set<int>::iterator i = m_sPollID.begin(); i != m_sPollID.end(); ++i)
     {

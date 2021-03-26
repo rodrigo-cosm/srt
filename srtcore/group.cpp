@@ -349,7 +349,6 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     // To maintain the backward compatibility, set the default
     // event handler as internal epoll.
     m_pEventHandler.reset(new SrtEPollEventHandler(this, m_pGlobal->m_EPoll));
-    m_pEventHandler->update(id(), SRT_EV_WRITE, false);
 }
 
 CUDTGroup::~CUDTGroup()

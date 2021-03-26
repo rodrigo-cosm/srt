@@ -10987,5 +10987,3 @@ void CUDT::handleKeepalive(const char* /*data*/, size_t /*size*/)
 #endif
 }
 
-
-

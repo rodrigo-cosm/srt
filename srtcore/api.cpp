@@ -861,7 +861,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
       // acknowledge INTERNAL users waiting for new connections on the listening socket
       // that are reported when a new socket is connected within an already connected group.
-       ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_UPDATE, true);
+      ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_UPDATE, true);
       CGlobEvent::triggerEvent();
    }
 

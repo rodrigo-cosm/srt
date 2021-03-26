@@ -635,7 +635,6 @@ private:
     int32_t addMessageToBuffer(const char* buf, size_t len, SRT_MSGCTRL& w_mc);
 
     UniquePtr<srt::EventHandler> m_pEventHandler;
-    //std::set<int>      m_sPollID; // set of epoll ID to trigger
     int                m_iMaxPayloadSize;
     int                m_iAvgPayloadSize;
     bool               m_bSynRecving;
