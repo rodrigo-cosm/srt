@@ -513,7 +513,7 @@ public:
     void removeEPollID(const int eid);
     int remove_entity(const int eid);
 
-    void update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state) ATR_OVERRIDE;
+    int update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state) ATR_OVERRIDE;
     void commit_handler(SRTSOCKET) ATR_OVERRIDE;
 
     std::string displayHandler() { return Printable(m_sPollID); }

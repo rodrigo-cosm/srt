@@ -280,8 +280,10 @@ public:
    int epoll_add_usock_INTERNAL(const int eid, CUDTSocket* s, const int* events);
    int epoll_add_ssock(const int eid, const SYSSOCKET s, const int* events = NULL);
    int epoll_remove_usock(const int eid, const SRTSOCKET u);
+   /*
    template <class EntityType>
    int epoll_remove_entity(const int eid, EntityType* ent);
+   */
    int epoll_remove_socket_INTERNAL(const int eid, CUDTSocket* ent);
 #if ENABLE_EXPERIMENTAL_BONDING
    int epoll_remove_group_INTERNAL(const int eid, CUDTGroup* ent);
@@ -443,7 +445,6 @@ private:
 
    CEPoll m_EPoll;                                     // handling epoll data structures and events
 
-   srt::EventEntity* getEventEntity(SRTSOCKET s);
    srt::EventHandler* getEventHandler(SRTSOCKET s);
 
 private:

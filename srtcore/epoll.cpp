@@ -974,9 +974,9 @@ string CEPollDesc::DisplayEpollWatch()
     return os.str();
 }
 
-void SrtEPollEventHandler::update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state)
+int SrtEPollEventHandler::update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state)
 {
-    m_EPoll.update_events(sid, m_sPollID, epollfor(et), state);
+    return m_EPoll.update_events(sid, m_sPollID, epollfor(et), state);
 }
 
 void SrtEPollEventHandler::commit_handler(SRTSOCKET)
@@ -1028,9 +1028,9 @@ void SrtEPollEventHandler::close(SRTSOCKET sid)
     int no_events = 0;
     for (set<int>::iterator i = m_sPollID.begin(); i != m_sPollID.end(); ++i)
     {
-        HLOGC(dlog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of @" << sid);
+        HLOGC(eilog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of @" << sid);
         m_EPoll.update_usock(*i, sid, &no_events);
-        HLOGC(dlog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of @" << sid);
+        HLOGC(eilog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of @" << sid);
     }
 }
 

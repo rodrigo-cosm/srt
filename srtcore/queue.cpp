@@ -1108,7 +1108,7 @@ void CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst, con
         // be normally closed by the application, after it is done with them.
 
         // app can call any UDT API to learn the connection_broken error
-        CUDT::s_UDTUnited.m_EPoll.update_events(i->u->m_SocketID, i->u->m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
+        i->u->m_pEventHandler->update(i->u->m_SocketID, SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
 
         i->u->completeBrokenConnectionDependencies(i->errorcode);
     }

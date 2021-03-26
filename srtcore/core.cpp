@@ -5752,13 +5752,6 @@ bool CUDT::closeInternal()
      * What is in EPoll shall be the responsibility of the application, if it want local close event,
      * it would remove the socket from the EPoll after close.
      */
-
-    // Make a copy under a lock because other thread might access it
-    // at the same time.
-    enterCS(s_UDTUnited.m_EPoll.m_EPollLock);
-    set<int> epollid = m_sPollID;
-    leaveCS(s_UDTUnited.m_EPoll.m_EPollLock);
-
     // trigger any pending IO events.
     HLOGC(smlog.Debug, log << "close: SETTING ERR readiness on EIDS " << m_pEventHandler->displayHandler() << " of @" << m_SocketID);
     m_pEventHandler->update(m_SocketID, SRT_EV_ERROR, true);
@@ -10727,8 +10720,7 @@ void CUDT::updateBrokenConnection()
     m_bClosing = true;
     releaseSynch();
     // app can call any UDT API to learn the connection_broken error
-    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
-    CGlobEvent::triggerEvent();
+    m_pEventHandler->update(m_SocketID, SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
 }
 
 void CUDT::completeBrokenConnectionDependencies(int errorcode)
@@ -10992,73 +10984,8 @@ void CUDT::handleKeepalive(const char* /*data*/, size_t /*size*/)
             pg->handleKeepalive(m_parent->m_GroupMemberData);
         }
     }
-    // To maintain the backward compatibility, set the default
-    // event handler as internal epoll.
-// XXX ADD TO CUDTGroup CTOR    
-m_pEventHandler.reset(new SrtEPollEventHandler(this, m_pGlobal->m_EPoll));
-
-// This replaces SRT_EPOLL_OUT = false in sendBroadcast etc.
-                m_pEventHandler->update(id(), SRT_EV_WRITE, false);
 #endif
 }
 
-
-SRT_EV_OPT CUDTGroup::getEventFlags() const
-{
-    bool any_read = false;
-    bool any_write = false;
-    bool any_broken = false;
-    bool any_pending = false;
-    bool any_connected = false;
-
-    {
-        // Check all member sockets
-        ScopedLock gl (m_GroupLock);
-
-        // We only need to know if there is any socket that is
-        // ready to get a payload and ready to receive from.
-
-        for (const_gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
-        {
-            if (i->sndstate == SRT_GST_IDLE || i->sndstate == SRT_GST_RUNNING)
-            {
-                any_write |= i->ps->writeReady();
-                any_connected = true;
-            }
-
-            if (i->rcvstate == SRT_GST_IDLE || i->rcvstate == SRT_GST_RUNNING)
-            {
-                any_read |= i->ps->readReady();
-                any_connected = true;
-            }
-
-            if (i->ps->broken())
-                any_broken |= true;
-            else
-                any_pending |= true;
-        }
-    }
-
-    SRT_EV_OPT opt = SRT_EV_NONE;
-
-    // This is stupid, but we don't have any other interface to epoll
-    // internals. Actually we don't have to check if id() is in m_sPollID
-    // because we know it is, as we just added it. But it's not performance
-    // critical, sockets are not being often added during transmission.
-    if (any_read)
-        opt |= SRT_EV_READ;
-
-    if (any_write)
-        opt |= SRT_EV_WRITE;
-
-    if (any_connected)
-        opt |= SRT_EV_CONNECT;
-
-    // Set broken if none is non-broken (pending, read-ready or write-ready)
-    if (any_broken && !any_pending)
-        opt |= SRT_EV_ERROR;
-
-    return opt;
-}
 
 

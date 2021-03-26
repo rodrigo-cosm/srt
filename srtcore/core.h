@@ -246,7 +246,6 @@ public: //API
     static int rejectReason(SRTSOCKET s);
     static int rejectReason(SRTSOCKET s, int value);
     static int64_t socketStartTime(SRTSOCKET s);
-    static srt::EventEntity* getEventEntity(SRTSOCKET s);
     static srt::EventHandler* getEventHandler(SRTSOCKET s);
 
 public: // internal API

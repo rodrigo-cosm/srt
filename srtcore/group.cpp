@@ -346,6 +346,10 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     default:
         break;
     }
+    // To maintain the backward compatibility, set the default
+    // event handler as internal epoll.
+    m_pEventHandler.reset(new SrtEPollEventHandler(this, m_pGlobal->m_EPoll));
+    m_pEventHandler->update(id(), SRT_EV_WRITE, false);
 }
 
 CUDTGroup::~CUDTGroup()
@@ -991,29 +995,7 @@ void CUDTGroup::close()
         m_Group.clear();
         m_PeerGroupID = -1;
 
-        set<int> epollid;
-        {
-            // Global EPOLL lock must be applied to access any socket's epoll set.
-            // This is a set of all epoll ids subscribed to it.
-            ScopedLock elock (CUDT::s_UDTUnited.m_EPoll.m_EPollLock);
-            epollid = m_sPollID; // use move() in C++11
-            m_sPollID.clear();
-        }
-
-        int no_events = 0;
-        for (set<int>::iterator i = epollid.begin(); i != epollid.end(); ++i)
-        {
-            HLOGC(smlog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of $" << id());
-            try
-            {
-                CUDT::s_UDTUnited.m_EPoll.update_usock(*i, id(), &no_events);
-            }
-            catch (...)
-            {
-                // May catch an API exception, but this isn't an API call to be interrupted.
-            }
-            HLOGC(smlog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of $" << id());
-        }
+        m_pEventHandler->close(id());
 
         // NOW, the m_GroupLock is released, then m_GlobControlLock.
         // The below code should work with no locks and execute socket
@@ -1567,7 +1549,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     if (was_blocked)
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
         if (!m_bSynSending)
         {
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
@@ -1703,8 +1685,8 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     if (none_succeeded)
     {
         HLOGC(gslog.Debug, log << "grp/sendBroadcast: all links broken (none succeeded to send a payload)");
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+        m_pEventHandler->update(id(), SRT_EV_ERROR, true);
         // Reparse error code, if set.
         // It might be set, if the last operation was failed.
         // If any operation succeeded, this will not be executed anyway.
@@ -1757,7 +1739,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     if (!ready_again)
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
     }
 
     return rstat;
@@ -2162,14 +2144,14 @@ void CUDTGroup::updateReadState(SRTSOCKET /* not sure if needed */, int32_t sequ
 
     if (ready)
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, true);
+        m_pEventHandler->update(id(), SRT_EV_READ, true);
     }
 }
 
 void CUDTGroup::updateWriteState()
 {
     ScopedLock lg(m_GroupLock);
-    m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, true);
+    m_pEventHandler->update(id(), SRT_EV_WRITE, true);
 }
 
 // The "app reader" version of the reading function.
@@ -2241,7 +2223,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
 
                 // We predict to have only one packet ahead, others are pending to be reported by tsbpd.
                 // This will be "re-enabled" if the later check puts any new packet into ahead.
-                m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
+                m_pEventHandler->update(id(), SRT_EV_READ, false);
 
                 return len;
             }
@@ -2538,7 +2520,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             // All broken
             HLOGC(grlog.Debug, log << "group/recv: All sockets broken");
-            m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+            m_pEventHandler->update(id(), SRT_EV_ERROR, true);
 
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
         }
@@ -2573,7 +2555,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
             {
                 // Don't clear the read-readinsess state if you have a packet ahead because
                 // if you have, the next read call will return it.
-                m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
+                m_pEventHandler->update(id(), SRT_EV_READ, false);
             }
 
             HLOGC(grlog.Debug,
@@ -2684,7 +2666,7 @@ int CUDTGroup::recv(char* buf, int len, SRT_MSGCTRL& w_mc)
                 {
                     // Don't clear the read-readinsess state if you have a packet ahead because
                     // if you have, the next read call will return it.
-                    m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, false);
+                    m_pEventHandler->update(id(), SRT_EV_READ, false);
                 }
                 return len;
             }
@@ -3631,8 +3613,8 @@ void CUDTGroup::sendBackup_RetryWaitBlocked(const vector<gli_t>& unstableLinks,
 
     // Note: GroupLock is set already, skip locks and checks
     getGroupData_LOCKED((w_mc.grpdata), (&w_mc.grpdata_size));
-    m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-    m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+    m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+    m_pEventHandler->update(id(), SRT_EV_ERROR, true);
 
     if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
     {
@@ -3728,8 +3710,8 @@ RetryWaitBlocked:
         LOGC(gslog.Error,
             log << "grp/sendBackup: swait=>" << brdy << " nlinks=" << nlinks << " ndead=" << ndead
             << " - looxlike all links broken");
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+        m_pEventHandler->update(id(), SRT_EV_ERROR, true);
         // You can safely throw here - nothing to fill in when all sockets down.
         // (timeout was reported by exception in the swait call).
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -4148,8 +4130,8 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
     if (none_succeeded)
     {
         HLOGC(gslog.Debug, log << "grp/sendBackup: all links broken (none succeeded to send a payload)");
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
+        m_pEventHandler->update(id(), SRT_EV_ERROR, true);
         // Reparse error code, if set.
         // It might be set, if the last operation was failed.
         // If any operation succeeded, this will not be executed anyway.
@@ -4199,7 +4181,7 @@ int CUDTGroup::sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     if (!ready_again)
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
+        m_pEventHandler->update(id(), SRT_EV_WRITE, false);
     }
 
     HLOGC(gslog.Debug,
@@ -4482,7 +4464,7 @@ void CUDTGroup::setGroupConnected()
     if (!m_bConnected)
     {
         // Switch to connected state and give appropriate signal
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_CONNECT, true);
+        m_pEventHandler->update(id(), SRT_EV_CONNECT, true);
         m_bConnected = true;
     }
 }
@@ -4559,42 +4541,42 @@ void CUDTGroup::activateUpdateEvent(bool still_have_items)
     // was deleted from the group. This might make the group empty.
     if (!still_have_items) // empty, or removal of unknown socket attempted - set error on group
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
     }
     else
     {
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_UPDATE, true);
+        m_pEventHandler->update(id(), SRT_EV_UPDATE, true);
     }
 }
 
-void CUDTGroup::addEPoll(int eid)
-{
-    enterCS(m_pGlobal->m_EPoll.m_EPollLock);
-    m_sPollID.insert(eid);
-    leaveCS(m_pGlobal->m_EPoll.m_EPollLock);
 
-    bool any_read    = false;
-    bool any_write   = false;
-    bool any_broken  = false;
+SRT_EV_OPT CUDTGroup::getEventFlags() const
+{
+    bool any_read = false;
+    bool any_write = false;
+    bool any_broken = false;
     bool any_pending = false;
+    bool any_connected = false;
 
     {
         // Check all member sockets
-        ScopedLock gl(m_GroupLock);
+        ScopedLock gl (m_GroupLock);
 
         // We only need to know if there is any socket that is
         // ready to get a payload and ready to receive from.
 
-        for (gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
+        for (const_gli_t i = m_Group.begin(); i != m_Group.end(); ++i)
         {
             if (i->sndstate == SRT_GST_IDLE || i->sndstate == SRT_GST_RUNNING)
             {
                 any_write |= i->ps->writeReady();
+                any_connected = true;
             }
 
             if (i->rcvstate == SRT_GST_IDLE || i->rcvstate == SRT_GST_RUNNING)
             {
                 any_read |= i->ps->readReady();
+                any_connected = true;
             }
 
             if (i->ps->broken())
@@ -4604,36 +4586,28 @@ void CUDTGroup::addEPoll(int eid)
         }
     }
 
+    SRT_EV_OPT opt = SRT_EV_NONE;
+
     // This is stupid, but we don't have any other interface to epoll
     // internals. Actually we don't have to check if id() is in m_sPollID
     // because we know it is, as we just added it. But it's not performance
     // critical, sockets are not being often added during transmission.
     if (any_read)
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN, true);
+        opt |= SRT_EV_READ;
 
     if (any_write)
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, true);
+        opt |= SRT_EV_WRITE;
+
+    if (any_connected)
+        opt |= SRT_EV_CONNECT;
 
     // Set broken if none is non-broken (pending, read-ready or write-ready)
     if (any_broken && !any_pending)
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
+        opt |= SRT_EV_ERROR;
+
+    return opt;
 }
 
-void CUDTGroup::removeEPollEvents(const int eid)
-{
-    // clear IO events notifications;
-    // since this happens after the epoll ID has been removed, they cannot be set again
-    set<int> remove;
-    remove.insert(eid);
-    m_pGlobal->m_EPoll.update_events(id(), remove, SRT_EPOLL_IN | SRT_EPOLL_OUT, false);
-}
-
-void CUDTGroup::removeEPollID(const int eid)
-{
-    enterCS(m_pGlobal->m_EPoll.m_EPollLock);
-    m_sPollID.erase(eid);
-    leaveCS(m_pGlobal->m_EPoll.m_EPollLock);
-}
 
 void CUDTGroup::updateFailedLink()
 {
@@ -4654,7 +4628,7 @@ void CUDTGroup::updateFailedLink()
     {
         // No healthy links, set ERR on epoll.
         HLOGC(gmlog.Debug, log << "group/updateFailedLink: All sockets broken");
-        m_pGlobal->m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_IN | SRT_EPOLL_OUT | SRT_EPOLL_ERR, true);
+        m_pEventHandler->update(id(), SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
     }
     else
     {

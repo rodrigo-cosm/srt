@@ -1035,12 +1035,12 @@ public:
     virtual class EventHandler* getEventHandler() = 0;
 };
 
-EventEntity* getEventEntity(SRTSOCKET sid);
+class EventHandler* getEventHandler(SRTSOCKET sid);
 
 class EventHandler
 {
 protected:
-    virtual void update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state) = 0;
+    virtual int update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state) = 0;
     virtual void commit_handler(SRTSOCKET) {}
 
 public:
@@ -1051,22 +1051,19 @@ public:
     virtual std::string displayHandler() { return std::string(); }
 
 public:
-    void update(SRTSOCKET sid, const SRT_EV_OPT et, bool state, const SRT_EVS_METHOD method = SRT_EVS_COMMIT)
+    int update(SRTSOCKET sid, const SRT_EV_OPT et, bool state, const SRT_EVS_METHOD method = SRT_EVS_COMMIT)
     {
-        update_handler(sid, et, state);
+        int nupd = update_handler(sid, et, state);
         if (state && method == SRT_EVS_COMMIT)
             commit_handler(sid);
+        return nupd;
     }
     void commit(SRTSOCKET sid) { commit_handler(sid); }
 
     template<typename TargetEventHandler>
     static TargetEventHandler* get(SRTSOCKET u)
     {
-        EventEntity* ent = getEventEntity(u);
-        if (!ent)
-            return 0;
-
-        EventHandler* eh = ent->getEventHandler();
+        EventHandler* eh = getEventHandler(u);
         return eh ? dynamic_cast<TargetEventHandler*>(eh) : 0;
     }
 };
