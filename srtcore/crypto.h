@@ -28,16 +28,16 @@ written by
 #include <haicrypt.h>
 #include <hcrypt_msg.h>
 
-#if ENABLE_LOGGING
 
-std::string KmStateStr(SRT_KM_STATE state);
 
 namespace srt_logging
 {
-extern Logger mglog;
+std::string KmStateStr(SRT_KM_STATE state);
+#if ENABLE_LOGGING
+extern Logger cnlog;
+#endif
 }
 
-#endif
 
 // For KMREQ/KMRSP. Only one field is used.
 const size_t SRT_KMR_KMSTATE = 0;
@@ -159,18 +159,18 @@ public:
     void getKmMsg_markSent(size_t ki, bool runtime)
     {
 #if ENABLE_LOGGING
-        using srt_logging::mglog;
+        using srt_logging::cnlog;
 #endif
 
         m_SndKmLastTime = srt::sync::steady_clock::now();
         if (runtime)
         {
             m_SndKmMsg[ki].iPeerRetry--;
-            HLOGC(mglog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " retry=" << m_SndKmMsg[ki].iPeerRetry);
+            HLOGC(cnlog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " retry=" << m_SndKmMsg[ki].iPeerRetry);
         }
         else
         {
-            HLOGC(mglog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " STILL IN USE.");
+            HLOGC(cnlog.Debug, log << "getKmMsg_markSent: key[" << ki << "]: len=" << m_SndKmMsg[ki].MsgLen << " STILL IN USE.");
         }
     }
 

@@ -7,6 +7,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  */
+#include "platform_sys.h"
 
 #include <iomanip>
 #include <stdexcept>
@@ -19,7 +20,7 @@
 
 namespace srt_logging
 {
-    extern Logger mglog;
+    extern Logger inlog;
 }
 using namespace srt_logging;
 
@@ -92,7 +93,7 @@ bool StartThread(CThread& th, void* (*f) (void*), void* args, const char* name)
     }
     catch (const CThreadException& e)
     {
-        HLOGC(mglog.Debug, log << name << ": failed to start thread. " << e.what());
+        HLOGC(inlog.Debug, log << name << ": failed to start thread. " << e.what());
         return false;
     }
     return true;

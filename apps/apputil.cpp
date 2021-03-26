@@ -9,6 +9,7 @@
  */
 
 #include <cstring>
+#include <chrono>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -17,6 +18,7 @@
 
 #include "apputil.hpp"
 #include "netinet_any.h"
+#include "srt_compat.h"
 
 using namespace std;
 
@@ -197,7 +199,17 @@ options_t ProcessOptions(char* const* argv, int argc, std::vector<OptionScheme> 
     {
         const char* a = *p;
         // cout << "*D ARG: '" << a << "'\n";
-        if (moreoptions && a[0] == '-')
+        bool isoption = false;
+        if (a[0] == '-')
+        {
+            isoption = true;
+            // If a[0] isn't NUL - because it is dash - then
+            // we can safely check a[1].
+            if (a[1] && isdigit(a[1]))
+                isoption = false;
+        }
+
+        if (moreoptions && isoption)
         {
             bool arg_specified = false;
             size_t seppos; // (see goto, it would jump over initialization)
@@ -406,11 +418,18 @@ private:
 public: 
     SrtStatsCsv() : first_line_printed(false) {}
 
-    string WriteStats(int sid, const CBytePerfMon& mon) override 
-    { 
+    string WriteStats(int sid, const CBytePerfMon& mon) override
+    {
+        // Note: std::put_time is supported only in GCC 5 and higher
+#if !defined(__GNUC__) || defined(__clang__) || (__GNUC__ >= 5)
+#define HAS_PUT_TIME
+#endif
         std::ostringstream output;
         if (!first_line_printed)
         {
+#ifdef HAS_PUT_TIME
+            output << "Timepoint,";
+#endif
             output << "Time,SocketID,pktFlowWindow,pktCongestionWindow,pktFlightSize,";
             output << "msRTT,mbpsBandwidth,mbpsMaxBW,pktSent,pktSndLoss,pktSndDrop,";
             output << "pktRetrans,byteSent,byteSndDrop,mbpsSendRate,usPktSndPeriod,";
@@ -422,8 +441,30 @@ public:
             first_line_printed = true;
         }
         int rcv_latency = 0;
-        int int_len = sizeof rcv_latency;
+        int int_len     = sizeof rcv_latency;
         srt_getsockopt(sid, 0, SRTO_RCVLATENCY, &rcv_latency, &int_len);
+
+#ifdef HAS_PUT_TIME
+        // Follows ISO 8601
+        auto print_timestamp = [&output]() {
+            using namespace std;
+            using namespace std::chrono;
+
+            const auto   systime_now = system_clock::now();
+            const time_t time_now    = system_clock::to_time_t(systime_now);
+
+            // SysLocalTime returns zeroed tm_now on failure, which is ok for put_time.
+            const tm tm_now = SysLocalTime(time_now);
+            output << std::put_time(&tm_now, "%FT%T.") << std::setfill('0') << std::setw(6);
+            const auto    since_epoch = systime_now.time_since_epoch();
+            const seconds s           = duration_cast<seconds>(since_epoch);
+            output << duration_cast<microseconds>(since_epoch - s).count();
+            output << std::put_time(&tm_now, "%z");
+            output << ",";
+        };
+
+        print_timestamp();
+#endif // HAS_PUT_TIME
 
         output << mon.msTimeStamp << ",";
         output << sid << ",";
@@ -460,7 +501,7 @@ public:
         return output.str();
     }
 
-    string WriteBandwidth(double mbpsBandwidth) override 
+    string WriteBandwidth(double mbpsBandwidth) override
     {
         std::ostringstream output;
         output << "+++/+++SRT BANDWIDTH: " << mbpsBandwidth << endl;
