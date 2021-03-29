@@ -974,12 +974,12 @@ string CEPollDesc::DisplayEpollWatch()
     return os.str();
 }
 
-int SrtEPollEventHandler::update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state)
+int SrtEPollEventHandler::update_handler(SRT_EV_OPT et, bool state)
 {
-    return m_EPoll.update_events(sid, m_sPollID, epollfor(et), state);
+    return m_EPoll.update_events(m_parent->id(), m_sPollID, epollfor(et), state);
 }
 
-void SrtEPollEventHandler::commit_handler(SRTSOCKET)
+void SrtEPollEventHandler::commit_handler()
 {
     CGlobEvent::triggerEvent();
 }
@@ -992,7 +992,7 @@ void SrtEPollEventHandler::addEPoll(const int eid)
 
     SRT_EV_OPT opt = m_parent->getEventFlags();
     if (opt)
-        update(m_parent->id(), opt, true);
+        update(opt, true);
 }
 
 void SrtEPollEventHandler::removeEPollEvents(const int eid)

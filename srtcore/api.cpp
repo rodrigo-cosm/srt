@@ -841,7 +841,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
       HLOGC(cnlog.Debug, log << "ACCEPT: new socket @" << ns->m_SocketID << " submitted for acceptance");
       // acknowledge users waiting for new connections on the listening socket
-      ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_ACCEPT, true);
+      ls->m_pUDT->m_pEventHandler->update(SRT_EV_ACCEPT, true);
 
       CGlobEvent::triggerEvent();
 
@@ -861,7 +861,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
       // acknowledge INTERNAL users waiting for new connections on the listening socket
       // that are reported when a new socket is connected within an already connected group.
-      ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_UPDATE, true);
+      ls->m_pUDT->m_pEventHandler->update(SRT_EV_UPDATE, true);
       CGlobEvent::triggerEvent();
    }
 
@@ -1168,7 +1168,7 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* pw_addr, int* pw_
            accept_sync.wait();
 
        if (ls->m_QueuedSockets.empty())
-            ls->m_pUDT->m_pEventHandler->update(listen, SRT_EV_ACCEPT, false);
+            ls->m_pUDT->m_pEventHandler->update(SRT_EV_ACCEPT, false);
    }
 
    if (u == CUDT::INVALID_SOCK)
@@ -1367,14 +1367,14 @@ int CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, int ar
     const bool was_empty = g.groupEmpty();
 
     // In case the group was retried connection, clear first all epoll readiness.
-    const int ncleared = g.getEventHandler()->update(g.id(), SRT_EV_ERROR, false);
+    const int ncleared = g.getEventHandler()->update(SRT_EV_ERROR, false);
     if (was_empty || ncleared)
     {
         HLOGC(aclog.Debug, log << "srt_connect/group: clearing IN/OUT because was_empty=" << was_empty << " || ncleared=" << ncleared);
         // IN/OUT only in case when the group is empty, otherwise it would
         // clear out correct readiness resulting from earlier calls.
         // This also should happen if ERR flag was set, as IN and OUT could be set, too.
-        g.getEventHandler()->update(g.id(), SRT_EV_READ | SRT_EV_WRITE, false);
+        g.getEventHandler()->update(SRT_EV_READ | SRT_EV_WRITE, false);
     }
     SRTSOCKET retval = -1;
 
@@ -2470,30 +2470,6 @@ int CUDTUnited::epoll_update_ssock(
 {
    return m_EPoll.update_ssock(eid, s, events);
 }
-/*
-
-template <class EntityType>
-int CUDTUnited::epoll_remove_entity(const int eid, EntityType* ent)
-{
-    // XXX Not sure if this is anyhow necessary because setting readiness
-    // to false doesn't actually trigger any action. Further research needed.
-    HLOGC(ealog.Debug, log << "epoll_remove_usock: CLEARING readiness on E" << eid << " of @" << ent->id());
-    ent->removeEPollEvents(eid);
-
-    // First remove the EID from the subscribed in the socket so that
-    // a possible call to update_events:
-    // - if happens before this call, can find the epoll bit update possible
-    // - if happens after this call, will not strike this EID
-    HLOGC(ealog.Debug, log << "epoll_remove_usock: REMOVING E" << eid << " from back-subscirbers in @" << ent->id());
-    ent->removeEPollID(eid);
-
-    HLOGC(ealog.Debug, log << "epoll_remove_usock: CLEARING subscription on E" << eid << " of @" << ent->id());
-    int no_events = 0;
-    int ret = m_EPoll.update_usock(eid, ent->id(), &no_events);
-
-    return ret;
-}
-*/
 
 // Needed internal access!
 int CUDTUnited::epoll_remove_socket_INTERNAL(const int eid, CUDTSocket* s)
@@ -2849,7 +2825,7 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
    * remains forever causing epoll_wait to unblock continuously for inexistent
    * sockets. Get rid of all events for this socket.
    */
-   s->m_pUDT->m_pEventHandler->update(u, SRT_EV_NONE, false);
+   s->m_pUDT->m_pEventHandler->update(SRT_EV_NONE, false);
 
    // delete this one
    m_ClosedSockets.erase(i);

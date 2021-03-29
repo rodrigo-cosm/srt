@@ -1040,8 +1040,8 @@ class EventHandler* getEventHandler(SRTSOCKET sid);
 class EventHandler
 {
 protected:
-    virtual int update_handler(SRTSOCKET sid, SRT_EV_OPT et, bool state) = 0;
-    virtual void commit_handler(SRTSOCKET) {}
+    virtual int update_handler(SRT_EV_OPT et, bool state) = 0;
+    virtual void commit_handler() {}
 
 public:
 
@@ -1051,14 +1051,14 @@ public:
     virtual std::string displayHandler() { return std::string(); }
 
 public:
-    int update(SRTSOCKET sid, const SRT_EV_OPT et, bool state, const SRT_EVS_METHOD method = SRT_EVS_COMMIT)
+    int update(const SRT_EV_OPT et, bool state, const SRT_EVS_METHOD method = SRT_EVS_COMMIT)
     {
-        int nupd = update_handler(sid, et, state);
+        int nupd = update_handler(et, state);
         if (state && method == SRT_EVS_COMMIT)
-            commit_handler(sid);
+            commit_handler();
         return nupd;
     }
-    void commit(SRTSOCKET sid) { commit_handler(sid); }
+    void commit() { commit_handler(); }
 
     template<typename TargetEventHandler>
     static TargetEventHandler* get(SRTSOCKET u)

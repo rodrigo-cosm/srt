@@ -4568,7 +4568,7 @@ EConnectStatus CUDT::postConnect(const CPacket &response, bool rendezvous, CUDTE
     s->m_Status = SRTS_CONNECTED;
 
     // acknowledde any waiting epolls to write
-    m_pEventHandler->update(m_SocketID, SRT_EV_CONNECT, true);
+    m_pEventHandler->update(SRT_EV_CONNECT, true);
 
     CGlobEvent::triggerEvent();
 
@@ -5123,7 +5123,7 @@ void *CUDT::tsbpd(void *param)
             /*
              * Set EPOLL_IN to wakeup any thread waiting on epoll
              */
-            self->m_pEventHandler->update(self->m_SocketID, SRT_EV_READ, true, SRT_EVS_SCHEDULE);
+            self->m_pEventHandler->update(SRT_EV_READ, true, SRT_EVS_SCHEDULE);
 #if ENABLE_EXPERIMENTAL_BONDING
             // If this is NULL, it means:
             // - the socket never was a group member
@@ -5169,7 +5169,7 @@ void *CUDT::tsbpd(void *param)
 #endif
             {
                 // CUDTGroup::updateReadState will commit by itself
-                self->m_pEventHandler->commit(self->m_SocketID);
+                self->m_pEventHandler->commit();
             }
             tsbpdtime = steady_clock::time_point();
         }
@@ -5754,7 +5754,7 @@ bool CUDT::closeInternal()
      */
     // trigger any pending IO events.
     HLOGC(smlog.Debug, log << "close: SETTING ERR readiness on EIDS " << m_pEventHandler->displayHandler() << " of @" << m_SocketID);
-    m_pEventHandler->update(m_SocketID, SRT_EV_ERROR, true);
+    m_pEventHandler->update(SRT_EV_ERROR, true);
     // then remove itself from all epoll monitoring
     try
     {
@@ -5948,7 +5948,7 @@ int CUDT::receiveBuffer(char *data, int len)
     if (!m_pRcvBuffer->isRcvDataReady())
     {
         // read is not available any more
-        m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
+        m_pEventHandler->update(SRT_EV_READ, false);
     }
 
     if ((res <= 0) && (m_config.iRcvTimeOut >= 0))
@@ -6335,7 +6335,7 @@ int CUDT::sendmsg2(const char *data, int len, SRT_MSGCTRL& w_mctrl)
         if (sndBuffersLeft() < 1) // XXX Not sure if it should test if any space in the buffer, or as requried.
         {
             // write is not available any more
-            m_pEventHandler->update(m_SocketID, SRT_EV_WRITE, false);
+            m_pEventHandler->update(SRT_EV_WRITE, false);
         }
     }
 
@@ -6458,7 +6458,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
         if (!m_pRcvBuffer->isRcvDataReady())
         {
             // read is not available any more
-            m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
+            m_pEventHandler->update(SRT_EV_READ, false);
         }
 
         if (res == 0)
@@ -6499,7 +6499,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
             }
 
             // Shut up EPoll if no more messages in non-blocking mode
-            m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
+            m_pEventHandler->update(SRT_EV_READ, false);
             // Forced to return 0 instead of throwing exception, in case of AGAIN/READ
             if (!by_exception)
                 return 0;
@@ -6520,7 +6520,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
             }
 
             // Shut up EPoll if no more messages in non-blocking mode
-            m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
+            m_pEventHandler->update(SRT_EV_READ, false);
 
             // After signaling the tsbpd for ready data, report the bandwidth.
 #if ENABLE_HEAVY_LOGGING
@@ -6639,7 +6639,7 @@ int CUDT::receiveMessage(char* data, int len, SRT_MSGCTRL& w_mctrl, int by_excep
         }
 
         // Shut up EPoll if no more messages in non-blocking mode
-        m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
+        m_pEventHandler->update(SRT_EV_READ, false);
     }
 
     // Unblock when required
@@ -6767,7 +6767,7 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
             if (sndBuffersLeft() <= 0)
             {
                 // write is not available any more
-                m_pEventHandler->update(m_SocketID, SRT_EV_WRITE, false);
+                m_pEventHandler->update(SRT_EV_WRITE, false);
             }
         }
 
@@ -6891,7 +6891,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
     if (!m_pRcvBuffer->isRcvDataReady())
     {
         // read is not available any more
-        m_pEventHandler->update(m_SocketID, SRT_EV_READ, false);
+        m_pEventHandler->update(SRT_EV_READ, false);
     }
 
     return size - torecv;
@@ -7610,8 +7610,7 @@ int CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
                 //      (4) receive thread: receive data and set SRT_EPOLL_IN to true
                 //      (5) user thread: set SRT_EPOLL_IN to false
                 // 4. so , m_RecvLock must be used here to protect epoll event
-                m_pEventHandler->update(m_SocketID, SRT_EV_READ, true, SRT_EVS_SCHEDULE);
-
+                m_pEventHandler->update(SRT_EV_READ, true, SRT_EVS_SCHEDULE);
             }
 #if ENABLE_EXPERIMENTAL_BONDING
             if (m_parent->m_GroupOf)
@@ -7630,9 +7629,8 @@ int CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
             else
 #endif
             {
-                m_pEventHandler->commit(m_SocketID);
+                m_pEventHandler->commit();
             }
-
         }
     }
     else if (ack == m_iRcvLastAck)
@@ -7771,7 +7769,7 @@ void CUDT::updateSndLossListOnACK(int32_t ackdata_seqno)
         m_pSndBuffer->ackData(offset);
 
         // acknowledde any waiting epolls to write
-        m_pEventHandler->update(m_SocketID, SRT_EV_WRITE, true);
+        m_pEventHandler->update(SRT_EV_WRITE, true);
     }
 
 #if ENABLE_EXPERIMENTAL_BONDING
@@ -8378,7 +8376,6 @@ void CUDT::processCtrl(const CPacket &ctrlpkt)
         // just we know about this state prematurely thanks to this message.
         updateBrokenConnection();
         completeBrokenConnectionDependencies(SRT_ECONNLOST); // LOCKS!
-        // XXX USE: m_pEventHandler->update(m_SocketID, SRT_EV_ERROR, true);
         break;
 
     case UMSG_DROPREQ: // 111 - Msg drop request
@@ -8987,7 +8984,7 @@ void CUDT::processClose()
     releaseSynch();
     // Unblock any call so they learn the connection_broken error
     HLOGP(smlog.Debug, "processClose: triggering timer event to spread the bad news");
-    m_pEventHandler->update(m_SocketID, SRT_EV_ERROR, true);
+    m_pEventHandler->update(SRT_EV_ERROR, true);
 }
 
 void CUDT::sendLossReport(const std::vector<std::pair<int32_t, int32_t> > &loss_seqs)
@@ -10400,7 +10397,7 @@ int CUDT::processConnectRequest(const sockaddr_any& addr, CPacket& packet)
                    << " connected, setting epoll to connect:");
            // Note: not using SRT_EPOLL_CONNECT symbol because this is a procedure
            // executed for the accepted socket.
-           m_pEventHandler->update(m_SocketID, SRT_EV_WRITE, true);
+           m_pEventHandler->update(SRT_EV_WRITE, true);
         }
     }
     LOGC(cnlog.Note, log << "listen ret: " << hs.m_iReqType << " - " << RequestTypeStr(hs.m_iReqType));
@@ -10566,7 +10563,6 @@ bool CUDT::checkExpTimer(const steady_clock::time_point& currtime, int check_rea
 
         updateBrokenConnection();
         completeBrokenConnectionDependencies(SRT_ECONNLOST); // LOCKS!
-// XXX USE:        m_pEventHandler->update(m_SocketID, SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
 
         return true;
     }
@@ -10720,7 +10716,7 @@ void CUDT::updateBrokenConnection()
     m_bClosing = true;
     releaseSynch();
     // app can call any UDT API to learn the connection_broken error
-    m_pEventHandler->update(m_SocketID, SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
+    m_pEventHandler->update(SRT_EV_READ | SRT_EV_WRITE | SRT_EV_ERROR, true);
 }
 
 void CUDT::completeBrokenConnectionDependencies(int errorcode)
