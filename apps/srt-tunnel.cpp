@@ -1027,11 +1027,13 @@ void Tunnel::Stop()
     if (!running)
         return; // already stopped
 
-    lock_guard<mutex> lk(access);
+    {
+        lock_guard<mutex> lk(access);
 
-    // Ok, you are the first to make the tunnel
-    // not running and inform the tunnelbox.
-    running = false;
+        // Ok, you are the first to make the tunnel
+        // not running and inform the tunnelbox.
+        running = false;
+    }
     parent_box->signal_decommission();
 }
 
