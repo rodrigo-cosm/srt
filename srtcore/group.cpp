@@ -314,8 +314,10 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     setupMutex(m_GroupLock, "Group");
     setupMutex(m_RcvDataLock, "RcvData");
     setupCond(m_RcvDataCond, "RcvData");
-    m_RcvEID = m_pGlobal->m_EPoll.create(&m_RcvEpolld);
-    m_SndEID = m_pGlobal->m_EPoll.create(&m_SndEpolld);
+
+    // Internals need some event system, use the default one.
+    m_RcvEID = SrtEPollEventHandler::engine().create(&m_RcvEpolld);
+    m_SndEID = SrtEPollEventHandler::engine().create(&m_SndEpolld);
 
     m_stats.init();
 
@@ -348,7 +350,7 @@ CUDTGroup::CUDTGroup(SRT_GROUP_TYPE gtype)
     }
     // To maintain the backward compatibility, set the default
     // event handler as internal epoll.
-    m_pEventHandler.reset(new SrtEPollEventHandler(this, m_pGlobal->m_EPoll));
+    m_pEventHandler.reset(new SrtEPollEventHandler(this));
 }
 
 CUDTGroup::~CUDTGroup()
@@ -1368,7 +1370,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         // at the connecting stage.
         CEPoll::fmap_t sready;
 
-        if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
+        if (SrtEPollEventHandler::engine().empty(*m_SndEpolld))
         {
             // Sanity check - weird pending reported.
             LOGC(gslog.Error,
@@ -1381,7 +1383,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
                 InvertedLock ug(m_GroupLock);
 
                 THREAD_PAUSED();
-                m_pGlobal->m_EPoll.swait(
+                SrtEPollEventHandler::engine().swait(
                     *m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
                 THREAD_RESUMED();
             }
@@ -1404,7 +1406,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(*i);
                     int no_events = 0;
-                    m_pGlobal->m_EPoll.update_usock(m_SndEID, *i, &no_events);
+                    SrtEPollEventHandler::engine().update_usock(m_SndEID, *i, &no_events);
                 }
             }
 
@@ -1414,7 +1416,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
             // as redundant links at the connecting stage and became
             // writable (connected) before this function had a chance
             // to check them.
-            m_pGlobal->m_EPoll.clear_ready_usocks(*m_SndEpolld, SRT_EPOLL_CONNECT);
+            SrtEPollEventHandler::engine().clear_ready_usocks(*m_SndEpolld, SRT_EPOLL_CONNECT);
         }
     }
 
@@ -1582,7 +1584,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
             THREAD_PAUSED();
-            blst = m_pGlobal->m_EPoll.swait(*m_SndEpolld, sready, m_iSndTimeOut);
+            blst = SrtEPollEventHandler::engine().swait(*m_SndEpolld, sready, m_iSndTimeOut);
             THREAD_RESUMED();
 
             // NOTE EXCEPTIONS:
@@ -2027,7 +2029,7 @@ vector<CUDTSocket*> CUDTGroup::recv_WaitForReadReady(const vector<CUDTSocket*>& 
         // This call may wait indefinite time, so GroupLock must be unlocked.
         InvertedLock ung (m_GroupLock);
         THREAD_PAUSED();
-        nready  = m_pGlobal->m_EPoll.swait(*m_RcvEpolld, sready, timeout, false /*report by retval*/);
+        nready  = SrtEPollEventHandler::engine().swait(*m_RcvEpolld, sready, timeout, false /*report by retval*/);
         THREAD_RESUMED();
 
         // HERE GlobControlLock is locked first, then GroupLock is applied back
@@ -3467,7 +3469,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
     // at the connecting stage.
     CEPoll::fmap_t sready;
 
-    if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
+    if (SrtEPollEventHandler::engine().empty(*m_SndEpolld))
     {
         // Sanity check - weird pending reported.
         LOGC(gslog.Error, log << "grp/send*: IPE: reported pending sockets, but EID is empty - wiping pending!");
@@ -3477,7 +3479,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
     {
         {
             InvertedLock ug(m_GroupLock);
-            m_pGlobal->m_EPoll.swait(
+            SrtEPollEventHandler::engine().swait(
                 *m_SndEpolld, sready, 0, false /*report by retval*/); // Just check if anything happened
         }
 
@@ -3488,7 +3490,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
         }
 
         // Some sockets could have been closed in the meantime.
-        if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
+        if (SrtEPollEventHandler::engine().empty(*m_SndEpolld))
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
 
 
@@ -3503,7 +3505,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
                 // Failed socket. Move d to w_wipeme. Remove from eid.
                 w_wipeme.push_back(*i);
                 int no_events = 0;
-                m_pGlobal->m_EPoll.update_usock(m_SndEID, *i, &no_events);
+                SrtEPollEventHandler::engine().update_usock(m_SndEID, *i, &no_events);
             }
         }
 
@@ -3513,7 +3515,7 @@ void CUDTGroup::send_CheckPendingSockets(const vector<SRTSOCKET>& pendingSockets
         // as redundant links at the connecting stage and became
         // writable (connected) before this function had a chance
         // to check them.
-        m_pGlobal->m_EPoll.clear_ready_usocks(*m_SndEpolld, SRT_EPOLL_OUT);
+        SrtEPollEventHandler::engine().clear_ready_usocks(*m_SndEpolld, SRT_EPOLL_OUT);
     }
 }
 
@@ -3615,7 +3617,7 @@ void CUDTGroup::sendBackup_RetryWaitBlocked(const vector<gli_t>& unstableLinks,
     m_pEventHandler->update(SRT_EV_WRITE, false);
     m_pEventHandler->update(SRT_EV_ERROR, true);
 
-    if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
+    if (SrtEPollEventHandler::engine().empty(*m_SndEpolld))
     {
         // wipeme wiped, pending sockets checked, it can only mean that
         // all sockets are broken.
@@ -3651,7 +3653,7 @@ void CUDTGroup::sendBackup_RetryWaitBlocked(const vector<gli_t>& unstableLinks,
 RetryWaitBlocked:
     {
         // Some sockets could have been closed in the meantime.
-        if (m_pGlobal->m_EPoll.empty(*m_SndEpolld))
+        if (SrtEPollEventHandler::engine().empty(*m_SndEpolld))
         {
             HLOGC(gslog.Debug, log << "grp/sendBackup: no more sockets available for sending - group broken");
             throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
@@ -3661,7 +3663,7 @@ RetryWaitBlocked:
         HLOGC(gslog.Debug,
             log << "grp/sendBackup: swait call to get at least one link alive up to " << m_iSndTimeOut << "us");
         THREAD_PAUSED();
-        brdy = m_pGlobal->m_EPoll.swait(*m_SndEpolld, (sready), m_iSndTimeOut);
+        brdy = SrtEPollEventHandler::engine().swait(*m_SndEpolld, (sready), m_iSndTimeOut);
         THREAD_RESUMED();
 
         if (brdy == 0) // SND timeout exceeded

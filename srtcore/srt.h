@@ -74,6 +74,11 @@ written by
 #define SRT_HAVE_CXX17 0
 #endif
 
+#if defined(__cplusplus) && __cplusplus > 199711L
+#define SRT_HAVE_CXX11 1
+#else
+#define SRT_HAVE_CXX11 0
+#endif
 
 // Stadnard attributes
 
@@ -99,6 +104,13 @@ written by
 #define SRT_ATR_UNUSED
 #define SRT_ATR_NODISCARD
 #endif
+
+#if SRT_HAVE_CXX11
+#define SRT_ATR_CONSTEXPR constexpr
+#else
+#define SRT_ATR_CONSTEXPR
+#endif
+
 
 
 // DEPRECATED attributes
@@ -1019,7 +1031,12 @@ inline void operator|=(SRT_EV_OPT& a1, SRT_EV_OPT a2)
     a1 = SRT_EV_OPT(a1 | a2);
 }
 
-inline SRT_EPOLL_OPT operator|(SRT_EPOLL_OPT a1, SRT_EPOLL_OPT a2)
+inline SRT_ATR_CONSTEXPR SRT_EV_OPT operator&(SRT_EV_OPT container, SRT_EV_OPT cut)
+{
+    return SRT_EV_OPT(int(container) & int(cut));
+}
+
+inline SRT_ATR_CONSTEXPR SRT_EPOLL_OPT operator|(SRT_EPOLL_OPT a1, SRT_EPOLL_OPT a2)
 {
     return SRT_EPOLL_OPT( (int)a1 | (int)a2 );
 }

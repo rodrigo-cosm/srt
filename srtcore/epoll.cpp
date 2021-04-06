@@ -82,6 +82,8 @@ using namespace srt_logging;
 #define IF_DIRNAME(tested, flag, name) (tested & flag ? name : "")
 #endif
 
+CEPoll SrtEPollEventHandler::s_Engine;
+
 CEPoll::CEPoll():
 m_iIDSeed(0)
 {
@@ -976,7 +978,7 @@ string CEPollDesc::DisplayEpollWatch()
 
 int SrtEPollEventHandler::update_handler(SRT_EV_OPT et, bool state)
 {
-    return m_EPoll.update_events(m_parent->id(), m_sPollID, epollfor(et), state);
+    return s_Engine.update_events(m_parent->id(), m_EIDs, epollfor(et), state);
 }
 
 void SrtEPollEventHandler::commit_handler()
@@ -986,9 +988,9 @@ void SrtEPollEventHandler::commit_handler()
 
 void SrtEPollEventHandler::addEPoll(const int eid)
 {
-    enterCS(m_EPoll.m_EPollLock);
-    m_sPollID.insert(eid);
-    leaveCS(m_EPoll.m_EPollLock);
+    enterCS(s_Engine.m_EPollLock);
+    m_EIDs.insert(eid);
+    leaveCS(s_Engine.m_EPollLock);
 
     SRT_EV_OPT opt = m_parent->getEventFlags();
     if (opt)
@@ -1001,14 +1003,14 @@ void SrtEPollEventHandler::removeEPollEvents(const int eid)
     // since this happens after the epoll ID has been removed, they cannot be set again
     set<int> remove;
     remove.insert(eid);
-    m_EPoll.update_events(m_parent->id(), remove, SRT_EPOLL_IN | SRT_EPOLL_OUT, false);
+    s_Engine.update_events(m_parent->id(), remove, SRT_EPOLL_IN | SRT_EPOLL_OUT, false);
 }
 
 void SrtEPollEventHandler::removeEPollID(const int eid)
 {
-    enterCS(m_EPoll.m_EPollLock);
-    m_sPollID.erase(eid);
-    leaveCS(m_EPoll.m_EPollLock);
+    enterCS(s_Engine.m_EPollLock);
+    m_EIDs.erase(eid);
+    leaveCS(s_Engine.m_EPollLock);
 }
 
 int SrtEPollEventHandler::remove_entity(const int eid)
@@ -1016,7 +1018,7 @@ int SrtEPollEventHandler::remove_entity(const int eid)
     removeEPollEvents(eid);
 
     int no_events = 0;
-    int ret = m_EPoll.update_usock(eid, m_parent->id(), &no_events);
+    int ret = s_Engine.update_usock(eid, m_parent->id(), &no_events);
 
     removeEPollID(eid);
 
@@ -1025,12 +1027,12 @@ int SrtEPollEventHandler::remove_entity(const int eid)
 
 void SrtEPollEventHandler::close(SRTSOCKET sid)
 {
-    ScopedLock lk (m_EPoll.m_EPollLock);
+    ScopedLock lk (s_Engine.m_EPollLock);
     int no_events = 0;
-    for (set<int>::iterator i = m_sPollID.begin(); i != m_sPollID.end(); ++i)
+    for (set<int>::iterator i = m_EIDs.begin(); i != m_EIDs.end(); ++i)
     {
         HLOGC(eilog.Debug, log << "close: CLEARING subscription on E" << (*i) << " of @" << sid);
-        m_EPoll.update_usock(*i, sid, &no_events);
+        s_Engine.update_usock(*i, sid, &no_events);
         HLOGC(eilog.Debug, log << "close: removing E" << (*i) << " from back-subscribers of @" << sid);
     }
 }

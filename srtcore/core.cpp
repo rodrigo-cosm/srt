@@ -262,7 +262,7 @@ void CUDT::construct()
 
     // To maintain the backward compatibility, set the default
     // event handler as internal epoll.
-    m_pEventHandler.reset(new SrtEPollEventHandler(m_parent, s_UDTUnited.m_EPoll));
+    m_pEventHandler.reset(new SrtEPollEventHandler(m_parent));
 }
 
 CUDT::CUDT(CUDTSocket* parent): m_parent(parent)

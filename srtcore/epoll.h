@@ -493,9 +493,9 @@ private:
 
 class SrtEPollEventHandler: public srt::EventHandler
 {
+    static CEPoll s_Engine;
     srt::EventEntity* m_parent;
-    std::set<int> m_sPollID;                     // set of epoll ID to trigger
-    CEPoll& m_EPoll;
+    std::set<int> m_EIDs;                     // set of epoll ID to trigger
 
     ATR_CONSTEXPR SRT_EPOLL_OPT epollfor(const SRT_EV_OPT ev)
     {
@@ -506,7 +506,7 @@ class SrtEPollEventHandler: public srt::EventHandler
     }
 
 public:
-    SrtEPollEventHandler(srt::EventEntity* ps, CEPoll& ep): m_parent(ps), m_EPoll(ep) {}
+    SrtEPollEventHandler(srt::EventEntity* ps): m_parent(ps) {}
 
     void addEPoll(const int eid);
     void removeEPollEvents(const int eid);
@@ -516,9 +516,11 @@ public:
     int update_handler(SRT_EV_OPT et, bool state) ATR_OVERRIDE;
     void commit_handler() ATR_OVERRIDE;
 
-    std::string displayHandler() { return Printable(m_sPollID); }
+    std::string displayHandler() { return Printable(m_EIDs); }
 
     void close(SRTSOCKET) ATR_OVERRIDE;
+
+    static CEPoll& engine() { return s_Engine; }
 };
 
 

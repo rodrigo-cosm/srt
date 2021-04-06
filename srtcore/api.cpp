@@ -1073,20 +1073,19 @@ int CUDTUnited::listen(const SRTSOCKET u, int backlog)
 SRTSOCKET CUDTUnited::accept_bond(const SRTSOCKET listeners [], int lsize, int64_t msTimeOut)
 {
     CEPollDesc* ed = 0;
-    int eid = m_EPoll.create(&ed);
+    int eid = SrtEPollEventHandler::engine().create(&ed);
 
     // Destroy it at return - this function can be interrupted
     // by an exception.
     struct AtReturn
     {
         int eid;
-        CUDTUnited* that;
-        AtReturn(CUDTUnited* t, int e): eid(e), that(t) {}
+        AtReturn(int e): eid(e) {}
         ~AtReturn()
         {
-            that->m_EPoll.release(eid);
+            SrtEPollEventHandler::engine().release(eid);
         }
-    } l_ar(this, eid);
+    } l_ar(eid);
 
     // Subscribe all of listeners for accept
     int events = SRT_EPOLL_ACCEPT;
@@ -1097,7 +1096,7 @@ SRTSOCKET CUDTUnited::accept_bond(const SRTSOCKET listeners [], int lsize, int64
     }
 
     CEPoll::fmap_t st;
-    m_EPoll.swait(*ed, (st), msTimeOut, true);
+    SrtEPollEventHandler::engine().swait(*ed, (st), msTimeOut, true);
 
     if (st.empty())
     {
@@ -2394,12 +2393,12 @@ int CUDTUnited::selectEx(
 
 int CUDTUnited::epoll_create()
 {
-   return m_EPoll.create();
+   return SrtEPollEventHandler::engine().create();
 }
 
 int CUDTUnited::epoll_clear_usocks(int eid)
 {
-    return m_EPoll.clear_usocks(eid);
+    return SrtEPollEventHandler::engine().clear_usocks(eid);
 }
 
 srt::EventHandler* CUDT::getEventHandler(SRTSOCKET s)
@@ -2440,7 +2439,7 @@ int CUDTUnited::epoll_add_usock(
    if (!eh)
       throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
 
-   ret = m_EPoll.update_usock(eid, u, events);
+   ret = eh->engine().update_usock(eid, u, events);
    eh->addEPoll(eid);
 
    return ret;
@@ -2454,7 +2453,7 @@ int CUDTUnited::epoll_add_usock_INTERNAL(const int eid, CUDTSocket* s, const int
     SrtEPollEventHandler* eh = dynamic_cast<SrtEPollEventHandler*>(s->getEventHandler());
     if (!eh)
         return -1;
-    int ret = m_EPoll.update_usock(eid, s->id(), events);
+    int ret = eh->engine().update_usock(eid, s->id(), events);
     eh->addEPoll(eid);
     return ret;
 }
@@ -2462,13 +2461,13 @@ int CUDTUnited::epoll_add_usock_INTERNAL(const int eid, CUDTSocket* s, const int
 int CUDTUnited::epoll_add_ssock(
    const int eid, const SYSSOCKET s, const int* events)
 {
-   return m_EPoll.add_ssock(eid, s, events);
+   return SrtEPollEventHandler::engine().add_ssock(eid, s, events);
 }
 
 int CUDTUnited::epoll_update_ssock(
    const int eid, const SYSSOCKET s, const int* events)
 {
-   return m_EPoll.update_ssock(eid, s, events);
+   return SrtEPollEventHandler::engine().update_ssock(eid, s, events);
 }
 
 // Needed internal access!
@@ -2480,7 +2479,7 @@ int CUDTUnited::epoll_remove_socket_INTERNAL(const int eid, CUDTSocket* s)
         eh->remove_entity(eid);
     }
     int no_events = 0;
-    return m_EPoll.update_usock(eid, s->m_SocketID, &no_events);
+    return eh->engine().update_usock(eid, s->m_SocketID, &no_events);
 }
 
 #if ENABLE_EXPERIMENTAL_BONDING
@@ -2492,7 +2491,7 @@ int CUDTUnited::epoll_remove_group_INTERNAL(const int eid, CUDTGroup* g)
         eh->remove_entity(eid);
     }
     int no_events = 0;
-    return m_EPoll.update_usock(eid, g->id(), &no_events);
+    return eh->engine().update_usock(eid, g->id(), &no_events);
 }
 #endif
 
@@ -2507,12 +2506,12 @@ int CUDTUnited::epoll_remove_usock(const int eid, const SRTSOCKET u)
    LOGC(ealog.Error, log << "remove_usock: @" << u
            << " not found as either socket or group. Removing only from epoll system.");
    int no_events = 0;
-   return m_EPoll.update_usock(eid, u, &no_events);
+   return SrtEPollEventHandler::engine().update_usock(eid, u, &no_events);
 }
 
 int CUDTUnited::epoll_remove_ssock(const int eid, const SYSSOCKET s)
 {
-   return m_EPoll.remove_ssock(eid, s);
+   return SrtEPollEventHandler::engine().remove_ssock(eid, s);
 }
 
 int CUDTUnited::epoll_uwait(
@@ -2521,17 +2520,17 @@ int CUDTUnited::epoll_uwait(
    int fdsSize, 
    int64_t msTimeOut)
 {
-   return m_EPoll.uwait(eid, fdsSet, fdsSize, msTimeOut);
+   return SrtEPollEventHandler::engine().uwait(eid, fdsSet, fdsSize, msTimeOut);
 }
 
 int32_t CUDTUnited::epoll_set(int eid, int32_t flags)
 {
-    return m_EPoll.setflags(eid, flags);
+    return SrtEPollEventHandler::engine().setflags(eid, flags);
 }
 
 int CUDTUnited::epoll_release(const int eid)
 {
-   return m_EPoll.release(eid);
+   return SrtEPollEventHandler::engine().release(eid);
 }
 
 CUDTSocket* CUDTUnited::locateSocket(const SRTSOCKET u, ErrorHandling erh)
@@ -4077,7 +4076,7 @@ int CUDT::epoll_wait(
 {
    try
    {
-      return s_UDTUnited.epoll_ref().wait(
+      return SrtEPollEventHandler::engine().wait(
               eid, readfds, writefds, msTimeOut, lrfds, lwfds);
    }
    catch (const CUDTException& e)
@@ -4437,7 +4436,7 @@ int selectEx(
 
 int epoll_create()
 {
-   return CUDT::epoll_create();
+    return SrtEPollEventHandler::engine().create();
 }
 
 int epoll_clear_usocks(int eid)
@@ -4485,31 +4484,6 @@ int epoll_wait(
 {
    return CUDT::epoll_wait(eid, readfds, writefds, msTimeOut, lrfds, lwfds);
 }
-
-/*
-
-#define SET_RESULT(val, num, fds, it) \
-   if (val != NULL) \
-   { \
-      if (val->empty()) \
-      { \
-         if (num) *num = 0; \
-      } \
-      else \
-      { \
-         if (*num > static_cast<int>(val->size())) \
-            *num = val->size(); \
-         int count = 0; \
-         for (it = val->begin(); it != val->end(); ++ it) \
-         { \
-            if (count >= *num) \
-               break; \
-            fds[count ++] = *it; \
-         } \
-      } \
-   }
-
-*/
 
 template <class SOCKTYPE>
 inline void set_result(set<SOCKTYPE>* val, int* num, SOCKTYPE* fds)
@@ -4566,16 +4540,9 @@ int epoll_wait2(
    int ret = CUDT::epoll_wait(eid, rval, wval, msTimeOut, lrval, lwval);
    if (ret > 0)
    {
-      //set<SRTSOCKET>::const_iterator i;
-      //SET_RESULT(rval, rnum, readfds, i);
       set_result(rval, rnum, readfds);
-      //SET_RESULT(wval, wnum, writefds, i);
       set_result(wval, wnum, writefds);
-
-      //set<SYSSOCKET>::const_iterator j;
-      //SET_RESULT(lrval, lrnum, lrfds, j);
       set_result(lrval, lrnum, lrfds);
-      //SET_RESULT(lwval, lwnum, lwfds, j);
       set_result(lwval, lwnum, lwfds);
    }
    return ret;

@@ -326,8 +326,6 @@ public:
    }
 #endif
 
-   CEPoll& epoll_ref() { return m_EPoll; }
-
 private:
 //   void init();
 
@@ -438,8 +436,6 @@ private:
 
    void checkBrokenSockets();
    void removeSocket(const SRTSOCKET u);
-
-   CEPoll m_EPoll;                                     // handling epoll data structures and events
 
    srt::EventHandler* getEventHandler(SRTSOCKET s);
 
