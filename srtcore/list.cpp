@@ -516,6 +516,7 @@ void CRcvLossList::insert(int32_t seqno1, int32_t seqno2)
         m_caSeq[m_iHead].seqstart = seqno1;
         if (seqno2 != seqno1)
             m_caSeq[m_iHead].seqend = seqno2;
+        m_caSeq[m_iHead].time = steady_clock::now();
 
         m_caSeq[m_iHead].inext  = -1;
         m_caSeq[m_iHead].iprior = -1;
@@ -559,17 +560,18 @@ void CRcvLossList::insert(int32_t seqno1, int32_t seqno2)
     m_iLength += CSeqNo::seqlen(seqno1, seqno2);
 }
 
-bool CRcvLossList::remove(int32_t seqno)
+steady_clock::time_point CRcvLossList::remove(int32_t seqno)
 {
     if (0 == m_iLength)
-        return false;
+        return steady_clock::time_point();
 
     // locate the position of "seqno" in the list
     int offset = CSeqNo::seqoff(m_caSeq[m_iHead].seqstart, seqno);
     if (offset < 0)
-        return false;
+        return steady_clock::time_point();
 
     int loc = (m_iHead + offset) % m_iSize;
+    steady_clock::time_point loss_time = m_caSeq[loc].time;
 
     if (seqno == m_caSeq[loc].seqstart)
     {
@@ -631,7 +633,7 @@ bool CRcvLossList::remove(int32_t seqno)
 
         m_iLength--;
 
-        return true;
+        return loss_time;
     }
 
     // There is no loss sequence in the current position
@@ -644,7 +646,9 @@ bool CRcvLossList::remove(int32_t seqno)
 
     // not contained in this node, return
     if ((SRT_SEQNO_NONE == m_caSeq[i].seqend) || (CSeqNo::seqcmp(seqno, m_caSeq[i].seqend) > 0))
-        return false;
+        return steady_clock::time_point();
+
+    loss_time = m_caSeq[i].time;
 
     if (seqno == m_caSeq[i].seqend)
     {
@@ -686,7 +690,7 @@ bool CRcvLossList::remove(int32_t seqno)
 
     m_iLength--;
 
-    return true;
+    return loss_time;
 }
 
 bool CRcvLossList::remove(int32_t seqno1, int32_t seqno2)

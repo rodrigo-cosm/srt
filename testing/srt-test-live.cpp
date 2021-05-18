@@ -917,7 +917,9 @@ int main( int argc, char** argv )
             Verb() << " << ... " << VerbNoEOL;
             g_interrupt_reason = "reading";
             const MediaPacket& data = src->Read(chunk);
-            Verb() << " << " << data.payload.size() << "  ->  " << VerbNoEOL;
+            int64_t srt_now = srt_time_now();
+            double timediff = srt_now - data.time;
+            Verb() << " << " << setw(4) << data.payload.size() << setw(0) << " " << (timediff/1000) << "ms  ->  " << VerbNoEOL;
             if ( data.payload.empty() && src->End() )
             {
                 Verb() << "EOS";

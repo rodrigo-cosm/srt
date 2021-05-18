@@ -888,6 +888,7 @@ void CUDT::clearData()
         m_stats.traceRcvBytesUndecrypt   = 0;
 
         m_stats.sndDuration = m_stats.m_sndDurationTotal = 0;
+        m_stats.avgRecoverDuration = 0;
     }
 
     // Resetting these data because this happens when agent isn't connected.
@@ -7049,6 +7050,7 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
     perf->pktSentNAK           = m_stats.sentNAK;
     perf->pktRecvNAK           = m_stats.recvNAK;
     perf->usSndDuration        = m_stats.sndDuration;
+    perf->usRecoverDuration    = m_stats.avgRecoverDuration;
     perf->pktReorderDistance   = m_stats.traceReorderDistance;
     perf->pktReorderTolerance  = m_iReorderTolerance;
     perf->pktRcvAvgBelatedTime = m_stats.traceBelatedTime;
@@ -7213,6 +7215,7 @@ void CUDT::bstats(CBytePerfMon *perf, bool clear, bool instantaneous)
         m_stats.rcvFilterLoss   = 0;
 
         m_stats.tsLastSampleTime = currtime;
+        m_stats.avgRecoverDuration = 0;
     }
 }
 
@@ -10050,7 +10053,16 @@ void CUDT::unlose(const CPacket &packet)
 {
     ScopedLock lg(m_RcvLossLock);
     int32_t sequence = packet.m_iSeqNo;
-    m_pRcvLossList->remove(sequence);
+    time_point losstime = m_pRcvLossList->remove(sequence);
+
+    if (!is_zero(losstime))
+    {
+        duration d = steady_clock::now() - losstime;
+        if (m_stats.avgRecoverDuration == 0)
+            m_stats.avgRecoverDuration = count_microseconds(d);
+        else
+            m_stats.avgRecoverDuration = avg_iir<8>(m_stats.avgRecoverDuration, count_microseconds(d));
+    }
 
     // Rest of this code concerns only the "belated lossreport" feature.
 

@@ -137,9 +137,9 @@ public:
 
     /// Remove a loss seq. no. from the receiver's loss list.
     /// @param [in] seqno sequence number.
-    /// @return if the packet is removed (true) or no such lost packet is found (false).
+    /// @return time when the loss happened, or zero time, if not found
 
-    bool remove(int32_t seqno);
+    srt::sync::steady_clock::time_point remove(int32_t seqno);
 
     /// Remove all packets between seqno1 and seqno2.
     /// @param [in] seqno1 start sequence number.
@@ -179,6 +179,7 @@ private:
         int32_t seqend;   // sequence number ends
         int     inext;    // index of the next node in the list
         int     iprior;   // index of the previous node in the list
+        srt::sync::steady_clock::time_point time;
     } * m_caSeq;
 
     int m_iHead;   // first node in the list

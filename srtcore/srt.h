@@ -352,6 +352,7 @@ struct CBytePerfMon
    double   mbpsSendRate;               // sending rate in Mb/s
    double   mbpsRecvRate;               // receiving rate in Mb/s
    int64_t  usSndDuration;              // busy sending time (i.e., idle time exclusive)
+   int64_t  usRecoverDuration;          // average time to recover a lost packet
    int      pktReorderDistance;         // size of order discrepancy in received sequences
    double   pktRcvAvgBelatedTime;       // average time of packet delay for belated packets (packets with sequence past the ACK)
    int64_t  pktRcvBelated;              // number of received AND IGNORED packets due to having come too late

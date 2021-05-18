@@ -416,6 +416,7 @@ struct SrtStatsTableInit
         STAT(RECV, msBuf, msRcvBuf);
         STAT(RECV, mbitRate, mbpsRecvRate);
         STAT(RECV, msTsbPdDelay, msRcvTsbPdDelay);
+        STAT(RECV, usRecoverDuration, usRecoverDuration);
     }
 } g_SrtStatsTableInit (g_SrtStatsTable);
 
