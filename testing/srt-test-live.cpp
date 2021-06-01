@@ -452,6 +452,7 @@ int main( int argc, char** argv )
 #endif
         o_stime     ((optargs), " Pass source time explicitly to SRT output", "st", "srctime", "sourcetime"),
         o_retry     ((optargs), "<N=-1,0,+N> Retry connection N times if failed on timeout", "rc", "retry"),
+        o_repeat    ((optargs), " When the transmission was broken, start over", "rr", "repeat"),
         o_help      ((optargs), "[special=logging] This help", "?",   "help", "-help")
             ;
 
@@ -787,6 +788,8 @@ int main( int argc, char** argv )
         transmit_retry_connect = stoi(retryphrase);
     }
 
+    bool repeat_after_break = OptionPresent(params, o_repeat);
+
 #ifdef _WIN32
 #define alarm(argument) (void)0
 
@@ -828,6 +831,7 @@ int main( int argc, char** argv )
     unique_ptr<Source> src;
     unique_ptr<Target> tar;
 
+Repeat_from_here:
     try
     {
         src = Source::Create(source_spec);
@@ -874,7 +878,6 @@ int main( int argc, char** argv )
     }
 
     // Now loop until broken
-    BandwidthGuard bw(bandwidth);
 
     if (transmit_use_sourcetime && src->uri.type() != UriParser::SRT)
     {
@@ -901,8 +904,11 @@ int main( int argc, char** argv )
         alarm(remain - final_delay);
     }
 
+    int retval = 0;
+
     try
     {
+        BandwidthGuard bw(bandwidth);
         for (;;)
         {
             if (stoptime == 0 && timeout != -1 )
@@ -1006,7 +1012,7 @@ int main( int argc, char** argv )
         if (stoptime != 0 && ::timer_state)
             return 0;
 
-        return 255;
+        retval = 255;
 
     } catch (...) {
 
@@ -1014,10 +1020,18 @@ int main( int argc, char** argv )
         if ( crashonx )
             throw;
 
-        return 1;
+        retval = 1;
     }
 
-    return 0;
+    if (repeat_after_break && !::transmit_int_state)
+    {
+        // Make them reset both at once before one of them gets recreated
+        src.reset();
+        tar.reset();
+        goto Repeat_from_here;
+    }
+
+    return retval;
 }
 
 // Class utilities
