@@ -1039,15 +1039,16 @@ void Tunnel::Stop()
 
 bool Tunnel::decommission_if_dead(bool forced)
 {
-    lock_guard<mutex> lk(access);
-    if (running && !forced)
-        return false; // working, not to be decommissioned
+    {
+        lock_guard<mutex> lk(access);
+        if (running && !forced)
+            return false; // working, not to be decommissioned
+    }
 
     // Join the engine threads, make sure nothing
     // is running that could use the data.
     acp_to_clr.Stop();
     clr_to_acp.Stop();
-
 
     // Done. The tunnelbox after calling this can
     // safely delete the decommissioned tunnel.
