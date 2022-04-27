@@ -740,13 +740,20 @@ if (ENABLE_EXAMPLES)
 	macro(srt_add_example mainsrc)
 		get_filename_component(name ${mainsrc} NAME_WE)
 		srt_add_program(${name} examples/${mainsrc} ${ARGN})
+		target_link_libraries(${name} ${srt_link_library} ${DEPENDS_srt})
 	endmacro()
 
-	srt_add_example(sendfile.cpp apps/logsupport.cpp)
-	srt_make_application(sendfile)
+	srt_add_example(recvlive.cpp)
 
-	srt_add_example(recvfile.cpp apps/logsupport.cpp)
-	srt_make_application(recvfile)
+# Don't compile examples that do require C++11
+
+	if (ENABLE_CXX11)
+		srt_add_example(sendfile.cpp apps/logsupport.cpp)
+		target_compile_options(sendfile PRIVATE ${CFLAGS_CXX_STANDARD})
+        
+		srt_add_example(recvfile.cpp apps/logsupport.cpp)
+		target_compile_options(recvfile PRIVATE ${CFLAGS_CXX_STANDARD})
+	endif()
 
 	srt_add_example(testcapi-connect.c)
 	target_link_libraries(testcapi-connect ${srt_link_library} ${DEPENDS_srt})
