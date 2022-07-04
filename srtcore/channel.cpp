@@ -203,13 +203,13 @@ void srt::CChannel::open(const sockaddr_any& addr)
     createSocket(addr.family());
     socklen_t namelen = addr.size();
 
+    setUDPSockOpt();
+
     if (::bind(m_iSocket, &addr.sa, namelen) == -1)
         throw CUDTException(MJ_SETUP, MN_NORES, NET_ERROR);
 
     m_BindAddr = addr;
     LOGC(kmlog.Debug, log << "CHANNEL: Bound to local address: " << m_BindAddr.str());
-
-    setUDPSockOpt();
 }
 
 void srt::CChannel::open(int family)

@@ -215,13 +215,19 @@ void clientSocket(std::string ip, int port, bool expect_success)
 
 int server_pollid = SRT_ERROR;
 
-void serverSocket(std::string ip, int port, bool expect_success)
+typedef std::function<bool(SRTSOCKET)> aftersockfn_t;
+
+void serverSocket(std::string ip, int port, bool expect_success, const aftersockfn_t& aftersocket = aftersockfn_t())
 {
     int yes = 1;
     int no = 0;
 
     SRTSOCKET m_bindsock = srt_create_socket();
     ASSERT_NE(m_bindsock, SRT_ERROR);
+    if (aftersocket)
+    {
+        ASSERT_EQ(aftersocket(m_bindsock), true);
+    }
 
     ASSERT_NE(srt_setsockopt(m_bindsock, 0, SRTO_RCVSYN, &no, sizeof no), SRT_ERROR); // for async connect
     ASSERT_NE(srt_setsockopt(m_bindsock, 0, SRTO_TSBPDMODE, &yes, sizeof yes), SRT_ERROR);
@@ -322,6 +328,11 @@ void serverSocket(std::string ip, int port, bool expect_success)
     std::cout << "Server exit\n";
 }
 
+void serverSocketSimple(std::string ip, int port)
+{
+    return serverSocket(ip, port, true, aftersockfn_t());
+}
+
 TEST(ReuseAddr, SameAddr1)
 {
     ASSERT_EQ(srt_startup(), 0);
@@ -332,10 +343,10 @@ TEST(ReuseAddr, SameAddr1)
     server_pollid = srt_epoll_create();
     ASSERT_NE(SRT_ERROR, server_pollid);
 
-    std::thread server_1(serverSocket, "127.0.0.1", 5000, true);
+    std::thread server_1(serverSocketSimple, "127.0.0.1", 5000);
     server_1.join();
 
-    std::thread server_2(serverSocket, "127.0.0.1", 5000, true);
+    std::thread server_2(serverSocketSimple, "127.0.0.1", 5000);
     server_2.join();
 
     (void)srt_epoll_release(client_pollid);
@@ -357,10 +368,10 @@ TEST(ReuseAddr, SameAddr2)
     server_pollid = srt_epoll_create();
     ASSERT_NE(SRT_ERROR, server_pollid);
 
-    std::thread server_1(serverSocket, localip, 5000, true);
+    std::thread server_1(serverSocketSimple, localip, 5000);
     server_1.join();
 
-    std::thread server_2(serverSocket, localip, 5000, true);
+    std::thread server_2(serverSocketSimple, localip, 5000);
     server_2.join();
 
     (void)srt_epoll_release(client_pollid);
@@ -382,8 +393,8 @@ TEST(ReuseAddr, DiffAddr)
     server_pollid = srt_epoll_create();
     ASSERT_NE(SRT_ERROR, server_pollid);
 
-    serverSocket("127.0.0.1", 5000, true);
-    serverSocket(localip, 5000, true);
+    serverSocketSimple("127.0.0.1", 5000);
+    serverSocketSimple(localip, 5000);
 
     (void)srt_epoll_release(client_pollid);
     (void)srt_epoll_release(server_pollid);
@@ -427,13 +438,21 @@ TEST(ReuseAddr, ProtocolVersion)
 #endif
     ASSERT_EQ(srt_startup(), 0);
 
+    srt_setloglevel(LOG_DEBUG);
+
     client_pollid = srt_epoll_create();
     ASSERT_NE(SRT_ERROR, client_pollid);
 
     server_pollid = srt_epoll_create();
     ASSERT_NE(SRT_ERROR, server_pollid);
 
-    serverSocket("::", 5000, true);
+    serverSocket("::", 5000, true,
+        [] (SRTSOCKET sock) {
+            int val = 1;
+            bool ok = (SRT_ERROR != srt_setsockflag(sock, SRTO_IPV6ONLY, &val, sizeof val));
+            return ok;
+        }
+    );
     serverSocket("0.0.0.0", 5000, true);
 
     (void)srt_epoll_release(client_pollid);
