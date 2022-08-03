@@ -899,10 +899,42 @@ protected:
             Verb() << "Multicast(POSIX): will bind to IGMP address: " << host;
 #endif
             int res = setsockopt(m_sock, IPPROTO_IP, opt_name, mreq_arg, mreq_arg_size);
-
             if ( res == status_error )
             {
                 Error(errno, "adding to multicast membership failed");
+            }
+
+            if (attr.count("multicast-if"))
+            {
+                auto mcastif = CreateAddr(attr["multicast-if"], 0);
+                if (mcastif.isany())
+                {
+                    Error("wrong address in multicast-if");
+                }
+                int res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_IF, mcastif.get(), mcastif.size());
+                if ( res == status_error )
+                {
+                    Error(errno, "adding to multicast-if failed");
+                }
+                Verb() << "Multicast: setting '" << attr["multicast-if"] << "' with IP_MULTICAST_IF";
+                attr.erase("multicast-if");
+            }
+
+            if (attr.count("multicast-bind"))
+            {
+                auto mbind = CreateAddr(attr["multicast-bind"], 0);
+                if (mbind.isany())
+                {
+                    Error("wrong address in multicast-bind");
+                }
+
+                if (-1 == ::bind(m_sock, mbind.get(), mbind.size()))
+                {
+                    Error(errno, "adding multicast-bind failed");
+                }
+
+                Verb() << "Multicast: binding socket to '" << attr["multicast-bind"] << "'";
+                attr.erase("multicast-bind");
             }
 
             attr.erase("multicast");
@@ -937,6 +969,13 @@ protected:
                     Verb() << "WARNING: failed to set '" << o.name << "' to " << value;
             }
         }
+    }
+
+    void Error(string message)
+    {
+        cerr << "\nERROR: " << message << endl;
+
+        throw TransmissionError("error: " + message);
     }
 
     void Error(int err, string src)
