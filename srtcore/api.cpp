@@ -356,7 +356,7 @@ SRTSOCKET srt::CUDTUnited::generateSocketID(bool for_group)
         int startval = sockval;
         for (;;) // Roll until an unused value is found
         {
-            enterCS(m_GlobControlLock);
+            m_GlobControlLock.lock();
             const bool exists =
 #if ENABLE_BONDING
                 for_group
@@ -364,7 +364,7 @@ SRTSOCKET srt::CUDTUnited::generateSocketID(bool for_group)
                 :
 #endif
                 m_Sockets.count(sockval);
-            leaveCS(m_GlobControlLock);
+            m_GlobControlLock.unlock();
 
             if (exists)
             {
@@ -753,7 +753,7 @@ int srt::CUDTUnited::newConnection(const SRTSOCKET     listen,
 
     if (should_submit_to_accept)
     {
-        enterCS(ls->m_AcceptLock);
+        ls->m_AcceptLock.lock();
         try
         {
             ls->m_QueuedSockets.insert(ns->m_SocketID);
@@ -763,7 +763,7 @@ int srt::CUDTUnited::newConnection(const SRTSOCKET     listen,
             LOGC(cnlog.Error, log << "newConnection: error when queuing socket!");
             error = 3;
         }
-        leaveCS(ls->m_AcceptLock);
+        ls->m_AcceptLock.unlock();
 
         HLOGC(cnlog.Debug, log << "ACCEPT: new socket @" << ns->m_SocketID << " submitted for acceptance");
         // acknowledge users waiting for new connections on the listening socket
@@ -2633,9 +2633,9 @@ void srt::CUDTUnited::checkBrokenSockets()
                 continue;
         }
 
-        enterCS(ls->second->m_AcceptLock);
+        ls->second->m_AcceptLock.lock();
         ls->second->m_QueuedSockets.erase(s->m_SocketID);
-        leaveCS(ls->second->m_AcceptLock);
+        ls->second->m_AcceptLock.unlock();
     }
 
     for (sockets_t::iterator j = m_ClosedSockets.begin(); j != m_ClosedSockets.end(); ++j)
@@ -3140,9 +3140,9 @@ void* srt::CUDTUnited::garbageCollect(void* p)
                     continue;
             }
 
-            enterCS(ls->second->m_AcceptLock);
+            ls->second->m_AcceptLock.lock();
             ls->second->m_QueuedSockets.erase(s->m_SocketID);
-            leaveCS(ls->second->m_AcceptLock);
+            ls->second->m_AcceptLock.unlock();
         }
         self->m_Sockets.clear();
 
@@ -3157,9 +3157,9 @@ void* srt::CUDTUnited::garbageCollect(void* p)
     {
         self->checkBrokenSockets();
 
-        enterCS(self->m_GlobControlLock);
+        self->m_GlobControlLock.lock();
         bool empty = self->m_ClosedSockets.empty();
-        leaveCS(self->m_GlobControlLock);
+        self->m_GlobControlLock.unlock();
 
         if (empty)
             break;

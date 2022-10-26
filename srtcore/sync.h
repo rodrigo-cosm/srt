@@ -381,12 +381,6 @@ public:
 };
 #endif // ENABLE_STDCXX_SYNC
 
-inline void enterCS(Mutex& m) SRT_ATTR_EXCLUDES(m) SRT_ATTR_ACQUIRE(m) { m.lock(); }
-
-inline bool tryEnterCS(Mutex& m) SRT_ATTR_EXCLUDES(m) SRT_ATTR_TRY_ACQUIRE(true, m) { return m.try_lock(); }
-
-inline void leaveCS(Mutex& m) SRT_ATTR_REQUIRES(m) SRT_ATTR_RELEASE(m) { m.unlock(); }
-
 class InvertedLock
 {
     Mutex& m_mtx;

@@ -393,11 +393,11 @@ int CSndBuffer::addBufferFromFile(fstream& ifs, int len)
     }
     m_pLastBlock = s;
 
-    enterCS(m_BufLock);
+    m_BufLock.lock();
     m_iCount += iPktLen;
     m_iBytesCount += total;
 
-    leaveCS(m_BufLock);
+    m_BufLock.unlock();
 
     m_iNextMsgNo++;
     if (m_iNextMsgNo == int32_t(MSGNO_SEQ::mask))

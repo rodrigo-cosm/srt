@@ -191,9 +191,9 @@ bool srt::sync::CTimer::sleep_until(TimePoint<steady_clock> tp)
 {
     // The class member m_sched_time can be used to interrupt the sleep.
     // Refer to Timer::interrupt().
-    enterCS(m_event.mutex());
+    m_event.mutex().lock();
     m_tsSchedTime = tp;
-    leaveCS(m_event.mutex());
+    m_event.mutex().unlock();
 
 #if USE_BUSY_WAITING
 #if defined(_WIN32)
