@@ -929,7 +929,7 @@ private: // Receiving related data
 
     sync::CThread m_RcvTsbPdThread;              // Rcv TsbPD Thread handle
     sync::Condition m_RcvTsbPdCond;              // TSBPD signals if reading is ready. Use together with m_RecvLock
-    bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
+    sync::atomic<bool> m_bWakeOnRecv;            // Expected to be woken up when received a packet
     sync::Mutex m_RcvTsbPdStartupLock;           // Protects TSBPD thread creating and joining
 
     CallbackHolder<srt_listen_callback_fn> m_cbAcceptHook;
@@ -1065,17 +1065,19 @@ private: // Generation and processing of packets
     ///
     /// @param incoming [in] The packet coming from the network medium
     /// @param w_new_inserted [out] Set false, if the packet already exists, otherwise true (packet added)
+    /// @param w_next_tsbpd [out] Get the TSBPD time of the earliest playable packet after insertion
     /// @param w_was_sent_in_order [out] Set false, if the packet was belated, but had no R flag set.
     /// @param w_srt_loss_seqs [out] Gets inserted a loss, if this function has detected it.
     ///
     /// @return 0 The call was successful (regardless if the packet was accepted or not).
     /// @return -1 The call has failed: no space left in the buffer.
     /// @return -2 The incoming packet exceeds the expected sequence by more than a length of the buffer (irrepairable discrepancy).
-    int handleSocketPacketReception(const std::vector<CUnit*>& incoming, bool& w_new_inserted, bool& w_was_sent_in_order, CUDT::loss_seqs_t& w_srt_loss_seqs);
+    int handleSocketPacketReception(const std::vector<CUnit*>& incoming, bool& w_new_inserted, sync::steady_clock::time_point& w_next_tsbpd, bool& w_was_sent_in_order, CUDT::loss_seqs_t& w_srt_loss_seqs);
 
-    /// Get the packet's TSBPD time.
-    /// The @a grp passed by void* is not used yet
-    /// and shall not be used when ENABLE_BONDING=0.
+    // This function is to return the packet's play time (time when
+    // it is submitted to the reading application) of the given packet.
+    // This grp passed here by void* because in the current imp it's
+    // unused and shall not be used in case when ENABLE_BONDING=0.
     time_point getPktTsbPdTime(void* grp, const CPacket& packet);
 
     /// Checks and spawns the TSBPD thread if required.
