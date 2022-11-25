@@ -6683,7 +6683,7 @@ int srt::CUDT::recvmsg2(char* data, int len, SRT_MSGCTRL& w_mctrl)
 // [[using locked(m_RcvBufferLock)]]
 size_t srt::CUDT::getAvailRcvBufferSizeNoLock() const
 {
-    return m_pRcvBuffer->getAvailSize(m_iRcvCurrSeqNo);
+    return m_pRcvBuffer->getAvailSize(m_iRcvLastAck);
 }
 
 bool srt::CUDT::isRcvBufferReady() const
@@ -7853,17 +7853,17 @@ int srt::CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
             // the found out ack will be better.
 
             LOGC(xtlog.Error,
-                    log << CONID() << "ack: IPE: invalid ACK from %" << m_iRcvLastAck << " to %" << ack << " ("
+                    log << CONID() << "sendCtrlAck: IPE: invalid ACK from %" << m_iRcvLastAck << " to %" << ack << " ("
                     << CSeqNo::seqoff(m_iRcvLastAck, ack) << " packets) buffer=%" << m_pRcvBuffer->getStartSeqNo());
         }
         else
         {
             HLOGC(xtlog.Debug,
-                    log << CONID() << "ack: %" << m_iRcvLastAck << " -> %" << ack << " ("
+                    log << CONID() << "sendCtrlAck: %" << m_iRcvLastAck << " -> %" << ack << " ("
                     << CSeqNo::seqoff(m_iRcvLastAck, ack) << " packets)");
-
-            m_iRcvLastAck = ack;
         }
+
+        m_iRcvLastAck = ack;
 
 #if ENABLE_BONDING
         const int32_t group_read_seq = m_pRcvBuffer->getFirstReadablePacketInfo(steady_clock::now()).seqno;
@@ -7903,8 +7903,6 @@ int srt::CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
             }
         }
 #endif
-        IF_HEAVY_LOGGING(int32_t oldack = m_iRcvLastAck);
-
         // Signalling m_RecvDataCond is not dane when TSBPD is on.
         // This signalling is done in file mode in order to keep the
         // API reader thread sleeping until there is a "bigger portion"
@@ -7912,7 +7910,7 @@ int srt::CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
         // packet has its individual delivery time and its readiness is signed
         // off by the TSBPD thread.
         HLOGC(xtlog.Debug,
-              log << CONID() << "ACK: clip %" << oldack << "-%" << ack << ", REVOKED "
+              log << CONID() << "ACK: clip %" << m_iRcvLastAck << "-%" << ack << ", REVOKED "
                   << CSeqNo::seqoff(ack, m_iRcvLastAck) << " from RCV buffer");
 
         if (m_bTsbPd)
@@ -9751,7 +9749,7 @@ int srt::CUDT::handleSocketPacketReception(const vector<CUnit*>& incoming, bool&
     bool excessive SRT_ATR_UNUSED = true; // stays true unless it was successfully added
 
     w_new_inserted = false;
-    int32_t bufseq = m_pRcvBuffer->getStartSeqNo();
+    const int32_t bufseq = m_pRcvBuffer->getStartSeqNo();
 
     // Loop over all incoming packets that were filtered out.
     // In case when there is no filter, there's just one packet in 'incoming',
@@ -9765,7 +9763,7 @@ int srt::CUDT::handleSocketPacketReception(const vector<CUnit*>& incoming, bool&
 
         bool adding_successful = true;
 
-        int32_t bufidx = CSeqNo::seqoff(bufseq, rpkt.m_iSeqNo);
+        const int32_t bufidx = CSeqNo::seqoff(bufseq, rpkt.m_iSeqNo);
 
         IF_HEAVY_LOGGING(const char *exc_type = "EXPECTED");
 
@@ -9804,7 +9802,8 @@ int srt::CUDT::handleSocketPacketReception(const vector<CUnit*>& incoming, bool&
             leaveCS(m_StatsLock);
             HLOGC(qrlog.Debug,
                     log << CONID() << "RECEIVED: %" << rpkt.m_iSeqNo << " bufidx=" << bufidx << " (BELATED/"
-                    << s_rexmitstat_str[pktrexmitflag] << ") FLAGS: " << rpkt.MessageFlagStr());
+                    << s_rexmitstat_str[pktrexmitflag] << ") with ACK %" << m_iRcvLastAck
+                    << " FLAGS: " << rpkt.MessageFlagStr());
             continue;
         }
 
@@ -9837,7 +9836,7 @@ int srt::CUDT::handleSocketPacketReception(const vector<CUnit*>& incoming, bool&
             {
                 LOGC(qrlog.Warn, log << CONID() << "No room to store incoming packet seqno " << rpkt.m_iSeqNo
                         << ", insert offset " << bufidx << ". "
-                        << m_pRcvBuffer->strFullnessState(qrlog.Warn.CheckEnabled(), m_iRcvLastAck, steady_clock::now())
+                        << m_pRcvBuffer->strFullnessState(m_iRcvLastAck, steady_clock::now())
                     );
 
                 return -1;
@@ -10182,7 +10181,7 @@ int srt::CUDT::processData(CUnit* in_unit)
         // offset from RcvLastAck in RcvBuffer must remain valid between seqoff() and addData()
         UniqueLock recvbuf_acklock(m_RcvBufferLock);
         // Needed for possibly check for needsQuickACK.
-        bool incoming_belated = (CSeqNo::seqcmp(in_unit->m_Packet.m_iSeqNo, m_pRcvBuffer->getStartSeqNo()) < 0);
+        const bool incoming_belated = (CSeqNo::seqcmp(in_unit->m_Packet.m_iSeqNo, m_pRcvBuffer->getStartSeqNo()) < 0);
 
         const int res = handleSocketPacketReception(incoming,
                 (new_inserted),
@@ -10450,7 +10449,7 @@ int srt::CUDT::processData(CUnit* in_unit)
 
 #if ENABLE_BONDING
 
-// XXX NOTE: this is updated from the value of m_iRcvLastAck,
+// NOTE: this is updated from the value of m_iRcvLastAck,
 // which might be past the buffer and potentially cause setting
 // the value to the last received and re-requiring retransmission.
 // Worst case is that there could be a few packets to tear the transmission
