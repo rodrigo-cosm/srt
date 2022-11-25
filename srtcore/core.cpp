@@ -7799,7 +7799,6 @@ int srt::CUDT::sendCtrlAck(CPacket& ctrlpkt, int size)
     (void)l_saveback; // kill compiler warning: unused variable `l_saveback` [-Wunused-variable]
 
     local_prevack = m_iDebugPrevLastAck;
-    string reason; // just for "a reason" of giving particular % for ACK
 #endif
     string reason; // just for "a reason" of giving particular % for ACK
 
