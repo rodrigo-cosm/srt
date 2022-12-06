@@ -389,6 +389,11 @@ public: // internal API
         return (int32_t) sync::count_microseconds(from_time - tsStartTime);
     }
 
+    static void setPacketTS(CPacket& p, const time_point& start_time, const time_point& ts)
+    {
+        p.m_iTimeStamp = makeTS(ts, start_time);
+    }
+
     /// @brief Set the timestamp field of the packet using the provided value (no check)
     /// @param p the packet structure to set the timestamp on.
     /// @param ts timestamp to use as a source for packet timestamp.
@@ -1049,13 +1054,12 @@ private: // Generation and processing of packets
 
     /// Pack in CPacket the next data to be send.
     ///
-    /// @param packet [in, out] a CPacket structure to fill
+    /// @param packet [out] a CPacket structure to fill
+    /// @param nexttime [out] Time when this socket should be next time picked up for processing.
     ///
-    /// @return A pair of values is returned (is_payload_valid, timestamp).
-    ///         If is_payload_valid is false, there was nothing packed for sending,
-    ///         and the timestamp value should be ignored.
-    ///         The timestamp is the full source/origin timestamp of the data.
-    std::pair<bool, time_point> packData(CPacket& packet);
+    /// @retval true A packet was extracted for sending, the socket should be rechecked at @a nexttime
+    /// @retval false Nothing was extracted for sending, @a nexttime should be ignored
+    bool packData(CPacket& packet, time_point& nexttime);
 
     int processData(CUnit* unit);
 
