@@ -123,7 +123,7 @@ public:
 
     void construct();
 
-    SRT_ATTR_GUARDED_BY(m_ControlLock)
+    //SRT_ATTR_GUARDED_BY(m_ControlLock)
     sync::atomic<SRT_SOCKSTATUS> m_Status; //< current socket state
 
     /// Time when the socket is closed.

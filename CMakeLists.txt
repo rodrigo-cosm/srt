@@ -1354,6 +1354,10 @@ if (ENABLE_APPS)
 			srt_make_application(srt-test-mpbond)
 		endif()
 
+		srt_add_program_dont_install(srt-hangs testing/srt-hangs.cpp)
+		srt_set_stdcxx(srt-hangs 17)
+		srt_make_application(srt-hangs)
+
 	else()
 		message(STATUS "DEVEL APPS (testing): DISABLED")
 	endif()
