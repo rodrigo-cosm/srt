@@ -100,7 +100,7 @@ protected:
     template <class DerivedMedium, class SocketType>
     static Medium* CreateAcceptor(DerivedMedium* self, const sockaddr_any& sa, SocketType sock, size_t chunk)
     {
-        string addr = sockaddr_any(sa.get(), sizeof sa).str();
+        string addr = sa.str();
         DerivedMedium* m = new DerivedMedium(UriParser(self->type() + string("://") + addr), chunk);
         m->m_socket = sock;
         return m;
@@ -145,6 +145,8 @@ public:
 
     ReadStatus Read(bytevector& output);
     virtual void Write(bytevector& portion) = 0;
+
+    virtual std::string ErrorMessage() = 0;
 
     virtual void CreateListener() = 0;
     virtual void CreateCaller() = 0;
@@ -319,7 +321,7 @@ public:
         // which_medium is the medium that failed.
         // Upon breaking of one medium from the pair,
         // the other needs to be closed as well.
-        Verb() << "Medium broken: " << which_medium->uri();
+        Verb() << "Medium '" << which_medium->id() << "' broken: " << which_medium->uri();
 
         bool stop = true;
 
@@ -383,7 +385,7 @@ void Engine::Worker()
 
             case Medium::RD_EOF:
                 status = -1;
-                throw Medium::ReadEOF("");
+                throw Medium::ReadEOF("EOF encountered on " + media[DIR_IN]->id());
 
             case Medium::RD_AGAIN:
                 // Theoreticall RD_AGAIN should not be reported
@@ -392,7 +394,8 @@ void Engine::Worker()
                 // If it is, however, it should be handled just like error.
             case Medium::RD_ERROR:
                 status = -1;
-                Medium::Error("Error while reading");
+                string error = media[DIR_IN]->ErrorMessage();
+                Medium::Error("Error while reading on " + media[DIR_IN]->id() + ": " + error);
             }
         }
         catch (Medium::ReadEOF&)
@@ -414,6 +417,7 @@ void Engine::Worker()
     // know that one of them got down. It will then check
     // if both are down here and decommission the whole
     // tunnel if so.
+    Verb() << "ENGINE "<< nameid << " WILL CLOSE";
     parent_tunnel->decommission_engine(which_medium);
 }
 
@@ -454,6 +458,7 @@ public:
     const char* type() override { return "srt"; }
     int ReadInternal(char* output, int size) override;
     bool IsErrorAgain() override;
+    std::string ErrorMessage() override;
 
     void Write(bytevector& portion) override;
     void CreateListener() override;
@@ -540,6 +545,7 @@ public:
     const char* type() override { return "tcp"; }
     int ReadInternal(char* output, int size) override;
     bool IsErrorAgain() override;
+    std::string ErrorMessage() override;
     void Write(bytevector& portion) override;
     void CreateListener() override;
     void CreateCaller() override;
@@ -811,6 +817,19 @@ int TcpMedium::ReadInternal(char* w_buffer, int size)
 bool SrtMedium::IsErrorAgain()
 {
     return srt_getlasterror(NULL) == SRT_EASYNCRCV;
+}
+
+string SrtMedium::ErrorMessage()
+{
+    return srt_getlasterror_str();
+}
+
+string TcpMedium::ErrorMessage()
+{
+    int error = errno;
+    char buf[1024];
+    SysStrError(error, buf, 1024);
+    return buf;
 }
 
 bool TcpMedium::IsErrorAgain()
@@ -1182,10 +1201,12 @@ int main( int argc, char** argv )
                 Verb() << "Service stopped. Exiting.";
                 break;
             }
-            Verb() << "Connection accepted. Connecting to the relay...";
+            Verb() << "Connection accepted. Creating relay medium...";
 
             // Now call the target address.
             std::unique_ptr<Medium> caller = Medium::Create(call_node, chunk, Medium::CALLER);
+
+            Verb() << "Connecting to " << call_node << "...";
             caller->Connect();
 
             Verb() << "Connected. Establishing pipe.";
