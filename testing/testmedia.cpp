@@ -535,6 +535,12 @@ void SrtCommon::StealFrom(SrtCommon& src)
     src.m_sock = SRT_INVALID_SOCK; // STEALING
 }
 
+void SrtCommon::MergeOptions(const map<string, string>& par)
+{
+    m_options.insert(std::begin(par), std::end(par));
+}
+
+
 void SrtCommon::AcceptNewClient()
 {
     sockaddr_any scl;

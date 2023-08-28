@@ -134,6 +134,7 @@ public:
     void InitParameters(string host, string path, map<string,string> par);
     void PrepareListener(string host, int port, int backlog);
     void StealFrom(SrtCommon& src);
+    void MergeOptions(const map<string, string>& par);
     void AcceptNewClient();
 
     SRTSOCKET Socket() const { return m_sock; }

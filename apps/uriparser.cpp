@@ -148,6 +148,11 @@ string UriParser::queryValue(const string& strKey) const
     return m_mapQuery.at(strKey);
 }
 
+bool UriParser::eraseQueryKey(const std::string& key)
+{
+    return m_mapQuery.erase(key);
+}
+
 void UriParser::Parse(const string& strUrl, DefaultExpect exp)
 {
     int iQueryStart = -1;

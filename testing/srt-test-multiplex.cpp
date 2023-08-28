@@ -335,6 +335,36 @@ bool SelectAndLink(SrtModel& m, string id, bool mode_output, string& w_msg)
         return false;
     }
 
+    // Treat the medium specification very special way.
+    // 1. Remove the "id" parameter, it's used internally.
+    // 2. Remove all paramters that begin with "srto.",
+    //    collect them (without prefix) in a map and pass
+    //    to m_options in the newly created Srt medium.
+    // 3. After these changes, rebuild the URI.
+
+    UriParser um(medium);
+
+    map<string, string> srt_options;
+    vector<string> removed;
+
+    for (auto& kv: um.parameters())
+    {
+        if (kv.first.size() > 5 && kv.first.substr(0, 5) == "srto.")
+        {
+            string real = kv.first.substr(5);
+            srt_options[real] = kv.second;
+            removed.push_back(kv.first);
+        }
+    }
+    // Then remove all selected options (actually it should
+    // move the nodes from one map to another, but C++11 lacks
+    // appropriate features to do it directly).
+    for (auto& k: removed)
+        um.eraseQueryKey(k);
+
+    // We have it already, so forget it.
+    um.eraseQueryKey("id");
+
     // Now create a medium and store.
     unique_ptr<Source> source;
     unique_ptr<Target> target;
@@ -357,6 +387,7 @@ bool SelectAndLink(SrtModel& m, string id, bool mode_output, string& w_msg)
         // Create Source out of SrtModel and Target from the given medium
         auto s = new SrtSource();
         s->StealFrom(m);
+        s->MergeOptions(srt_options);
         source.reset(s);
 
         os << m.m_host << ":" << m.m_port << "[" << id << "]%" << sock << "  ->  " << medium;
@@ -375,6 +406,7 @@ bool SelectAndLink(SrtModel& m, string id, bool mode_output, string& w_msg)
 
         auto t = new SrtTarget();
         t->StealFrom(m);
+        t->MergeOptions(srt_options);
         target.reset(t);
 
         os << medium << "  ->  " << m.m_host << ":" << m.m_port << "[" << id << "]%" << sock;

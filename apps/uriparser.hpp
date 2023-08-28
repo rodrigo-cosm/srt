@@ -52,6 +52,7 @@ public:
     std::string hostport() const { return host() + ":" + port(); }
     std::string path() const;
     std::string queryValue(const std::string& strKey) const;
+    bool eraseQueryKey(const std::string& strKey);
     std::string makeUri();
     ParamProxy operator[](const std::string& key) { return ParamProxy(m_mapQuery, key); }
     const std::map<std::string, std::string>& parameters() const { return m_mapQuery; }
