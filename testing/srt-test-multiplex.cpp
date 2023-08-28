@@ -86,20 +86,24 @@ struct MediumPair
         tar.reset();
     }
 
-    void TransmissionLoop()
+    void TransmissionLoop(string thread_name)
     {
+        auto me = Sprint("[", thread_name, "] ");
         struct MarkQuit
         {
             volatile bool& q;
+            string n;
 
             ~MarkQuit()
             {
                 q = true;
+                Verb() << "QUIT " << n << " (wait 5 second to clean up)";
                 applog.Note() << "MediumPair: Giving it 5 seconds delay before exiting";
                 this_thread::sleep_for(chrono::seconds(5));
             }
-        } mq { has_quit };
+        } mq {has_quit, me};
 
+        Verb() << me << "START: " << name;
         applog.Note() << "STARTING TRANSMiSSION: " << name;
 
         if (!initial_portion.empty())
@@ -107,6 +111,7 @@ struct MediumPair
             tar->Write(initial_portion);
             if (tar->Broken())
             {
+                Verb() << me << "BROKEN";
                 applog.Note() << "OUTPUT BROKEN for loop: " << name;
                 return;
             }
@@ -141,6 +146,7 @@ struct MediumPair
                 if (tar->Broken())
                 {
                     sout << " OUTPUT broken";
+                    Verb() << me << sout.str();
                     applog.Note() << sout.str();
                     break;
                 }
@@ -148,9 +154,11 @@ struct MediumPair
                 if ( siplex_int_state )
                 {
                     sout << " --- (interrupted on request)";
+                    Verb() << me << sout.str();
                     applog.Note() << sout.str();
                     break;
                 }
+                Verb() << me << sout.str();
                 applog.Note() << sout.str();
             }
         }
@@ -198,7 +206,7 @@ public:
         // Ok, got this, so we can start transmission.
         srt::ThreadName tn(thread_name);
 
-        med.runner = thread( [&med]() { med.TransmissionLoop(); });
+        med.runner = thread( [&med, thread_name]() { med.TransmissionLoop(thread_name); });
         return med;
     }
 
@@ -365,6 +373,8 @@ bool SelectAndLink(SrtModel& m, string id, bool mode_output, string& w_msg)
     // We have it already, so forget it.
     um.eraseQueryKey("id");
 
+    //medium = um.makeUri();
+
     // Now create a medium and store.
     unique_ptr<Source> source;
     unique_ptr<Target> target;
@@ -391,7 +401,7 @@ bool SelectAndLink(SrtModel& m, string id, bool mode_output, string& w_msg)
         source.reset(s);
 
         os << m.m_host << ":" << m.m_port << "[" << id << "]%" << sock << "  ->  " << medium;
-        thread_name = "TL>" + medium;
+        thread_name = "TL>" + id;
     }
     else
     {
@@ -410,7 +420,7 @@ bool SelectAndLink(SrtModel& m, string id, bool mode_output, string& w_msg)
         target.reset(t);
 
         os << medium << "  ->  " << m.m_host << ":" << m.m_port << "[" << id << "]%" << sock;
-        thread_name = "TL<" + medium;
+        thread_name = "TL<" + id;
     }
 
     bytevector dummy_initial_portion;
@@ -483,8 +493,8 @@ void Help(string program)
 "id set just as the caller side did, in which case srt-multiplex will search for this id among\n"
 "the registered resources and match the resource (output here) with this id. If the resource is\n"
 "not found, the connection is closed immediately. This works the same way regardless of which\n"
-"direction is used by caller or listener\n";
-
+"direction is used by caller or listener.\n"
+"SYNTAX:\n";
 }
 
 int main( int argc, char** argv )
@@ -510,18 +520,18 @@ int main( int argc, char** argv )
         }
     } cleanupobj;
 
-    const OptionName
-        o_loglevel = { "ll", "loglevel" },
-        o_input    = { "i" },
-        o_output   = { "o" };
+    vector<OptionScheme> optargs;
 
-    vector<OptionScheme> optargs = {
-        { o_loglevel, OptionScheme::ARG_ONE },
-        { o_input,    OptionScheme::ARG_VAR },
-        { o_output,   OptionScheme::ARG_VAR }
-    };
+    OptionName
+        o_loglevel  ((optargs), "<severity> Minimum severity for logs (see --help logging)", "ll",  "loglevel"),
+        o_logfa     ((optargs), "<FA=FA-list...> Enabled Functional Areas (see --help logging)", "lfa", "logfa"),
+        o_logfile   ((optargs), "<filepath> File to send logs to", "lf",  "logfile"),
+        o_input     ((optargs), "<media...> Take input from multiple media and send over SRT", "i", "input"),
+        o_output    ((optargs), "<media...> Read from SRT connection and send to particular media", "o", "output"),
+        o_help      ((optargs), "[special=logging] This help", "?",   "help", "-help")
+            ;
 
-    map<string, vector<string>> params = ProcessOptions(argv, argc, optargs);
+    options_t params = ProcessOptions(argv, argc, optargs);
 
     // The call syntax is:
     //
@@ -547,9 +557,11 @@ int main( int argc, char** argv )
     // PATTERN (one argument that contains % somewhere): define the output file pattern
     // URI...: try to match the input stream to particular URI by 'name' parameter. If none matches, ignore.
 
-    if ( params.count("-help") )
+    if (OptionPresent(params, o_help))
     {
         Help(argv[0]);
+        for (auto os: optargs)
+            cout << OptionHelpItem(*os.pid) << endl;
         return 1;
     }
 
@@ -594,10 +606,62 @@ int main( int argc, char** argv )
         return 1;
     }
 
-    string loglevel = Option<OutString>(params, "error", "ll", "loglevel");
+    string loglevel = Option<OutString>(params, "error", o_loglevel);
     srt_logging::LogLevel::type lev = SrtParseLogLevel(loglevel);
     srt::setloglevel(lev);
+
+    vector<string> logfa = Option<OutList>(params, o_logfa);
+
+    string logfa_on, logfa_off;
+    ParseLogFASpec(logfa, (logfa_on), (logfa_off));
+
+    set<srt_logging::LogFA> fasoff = SrtParseLogFA(logfa_off);
+    set<srt_logging::LogFA> fason = SrtParseLogFA(logfa_on);
+
+    auto fa_del = [fasoff]() {
+        for (set<srt_logging::LogFA>::iterator i = fasoff.begin(); i != fasoff.end(); ++i)
+            srt_dellogfa(*i);
+    };
+
+    auto fa_add = [fason]() {
+        for (set<srt_logging::LogFA>::iterator i = fason.begin(); i != fason.end(); ++i)
+            srt_addlogfa(*i);
+    };
+
+    if (logfa_off == "all")
+    {
+        // If the spec is:
+        //     -lfa ~all control app
+        // then we first delete all, then enable given ones
+        fa_del();
+        fa_add();
+    }
+    else
+    {
+        // Otherwise we first add all those that have to be added,
+        // then delete those unwanted. This embraces both
+        //   -lfa control app ~cc
+        // and
+        //   -lfa all ~cc
+        fa_add();
+        fa_del();
+    }
     srt::addlogfa(SRT_LOGFA_APP);
+
+    string logfile = Option<OutString>(params, "", o_logfile);
+    std::ofstream logfile_stream; // leave unused if not set
+    if ( logfile != "" )
+    {
+        logfile_stream.open(logfile.c_str());
+        if ( !logfile_stream )
+        {
+            cerr << "ERROR: Can't open '" << logfile << "' for writing - fallback to cerr\n";
+        }
+        else
+        {
+            srt::setlogstream(logfile_stream);
+        }
+    }
 
     string verbo = Option<OutString>(params, "no", "v", "verbose");
     if ( verbo == "" || !false_names.count(verbo) )
