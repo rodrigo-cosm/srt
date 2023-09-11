@@ -90,6 +90,8 @@ mutexes for which the locking order must be preserved.
     - CUDT::m_RecvAckLock  || CEPoll::m_EPollLock(T)
 
 ----------------
+ - CUDTUnited::m_UpdateConnStatusLock
+
  - CUDTUnited::m_GlobControlLock
 
         - CUDTGroup::m_GroupLock  || CSndUList::m_ListLock(T)

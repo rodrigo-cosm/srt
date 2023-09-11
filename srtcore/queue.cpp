@@ -901,6 +901,8 @@ void srt::CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst
     // Need a stub value for a case when there's no unit provided ("storage depleted" case).
     // It should be normally NOT IN USE because in case of "storage depleted", rst != RST_OK.
     const SRTSOCKET dest_id = pkt ? pkt->m_iID : 0;
+    
+    ScopedLock us(CUDT::uglobal().m_UpdateConnStatusLock);
 
     // If no socket were qualified for further handling, finish here.
     // Otherwise toRemove and toProcess contain items to handle.
@@ -1015,6 +1017,7 @@ void srt::CRendezvousQueue::updateConnStatus(EReadStatus rst, EConnectStatus cst
     }
 }
 
+// [[using locked(CUDT::uglobal().m_UpdateConnStatusLock)]]
 bool srt::CRendezvousQueue::qualifyToHandle(EReadStatus    rst,
                                        EConnectStatus cst      SRT_ATR_UNUSED,
                                        int                     iDstSockID,

@@ -1405,6 +1405,7 @@ size_t srt::CUDT::fillHsExtKMRSP(uint32_t* pcmdspec, const uint32_t* kmdata, siz
 // PREREQUISITE:
 // pkt must be set the buffer and configured for UMSG_HANDSHAKE.
 // Note that this function replaces also serialization for the HSv4.
+// [[using locked(m_ConnectionLock)]]
 bool srt::CUDT::createSrtHandshake(
         int             srths_cmd,
         int             srtkm_cmd,
@@ -3860,6 +3861,7 @@ EConnectStatus srt::CUDT::processAsyncConnectResponse(const CPacket &pkt) ATR_NO
     return cst;
 }
 
+// [[using locked(CUDT::uglobal().m_UpdateConnStatusLock)]]
 bool srt::CUDT::processAsyncConnectRequest(EReadStatus         rst,
                                       EConnectStatus      cst,
                                       const CPacket*      pResponse /*[[nullable]]*/,
@@ -3966,6 +3968,7 @@ bool srt::CUDT::processAsyncConnectRequest(EReadStatus         rst,
     return status;
 }
 
+// [[using locked(m_ConnectionLock)]]
 void srt::CUDT::sendRendezvousRejection(const sockaddr_any& serv_addr, CPacket& r_rsppkt)
 {
     // We can reuse m_ConnReq because we are about to abandon the connection process.
@@ -4134,6 +4137,7 @@ EConnectStatus srt::CUDT::craftKmResponse(uint32_t* aw_kmdata, size_t& w_kmdatas
     return CONN_ACCEPT;
 }
 
+// [[using locked(m_ConnectionLock)]]
 EConnectStatus srt::CUDT::processRendezvous(
     const CPacket* pResponse /*[[nullable]]*/, const sockaddr_any& serv_addr,
     EReadStatus rst, CPacket& w_reqpkt)
