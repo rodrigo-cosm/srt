@@ -7699,9 +7699,9 @@ bool srt::CUDT::updateCC(ETransmissionEvent evt, const EventVariant arg)
         m_dCongestionWindow = m_CongCtl->cgWindowSize();
 #if ENABLE_HEAVY_LOGGING
         HLOGC(rslog.Debug,
-              log << CONID() << "updateCC: updated values from congctl: interval=" << count_microseconds(m_tdSendInterval) << " us ("
-                  << "tk (" << m_CongCtl->pktSndPeriod_us() << "us) cgwindow="
-                  << std::setprecision(3) << m_dCongestionWindow);
+              log << CONID() << "updateCC: updated values from congctl: interval="
+                  << FormatDuration<DUNIT_US>(m_tdSendInterval) << " cgwindow="
+                  << std::setprecision(8) << std::fixed << m_dCongestionWindow);
 #endif
     }
 

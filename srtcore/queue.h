@@ -466,6 +466,8 @@ public:
     } mutable m_WorkerStats;
 #endif /* SRT_DEBUG_SNDQ_HIGHRATE */
 
+    mutable sync::steady_clock::time_point m_LastTime;
+
 private:
 
 #if ENABLE_LOGGING

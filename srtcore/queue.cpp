@@ -565,9 +565,10 @@ void* srt::CSndQueue::worker(void* param)
 
 #define UST(field) ((u->m_b##field) ? "+" : "-") << #field << " "
         HLOGC(qslog.Debug,
-            log << "CSndQueue: requesting packet from @" << u->socketID() << " STATUS: " << UST(Listening)
-                << UST(Connecting) << UST(Connected) << UST(Closing) << UST(Shutdown) << UST(Broken) << UST(PeerHealth)
-                << UST(Opened));
+            log << "CSndQueue: requesting packet from @" << u->socketID()
+                // NOTE: this value can be displayed negative and it's ok. If it is, there was no sleeping.
+                << " slept " << FormatDuration<DUNIT_US>(next_time - currtime)
+                << " STATUS: " << UST(Connected) << UST(Closing) << UST(Shutdown) << UST(Broken) << UST(Opened));
 #undef UST
 
         if (!u->m_bConnected || u->m_bBroken)
@@ -593,8 +594,19 @@ void* srt::CSndQueue::worker(void* param)
         if (!is_zero(next_send_time))
             self->m_pSndUList->update(u, CSndUList::DO_RESCHEDULE, next_send_time);
 
-        HLOGC(qslog.Debug, log << self->CONID() << "chn:SENDING: " << pkt.Info());
+        IF_HEAVY_LOGGING(steady_clock::time_point prev_time = self->m_LastTime);
+        IF_HEAVY_LOGGING(steady_clock::time_point before_sending = steady_clock::now());
+
+        HLOGC(qslog.Debug, log << self->CONID() << "chn:SENDING: " << pkt.Info() << "; next-in: "
+                << FormatDuration<DUNIT_US>(next_send_time - currtime));
         self->m_pChannel->sendto(addr, pkt, source_addr);
+
+        IF_HEAVY_LOGGING(steady_clock::time_point after_sending = steady_clock::now());
+        IF_HEAVY_LOGGING(self->m_LastTime = after_sending);
+
+        HLOGC(qslog.Debug, log << self->CONID() << "chn:SENDING:time: PREV + INTER="
+                << (is_zero(prev_time) ? std::string("SOME") : FormatDuration<DUNIT_US>(before_sending - prev_time))
+                << " + SEND=" << FormatDuration<DUNIT_US>(after_sending - before_sending));
 
         IF_DEBUG_HIGHRATE(self->m_WorkerStats.lSendTo++);
     }
